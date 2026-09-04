@@ -1,0 +1,14 @@
+{
+  "name": "jjhealth-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "健康管理 · 本地同步服务器（零依赖：node:http + node:sqlite）",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/roundtrip.test.js"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

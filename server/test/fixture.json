@@ -1,0 +1,75 @@
+{
+  "theme": "dark",
+  "onboarded": true,
+  "shared": {
+    "foods": [
+      { "id": "f0", "name": "米饭", "per100": { "kcal": 116, "p": 2.6, "c": 25.9, "f": 0.3 } },
+      { "id": "f9", "name": "自定义\"特殊\"&<b>食物</b>🍥", "per100": { "kcal": 999, "p": 0, "c": 0, "f": 0 } },
+      { "id": "f10", "name": "无营养表食品" }
+    ],
+    "exercises": [
+      { "id": "e0", "name": "杠铃卧推", "muscle": "胸" },
+      { "id": "e17", "name": "引体向上", "muscle": "背" }
+    ]
+  },
+  "users": {
+    "u_alice": {
+      "profile": { "gender": "male", "birthYear": 1992, "height": 175, "currentKg": 71.2 },
+      "goal": { "mode": "cut", "startKg": null, "targetKg": 66, "targetDate": "2026-12-31", "note": "为夏天做准备💪" },
+      "activity": 1.375,
+      "nutrition": { "auto": true, "kcal": 2100, "protein": 130, "carbs": 220, "fat": 58 },
+      "waterTarget": 8,
+      "meals": {
+        "2026-09-01": { "breakfast": [], "lunch": [], "dinner": [], "snack": [] },
+        "2026-09-02": {
+          "breakfast": [
+            { "id": "m1", "name": "燕麦片", "per100": { "kcal": 367, "p": 13, "c": 61, "f": 7 }, "g": 60 },
+            { "id": "m2", "name": "牛奶", "per100": { "kcal": 65, "p": 3.3, "c": 4.9, "f": 3.6 }, "g": 120.5 }
+          ],
+          "lunch": [ { "id": "m3", "name": "三文鱼", "per100": { "kcal": 139, "p": 17.2, "c": 0, "f": 7.3 }, "g": 120 } ],
+          "dinner": [],
+          "snack": []
+        }
+      },
+      "plans": {
+        "1": { "id": "p1", "name": "推日", "items": [
+          { "id": "pi1", "exId": "e0", "exName": "杠铃卧推", "muscle": "胸", "sets": 4, "reps": 8, "weight": 70 },
+          { "id": "pi2", "exId": "e17", "exName": "引体向上", "muscle": "背", "sets": 3, "reps": 10 }
+        ] },
+        "5": { "id": "p5", "name": "腿日", "items": [] }
+      },
+      "workouts": [
+        { "id": "w2", "date": "2026-09-02", "name": "拉日", "items": [
+          { "id": "wi2", "exId": "e17", "exName": "引体向上", "muscle": "背", "sets": [
+            { "reps": 8, "weight": 0 },
+            { "reps": 6, "weight": 7.5 }
+          ] }
+        ] },
+        { "id": "w1", "date": "2026-08-30", "name": "推日", "note": "", "items": [
+          { "id": "wi1", "exId": "e0", "exName": "杠铃卧推", "muscle": "胸", "sets": [ { "reps": 8, "weight": 70 } ] }
+        ] }
+      ],
+      "body": [
+        { "date": "2026-08-01", "weight": 72.1, "waist": 88.2 },
+        { "date": "2026-08-01", "chest": 100 },
+        { "date": "2026-09-02" },
+        { "date": "2026-09-03", "weight": 71.2, "chest": 99.8, "waist": 87.5, "hip": 95, "arm": 33, "thigh": 56, "bf": 18.4 }
+      ],
+      "habits": [
+        { "id": "h_water", "name": "饮水达标", "icon": "💧", "color": "var(--cat1)", "done": { "2026-09-01": true, "2026-09-02": true } },
+        { "id": "h_stretch", "name": "拉伸放松", "icon": "🧘", "color": "var(--brand)", "done": {} }
+      ],
+      "sleep": {
+        "2026-09-01": { "bed": "23:10", "wake": "07:20", "mins": 490, "quality": 4 },
+        "2026-09-02": { "bed": "00:05", "mins": 420 }
+      },
+      "water": { "2026-09-01": 8, "2026-09-02": 0 },
+      "id": "u_alice",
+      "name": "陈",
+      "avatar": "💪",
+      "color": "green"
+    },
+    "u_bob": { "id": "u_bob", "name": "示例成员🐱" }
+  },
+  "active": "u_bob"
+}
