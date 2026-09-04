@@ -1,0 +1,11 @@
+# 系统/同步临时文件
+Thumbs.db
+Desktop.ini
+.DS_Store
+~$*
+*.tmp
+.one/
+
+# 编辑器
+.vscode/
+.idea/
