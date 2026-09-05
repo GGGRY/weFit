@@ -11,7 +11,7 @@
 - **后端** `server/`：Node 内置 `node:http` + 内置 `node:sqlite`，**npm 依赖为零**，`node server.js` 即起
 - **数据库** `server/data/jjhealth.db`：集合型数据拆为 16 张关系表（餐次/训练/身体/睡眠/饮水/习惯…），profile/goal/nutrition 等小配置对象 JSON 列整存保真
 - **同步模型**：所有设备访问同一服务器 = 读写同一份数据库，**天然同步**；浏览器 localStorage 降级为离线缓存，服务器为准数据源
-- **启动**：双击项目根目录 `start.bat`（或 `cd server && node server.js`），端口 8123
+- **启动**：Windows 双击项目根目录 `start.bat`，Linux/macOS 运行 `./start.sh`（或 `cd server && node server.js`），端口 8123
 - **手机访问**：与电脑同 Wi-Fi 时打开 `http://<电脑IP>:8123`（服务器启动窗口会打印可用地址）
 
 ## 二、已实现功能清单
@@ -82,7 +82,8 @@
 
 ```
 JJ_HealthManagement/
-├─ start.bat                    # 双击启动服务器（端口 8123）
+├─ start.bat                    # Windows 双击启动服务器（端口 8123）
+├─ start.sh                     # Linux/macOS 启动服务器（端口 8123）
 ├─ public/                      # 前端（无构建，浏览器直载）
 │  ├─ index.html                #   页面骨架
 │  ├─ css/style.css             #   设计令牌 + 组件样式
@@ -102,13 +103,39 @@ JJ_HealthManagement/
 - **数据接口**：`GET /api/state` → `{rev, data}`（空库 data:null）；`PUT /api/state` body `{rev?, data}`——rev 过期 409，缺省盲写
 - **API 是"整体 state"风格**：细粒度 CRUD 端点留待未来按需追加，mapper 后的关系表结构已支持
 
+### 数据库结构（`server/data/jjhealth.db` · 16 张表，建表见 `server/db.js`）
+
+设计原则：会增长的集合拆为真正关系表；profile/goal/nutrition 等形状固定的小配置对象用 JSON 列整存保真；有数组语义处一律带 `seq` 保证顺序往返一致；成员数据全部 `REFERENCES users(id) ON DELETE CASCADE`（删成员级联清数据）。
+
+| 表 | 主键 | 说明 |
+|---|---|---|
+| `app` | id（恒为 1，单行） | 全局状态：theme / onboarded / active_user_id / **rev**（乐观并发版本号） |
+| `users` | id | 成员注册表：seq, name, avatar, color, activity, water_target + `profile_json` / `goal_json` / `nutrition_json` |
+| `foods` | id | 食物库（全成员共享）：name, kcal, p, c, f |
+| `exercises` | id | 动作库（全成员共享）：name, muscle |
+| `meal_days` | (user_id, date) | "日期被打开过"标记——餐次 4 槽全空也要能原样还原 |
+| `meals` | (user_id, date, slot, seq) | 饮食条目：slot=早/午/晚/加餐, item_id, name, kcal, p, c, f, g |
+| `plan_defs` | (user_id, weekday) | 周计划头：plan_id, name |
+| `plan_items` | (user_id, weekday, seq) | 周计划动作：item_id, ex_id, ex_name, muscle, sets, reps, weight |
+| `workouts` | (user_id, workout_id) | 训练日志头：date, name, note（seq 保留列） |
+| `workout_items` | (user_id, workout_id, seq) | 训练动作项：item_id, ex_id, ex_name, muscle |
+| `workout_sets` | (user_id, workout_id, item_seq, seq) | 逐组 reps×weight；用 `item_seq` 引用所属动作项而非 item_id（主键列不能 NULL，旧数据可能缺 id） |
+| `body_records` | (user_id, seq) | 身体 7 项：weight/chest/waist/hip/arm/thigh/bf；主键用 seq 因旧版导入可能同日多条；索引 `idx_body_date(user_id, date)` |
+| `sleep_records` | (user_id, date) | bed, wake, mins, quality(1-5) |
+| `water_records` | (user_id, date) | cups |
+| `habits` | (user_id, habit_id) | 习惯定义：seq, name, icon, color |
+| `habit_done` | (user_id, habit_id, date) | 打卡记录（一行 = 一次打卡） |
+
+- **连接参数**：`journal_mode = DELETE`（不留常驻 -wal 边文件，OneDrive 同步友好）、`synchronous = NORMAL`、`foreign_keys = ON`
+- **往返不变量**（mapper.js）：PUT→GET 深度相等——JSON 列与关系表拆分/重组必须保形状，`test/roundtrip.test.js` 20 项断言守此约定
+
 ## 四、已知边界与技术债
 
 1. **无鉴权**：面向可信局域网，任何能访问 8123 端口的人都能读写数据。**上云前必须先加登录/token 中间件**（server.js 里是单一 handle 函数，加一层即可）
 2. 离线设备回线时若服务器已有更新 → 需人工裁决（弹窗二选一）；两设备长时间离线各改各的，无法自动合并
 3. 同步粒度为整库（个人数据量下 PUT/GET 实测 <10ms，暂无压力）；数据量增长后可上细粒度端点
 4. 存储键仍叫 `jjhealth_v2`（现作离线缓存用）；下次改版应升 v3 并带迁移
-5. 服务器需保持运行：电脑重启后双击 `start.bat`；手机记录依赖电脑在线（彻底脱离电脑 → 云端部署，见五.1）
+5. 服务器需保持运行：电脑重启后 Windows 双击 `start.bat`，Linux/macOS 运行 `./start.sh`；手机记录依赖电脑在线（彻底脱离电脑 → 云端部署，见五.1）
 6. 图表 hover 用原生 title；饮水"杯"无 ml 换算；主题不跟随系统（沿袭旧版）
 
 ## 五、后续开发计划建议
@@ -133,7 +160,7 @@ manifest + service worker，手机"添加到主屏幕"像独立 App（app.js 内
 
 ## 六、使用备忘
 
-- **启动**：双击 `start.bat`（保持黑色窗口开启 = 服务在线）
+- **启动**：Windows 双击 `start.bat`，Linux/macOS 运行 `./start.sh`（保持窗口开启 = 服务在线）
 - **电脑端**：浏览器打开 `http://localhost:8123`
 - **手机端**：同一 Wi-Fi 下打开启动窗口显示的 `http://<电脑IP>:8123`
 - **首次迁移旧数据（一次性）**：① 双击 `legacy/index.html` 打开旧版 → ⚙️设置 → ⬇导出备份；② 新地址打开 → ⚙️设置 → ⬆导入该文件；③ 自动存入服务器，全设备可见
