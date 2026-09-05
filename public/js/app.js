@@ -33,7 +33,6 @@ const NAV = [
   {id:'diet',  label:'饮食',    ic:'🍽️'},
   {id:'train', label:'训练',    ic:'🏋️'},
   {id:'body',  label:'身体',    ic:'📏'},
-  {id:'life',  label:'睡眠饮水',ic:'💧'},
   {id:'goals', label:'目标',ic:'🎯'},
   {id:'stats', label:'统计',    ic:'📊'},
 ];
@@ -494,7 +493,6 @@ function bmi(){ const w = latestVal('weight'); if(!w || !state.profile.height) r
 
 /* ---------- 睡眠饮水辅助 ---------- */
 function sleepFor(date){ return state.sleep[date] || null; }
-function lastSleep(){ const ds = Object.keys(state.sleep).sort(); let d = today(); if(!state.sleep[d]) d = addDays(d,-1); return state.sleep[d] ? {date:d, ...state.sleep[d]} : null; }
 function waterFor(date){ return state.water[date] || 0; }
 
 /* ---------- 习惯辅助 ---------- */
@@ -662,7 +660,7 @@ function closeDialog(){ if(curDialog) curDialog.close(); }
 let curView = 'home';
 function rebuildNav(){
   const group1 = ['home'];
-  const group2 = ['diet','train','body','life'];
+  const group2 = ['diet','train','body'];
   const group3 = ['goals','stats'];
   const render = ids => ids.map(id => {
     const n = NAV.find(x=>x.id===id);
@@ -686,9 +684,9 @@ function go(v){
   window.scrollTo({top:0, behavior:'smooth'});
 }
 function renderView(){
-  const map = { home:renderHome, diet:renderDiet, train:renderTrain, body:renderBody, life:renderLife, goals:renderGoals, stats:renderStats };
+  const map = { home:renderHome, diet:renderDiet, train:renderTrain, body:renderBody, goals:renderGoals, stats:renderStats };
   const topbar = $('#topbar');
-  const titles = { home:'概览', diet:'饮食记录', train:'训练', body:'身体数据', life:'睡眠与饮水', goals:'目标 · 打卡', stats:'数据统计' };
+  const titles = { home:'概览', diet:'饮食记录', train:'训练', body:'身体数据', goals:'目标 · 打卡', stats:'数据统计' };
   const au = activeUser();
   topbar.innerHTML = '<div class="page-head"><h1>' + titles[curView] + '</h1></div>' +
     '<div class="tools">' +
@@ -897,10 +895,7 @@ function renderHome(){
   }
 
   const html =
-    '<div class="row" style="align-items:center;justify-content:space-between">' +
-      '<div><span class="muted">' + esc(greet) + '，<b>' + esc(activeUser().name) + '</b> · ' + dateCNW(t) + '</span></div>' +
-      '<button class="btn sm" data-water="1">💧 喝水 +1</button>' +
-    '</div>' +
+    '<div class="muted">' + esc(greet) + '，<b>' + esc(activeUser().name) + '</b> · ' + dateCNW(t) + '</div>' +
     '<div class="row mt">' +
       tileHTML('今日热量', fmtNum(eat.kcal), '/ ' + fmtNum(T.kcal) + ' kcal', '', '') +
       tileHTML('体重', w ? w.toFixed(1) : '--', 'kg', '', '') +
@@ -913,20 +908,19 @@ function renderHome(){
           '<div style="display:flex;justify-content:space-between;margin-bottom:5px"><span class="muted">已摄入 vs 目标 <span class="tiny" style="font-weight:400;color:' + (calPct>100?'var(--ink-2)':'var(--cat3)') + '">' + (calPct>100 ? '已超 ' + (calPct-100) + '%' : '还差 ' + (100-calPct) + '%') + '</span></span><b>' + fmtNum(eat.kcal) + ' / ' + fmtNum(T.kcal) + ' kcal</b></div>' +
           '<div class="meter"><i style="width:' + clamp(calPct,0,100) + '%" class="' + (calPct>100?'over':'') + '"></i></div>' +
           '</div>') +
-      '<div class="row gap8" style="margin-top:10px">' +
-        (eat.kcal ? '<span class="chip b1">蛋白 ' + eat.p + 'g / ' + T.p + 'g</span>' +
-                   '<span class="chip b2">碳水 ' + eat.c + 'g / ' + T.c + 'g</span>' +
-                   '<span class="chip b3">脂肪 ' + eat.f + 'g / ' + T.f + 'g</span>' : '') +
-        '<span class="chip">💧 饮水 ' + waterFor(t) + ' / ' + state.waterTarget + ' 杯</span>' +
-      '</div>' +
+      (eat.kcal ? '<div class="row gap8" style="margin-top:10px">' +
+        '<span class="chip b1">蛋白 ' + eat.p + 'g / ' + T.p + 'g</span>' +
+        '<span class="chip b2">碳水 ' + eat.c + 'g / ' + T.c + 'g</span>' +
+        '<span class="chip b3">脂肪 ' + eat.f + 'g / ' + T.f + 'g</span>' +
+      '</div>' : '') +
     '</div>' +
     planHTML +
+    lifeTodayHTML() +
     habitCardHTML();
 
   $('#view').innerHTML = html;
   bindHabitEvents();
-  const bWater = $('#view [data-water="1"]');
-  if(bWater) bWater.addEventListener('click', () => { state.water[t] = (state.water[t]||0) + 1; save(); renderHome(); });
+  bindLifeToday($('#view'));
   const q = $('#view [data-quick="train"]');
   if(q) q.addEventListener('click', startTodayWorkout);
   const g = $('#view [data-go2="diet"]');
@@ -1634,97 +1628,127 @@ function chartCard(containerId, title, sub, controls){
 }
 
 /* =====================================================
-   睡眠与饮水
+   今日睡眠 / 今日饮水（原「睡眠饮水」页并入概览页）
+   记录仍以日期为键（state.sleep/state.water），睡眠归属"起床那天"。
+   概览页两张"今日"卡直接记录当天；卡右上角 🕘 打开历史弹窗，
+   弹窗内可翻任意日期查看 / 补记 / 修改 / 删除。
 ===================================================== */
-let lifeDate = today();
+let lifeDate = today();            // 历史弹窗内翻页的当前日期
 const QUALITY = [{n:1,ic:'😖'},{n:2,ic:'😕'},{n:3,ic:'😐'},{n:4,ic:'🙂'},{n:5,ic:'😄'}];
 
-function renderLife(){
-  const d = lifeDate;
-  const isToday = d === today();
-  const sl = sleepFor(d);
-
-  // 睡眠卡
-  let sleepBody;
-  if(sl){
-    sleepBody =
-      '<div class="lrow"><div class="thumb">😴</div><div class="grow"><div class="b">' + esc(sl.bed || '--:--') + ' → ' + esc(sl.wake || '--:--') + '</div>' +
-      '<div class="sub">时长 ' + round(sl.mins/60,1) + ' 小时 · ' + (sl.mins>=420?'达标':'偏少') + '</div></div>' +
-      '<div class="stars">' + QUALITY.map(q => '<button class="' + (sl.quality>=q.n?'on':'') + '" disabled>' + q.ic + '</button>').join('') + '</div>' +
-      '<button class="iconbtn2" data-sleedit>✏️</button></div>' +
-      '<div class="row mt" style="justify-content:flex-end"><button class="btn danger ghost sm" data-sledel>删除</button></div>';
-  } else {
-    sleepBody =
-      '<div class="form-grid">' +
-        '<div><label>入睡</label><input class="input" type="time" id="sl_bed" value="23:30"></div>' +
-        '<div><label>起床</label><input class="input" type="time" id="sl_wake" value="07:00"></div>' +
-      '</div>' +
-      '<div class="row mt" style="align-items:center;justify-content:space-between">' +
-        '<div class="tiny muted">质量：</div><div class="stars" id="sl_stars">' + QUALITY.map(q => '<button class="slq on" data-q="' + q.n + '">' + q.ic + '</button>').join('') + '</div>' +
-      '</div>' +
-      '<div class="row mt" style="justify-content:space-between;align-items:center"><span class="tiny muted">预计睡眠 <b id="sl_prev">--</b></span>' +
-      '<button class="btn primary sm" id="sl_save">保存</button></div>';
-  }
-
+function lifeWaterCard(d, ctx){    // ctx:'home'=概览今日卡（标题/🕘）| 'dlg'=历史弹窗卡
+  const isHome = ctx === 'home';
   const wCups = waterFor(d);
   const wPct = Math.round(wCups / state.waterTarget * 100);
+  return '<div class="card" style="margin-bottom:0"><h3><span>' + (isHome ? '💧 今日饮水' : '💧 饮水') + '</span><span class="grow"></span>' +
+    (isHome ? '<button class="btn sm ghost" data-lifehis title="翻日期查看/补记/修改历史记录">🕘 补记</button>' : '') + '</h3>' +
+    '<div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-top:6px">' +
+      '<button class="iconbtn2" data-wmin style="font-size:20px">−</button>' +
+      '<span style="font-size:34px;font-weight:800;min-width:52px;text-align:center">' + wCups + '</span>' +
+      '<span class="muted" style="font-size:14px">/ ' + state.waterTarget + ' 杯</span>' +
+      '<button class="iconbtn2" data-wplus style="font-size:20px;color:var(--brand)">＋</button>' +
+    '</div>' +
+    '<div class="meter mt"><i style="width:' + clamp(wPct,0,100) + '%"></i></div>' +
+    '<div class="tiny muted" style="text-align:center;margin-top:8px">' + (wCups < state.waterTarget ? '再喝 ' + (state.waterTarget - wCups) + ' 杯达标' : '达标，继续保持 🎉') + '</div>' +
+  '</div>';
+}
 
-  const html =
-    '<div class="card"><div class="row" style="justify-content:space-between;align-items:center">' +
+function lifeSleepCard(d, ctx){
+  const isHome = ctx === 'home';
+  const sl = sleepFor(d);
+  const head = '<span>' + (isHome ? '😴 今日睡眠' : '😴 睡眠') + '</span>' +
+    (isHome && !sl ? '<span class="hint">起床后记录昨夜睡眠</span>' : '') +
+    '<span class="grow"></span>' +
+    (isHome ? '<button class="btn sm ghost" data-lifehis title="翻日期查看/补记/修改历史记录">🕘 补记</button>' : '');
+  if(!sl) return '<div class="card" style="margin-bottom:0"><h3>' + head + '</h3>' +
+    '<div class="form-grid">' +
+      '<div><label>入睡</label><input class="input" type="time" id="sl_bed" value="23:30"></div>' +
+      '<div><label>起床</label><input class="input" type="time" id="sl_wake" value="07:00"></div>' +
+    '</div>' +
+    '<div class="row mt" style="align-items:center;justify-content:space-between">' +
+      '<div class="tiny muted">质量：</div><div class="stars" id="sl_stars">' + QUALITY.map(q => '<button class="slq on" data-q="' + q.n + '">' + q.ic + '</button>').join('') + '</div>' +
+    '</div>' +
+    '<div class="row mt" style="justify-content:space-between;align-items:center"><span class="tiny muted">预计睡眠 <b id="sl_prev">--</b></span>' +
+    '<button class="btn primary sm" id="sl_save">保存</button></div>' +
+  '</div>';
+  return '<div class="card" style="margin-bottom:0"><h3>' + head + '</h3>' +
+    '<div class="lrow"><div class="thumb">😴</div><div class="grow"><div class="b">' + esc(sl.bed || '--:--') + ' → ' + esc(sl.wake || '--:--') + '</div>' +
+    '<div class="sub">时长 ' + round(sl.mins/60,1) + ' 小时 · ' + (sl.mins>=420?'达标':'偏少') + '</div></div>' +
+    '<div class="stars">' + QUALITY.map(q => '<button class="' + (sl.quality>=q.n?'on':'') + '" disabled>' + q.ic + '</button>').join('') + '</div>' +
+    '<button class="iconbtn2" data-sleedit title="修改">✏️</button></div>' +
+    '<div class="row mt" style="justify-content:flex-end"><button class="btn danger ghost sm" data-sledel>删除</button></div>' +
+  '</div>';
+}
+
+/* 概览页两张"今日"卡（date 恒为今天） */
+function lifeTodayHTML(){
+  return '<div class="grid cols-2 mt">' + lifeWaterCard(today(), 'home') + lifeSleepCard(today(), 'home') + '</div>';
+}
+function bindLifeToday(v){
+  $$('[data-lifehis]', v).forEach(b => b.addEventListener('click', openLifeHistory));
+  bindLifeCard(v, today(), 'home');
+}
+
+/* 历史弹窗：daynav 翻页 + 同两张卡（'dlg' 上下文），保存后只重绘弹窗 */
+function openLifeHistory(){
+  const dlg = showDialog('📅 睡眠饮水 · 历史记录', '', {size:'lg'});
+  renderLifeDlg(dlg.box, dlg.close);   // 传 captured close：叠层弹窗关闭后 curDialog 已空，不能再用全局 closeDialog
+}
+function renderLifeDlg(b, close){
+  const d = lifeDate;
+  const isToday = d === today();
+  b.innerHTML =
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px">' +
       '<div class="daynav"><button class="iconbtn2" data-day="-1">‹</button>' +
         '<div class="lbl">' + dateCN(d) + '<small>' + (isToday ? '今天' : '周' + DAY_CN[weekday(d)]) + '</small></div>' +
         '<button class="iconbtn2" data-day="1">›</button>' +
         (isToday ? '' : '<button class="btn sm" data-day="today">回到今天</button>') +
-      '</div></div></div>' +
-    '<div class="grid cols-2">' +
-      '<div class="card" style="margin-bottom:0"><h3>😴 睡眠</h3>' + sleepBody + '</div>' +
-      '<div class="card" style="margin-bottom:0"><h3>💧 饮水</h3>' +
-        '<div style="text-align:center;padding:8px 0 4px">' +
-          '<div class="tile" style="min-width:0;box-shadow:none"><div class="lab">' + dateCN(d) + '</div>' +
-          '<div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-top:4px">' +
-            '<button class="iconbtn2" data-wmin style="font-size:20px">−</button>' +
-            '<span style="font-size:34px;font-weight:800;min-width:52px" id="water_val">' + wCups + '</span><span class="muted" style="font-size:14px">/ ' + state.waterTarget + ' 杯</span>' +
-            '<button class="iconbtn2" data-wplus style="font-size:20px;color:var(--brand)">＋</button>' +
-          '</div>' +
-          '<div class="meter mt"><i style="width:' + clamp(wPct,0,100) + '%"></i></div>' +
-        '</div>' +
-        '<div class="tiny muted" style="text-align:center;margin-top:8px">' + (wCups < state.waterTarget ? '再喝 ' + (state.waterTarget - wCups) + ' 杯达标' : '达标，继续保持 🎉') + '</div>' +
       '</div>' +
-    '</div>';
-
-  $('#view').innerHTML = html;
-  const v = $('#view');
-  $$('[data-day]', v).forEach(b => b.addEventListener('click', () => {
-    if(b.dataset.day === 'today') lifeDate = today(); else lifeDate = addDays(lifeDate, num(b.dataset.day));
-    renderLife();
+      '<div class="tiny muted">睡眠以「起床那天」归属 · 翻日期即可查看或补记</div>' +
+    '</div>' +
+    '<div class="grid cols-2">' + lifeWaterCard(d, 'dlg') + lifeSleepCard(d, 'dlg') + '</div>' +
+    '<div class="d-f"><button class="btn ghost" data-cancel>关闭</button></div>';
+  $$('[data-day]', b).forEach(btn => btn.addEventListener('click', () => {
+    if(btn.dataset.day === 'today') lifeDate = today(); else lifeDate = addDays(lifeDate, num(btn.dataset.day));
+    renderLifeDlg(b, close);
   }));
-  const qty = sl ? sl.quality : 3;
-  if(!sl){
-    const starsBox = $('#sl_stars', v);
-    let q = qty;
-    function paint(){ $$('.slq', starsBox).forEach(b2 => b2.classList.toggle('on', num(b2.dataset.q) <= q)); }
-    paint();
-    $$('.slq', starsBox).forEach(b2 => b2.addEventListener('click', () => { q = num(b2.dataset.q); paint(); }));
-    function calcDur(){ const bed = $('#sl_bed', v).value, wake = $('#sl_wake', v).value; if(!bed || !wake){ $('#sl_prev', v).textContent = '--'; return null; }
-      const [bh,bm] = bed.split(':').map(Number), [wh,wm] = wake.split(':').map(Number);
-      let mins = (wh*60+wm) - (bh*60+bm); if(mins < 0) mins += 1440; if(mins === 0) mins = 1440;
-      $('#sl_prev', v).textContent = round(mins/60,1) + ' 小时'; return mins; }
-    $('#sl_bed', v).addEventListener('change', calcDur); $('#sl_wake', v).addEventListener('change', calcDur); calcDur();
-    $('#sl_save', v).addEventListener('click', () => {
-      const bed = $('#sl_bed', v).value, wake = $('#sl_wake', v).value;
-      if(!bed || !wake){ toast('请填写入睡与起床时间', true); return; }
-      state.sleep[lifeDate] = { bed, wake, mins: calcDur() || 0, quality: q };
-      save(); renderLife(); toast('已记录睡眠');
-    });
-  } else {
-    const ed = $('#view [data-sleedit]'); if(ed) ed.addEventListener('click', () => sleepQuick(d, sl));
-    const de = $('#view [data-sledel]'); if(de) de.addEventListener('click', () => { delete state.sleep[d]; save(); renderLife(); toast('已删除'); });
-  }
-  const wp = $('#view [data-wplus]'); if(wp) wp.addEventListener('click', () => { state.water[d] = (state.water[d]||0) + 1; save(); renderLife(); });
-  const wm = $('#view [data-wmin]'); if(wm) wm.addEventListener('click', () => { if(waterFor(d) > 0){ state.water[d] = waterFor(d) - 1; save(); renderLife(); } });
+  const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', close);
+  bindLifeCard(b, d, 'dlg', close);
 }
 
-function sleepQuick(d, sl){
+/* 绑定 root 内的一张睡眠+饮水卡；保存后按 ctx 重绘所属表面 */
+function bindLifeCard(root, d, ctx, close){
+  const after = () => { if(ctx === 'home') renderHome(); else renderLifeDlg(root, close); };
+  const sl = sleepFor(d);
+  if(!sl){
+    const starsBox = $('#sl_stars', root);
+    if(starsBox){
+      let q = 3;
+      function paint(){ $$('.slq', starsBox).forEach(b2 => b2.classList.toggle('on', num(b2.dataset.q) <= q)); }
+      paint();
+      $$('.slq', starsBox).forEach(b2 => b2.addEventListener('click', () => { q = num(b2.dataset.q); paint(); }));
+      function calcDur(){ const bed = $('#sl_bed', root).value, wake = $('#sl_wake', root).value; if(!bed || !wake){ $('#sl_prev', root).textContent = '--'; return null; }
+        const [bh,bm] = bed.split(':').map(Number), [wh,wm] = wake.split(':').map(Number);
+        let mins = (wh*60+wm) - (bh*60+bm); if(mins < 0) mins += 1440; if(mins === 0) mins = 1440;
+        $('#sl_prev', root).textContent = round(mins/60,1) + ' 小时'; return mins; }
+      $('#sl_bed', root).addEventListener('change', calcDur); $('#sl_wake', root).addEventListener('change', calcDur); calcDur();
+      $('#sl_save', root).addEventListener('click', () => {
+        const bed = $('#sl_bed', root).value, wake = $('#sl_wake', root).value;
+        if(!bed || !wake){ toast('请填写入睡与起床时间', true); return; }
+        state.sleep[d] = { bed, wake, mins: calcDur() || 0, quality: q };
+        save(); after(); toast('已记录睡眠');
+      });
+    }
+  } else {
+    const ed = $('[data-sleedit]', root); if(ed) ed.addEventListener('click', () => sleepQuick(d, sl, after));
+    const de = $('[data-sledel]', root); if(de) de.addEventListener('click', () => { delete state.sleep[d]; save(); after(); toast('已删除'); });
+  }
+  const wp = $('[data-wplus]', root); if(wp) wp.addEventListener('click', () => { state.water[d] = (state.water[d]||0) + 1; save(); after(); });
+  const wm = $('[data-wmin]', root); if(wm) wm.addEventListener('click', () => { if(waterFor(d) > 0){ state.water[d] = waterFor(d) - 1; save(); after(); } });
+}
+
+function sleepQuick(d, sl, after){   // 修改已有睡眠记录（概览今日卡 / 历史弹窗共用）
+  after = after || (() => renderHome());
   const html =
     '<div class="form-grid">' +
       '<div><label>入睡</label><input class="input" type="time" id="sq_bed" value="' + esc(sl.bed||'') + '"></div>' +
@@ -1742,7 +1766,7 @@ function sleepQuick(d, sl){
   function dur(){ const bed = $('#sq_bed', b).value, wake = $('#sq_wake', b).value; if(!bed||!wake) return 0; let m = (wake.split(':')[0]*60 + wake.split(':')[1]*1) - (bed.split(':')[0]*60 + bed.split(':')[1]*1); if(m<0)m+=1440; return m===0?1440:m; }
   $('#sq_save', b).addEventListener('click', () => {
     state.sleep[d] = { bed: $('#sq_bed', b).value, wake: $('#sq_wake', b).value, mins: dur(), quality: q };
-    save(); closeDialog(); renderLife(); toast('已更新');
+    save(); closeDialog(); after(); toast('已更新');
   });
   const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
 }
@@ -1811,7 +1835,7 @@ function renderGoals(){
       '<div class="tile" style="box-shadow:none;background:var(--surface-2);min-width:0;padding:11px 10px"><div class="lab">活动量</div><div class="val" style="font-size:15px;line-height:1.35;white-space:normal">' + esc(actLabel) + '</div></div>' +
       '<div class="tile" style="box-shadow:none;background:var(--surface-2);min-width:0;padding:11px 10px"><div class="lab">每日饮水</div><div class="val" style="font-size:19px">' + state.waterTarget + '<span class="unit">杯</span></div></div>' +
     '</div>' +
-    '<div class="tiny muted mt">目标基于 BMR ' + Math.round(bmr()) + ' kcal × 活动系数 ' + state.activity + (state.goal.mode!=='maintain' ? ' 及' + (state.goal.mode==='cut'?'-400':'+300') + ' 调整' : '') + (state.nutrition.auto ? '（自动计算中）' : '（当前为手动设定）') + '；饮水目标用于概览与睡眠饮水页的达标判断。点右上角「修改目标」可调整。</div>' +
+    '<div class="tiny muted mt">目标基于 BMR ' + Math.round(bmr()) + ' kcal × 活动系数 ' + state.activity + (state.goal.mode!=='maintain' ? ' 及' + (state.goal.mode==='cut'?'-400':'+300') + ' 调整' : '') + (state.nutrition.auto ? '（自动计算中）' : '（当前为手动设定）') + '；饮水目标用于概览页「今日饮水」卡的达标判断。点右上角「修改目标」可调整。</div>' +
     '</div>';
 
   const html = goalCard + nutCard;
@@ -2221,7 +2245,7 @@ function runSelfTest(){
   const errs = [];
   try {
     demoData();
-    const views = ['home','diet','train','body','life','goals','stats'];
+    const views = ['home','diet','train','body','goals','stats'];
     views.forEach(v => {
       try { curView = v; rebuildNav(); renderView(); errs.push(v + ':ok'); }
       catch(e){ errs.push(v + ':ERR ' + e.message); }
