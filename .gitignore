@@ -14,3 +14,6 @@ Desktop.ini
 server/data/
 *.db
 *.db-journal
+
+# Agent 工具工作树（嵌套 git，勿入库）
+.cindy-worktrees/

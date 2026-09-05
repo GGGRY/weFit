@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>健康管理 · 管理后台</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛠</text></svg>">
+<link rel="stylesheet" href="css/style.css">
+<style>
+  .adm-wrap{max-width:860px;margin:0 auto;padding:22px clamp(12px,3vw,28px) 60px}
+  .adm-head{display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap}
+  .adm-head .logo{width:36px;height:36px;border-radius:11px;background:linear-gradient(135deg,var(--brand),#0a5c43);display:grid;place-items:center;font-size:18px;color:#fff}
+  .adm-head h1{font-size:19px;margin:0;font-weight:800}
+  .adm-head .sub{color:var(--ink-3);font-size:12px}
+  .adm-head .grow{flex:1}
+  .adm-tabs{display:inline-flex;background:var(--surface-3);border-radius:11px;padding:3px;gap:2px;margin-bottom:14px}
+  .adm-tabs button{border:0;background:transparent;color:var(--ink-2);padding:7px 16px;border-radius:9px;font-size:14px;font-weight:600}
+  .adm-tabs button.active{background:var(--surface);color:var(--brand-ink);box-shadow:0 1px 3px rgba(0,0,0,.12);font-weight:700}
+  .adm-loginbox{max-width:380px;margin:10vh auto 0}
+  .adm-row-ops{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+  .tbl td .mini{width:104px;padding:5px 7px;font-size:13px}
+  .btn.confirm{color:#fff;background:var(--danger);border-color:var(--danger)}
+  .adm-foot{margin-top:26px;color:var(--ink-3);font-size:12px;text-align:center}
+</style>
+</head>
+<body>
+<div class="adm-wrap" id="app"></div>
+<div id="toasts"></div>
+<script>
+'use strict';
+/* =====================================================
+   weFit 管理后台(v4.1)
+   - 三态:未登录登录卡 / 已登录非管理员无权限页 / 管理员工作台
+   - 分页:系统共享库编辑(PUT /api/system/library)+ 用户管理(/api/admin/*)
+   - 危险操作二次确认(按钮变红再点);鉴权靠服务端,本页只呈现
+   ===================================================== */
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39"}[c]));
+const fmtDate = ms => new Date(ms).toLocaleDateString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit' });
+
+/* 主题:跟随上次选择在两个账户态间保持一致 */
+document.documentElement.setAttribute('data-theme', localStorage.getItem('jjhealth_admin_theme') || 'light');
+function toggleTheme(){
+  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('jjhealth_admin_theme', next);
+  const b = $('#thBtn'); if(b) b.textContent = next === 'dark' ? '☀️ 浅色' : '🌙 深色';
+}
+function toast(msg, isErr){
+  const box = $('#toasts'); const el = document.createElement('div');
+  el.className = 'toast' + (isErr ? ' err' : ''); el.textContent = msg; box.appendChild(el);
+  setTimeout(()=>{ el.style.opacity='0'; el.style.transition='opacity .3s'; }, 2400);
+  setTimeout(()=> el.remove(), 2800);
+}
+
+let me = null;          /* {username, role} */
+let tab = 'users';      /* users | lib */
+let libDraft = null;    /* 系统库编辑草稿 */
+
+async function api(method, path, body){
+  const opt = { method, headers: {} };
+  if (body !== undefined) opt.headers['Content-Type'] = 'application/json';
+  if (body !== undefined) opt.body = JSON.stringify(body);
+  const r = await fetch('/api' + path, opt);
+  let j = null; try { j = await r.json(); } catch(e){}
+  return { status: r.status, j };
+}
+function on401(){ me = null; renderLogin('会话已过期，请重新登录'); }
+
+/* ---------- 登录 ---------- */
+function renderLogin(note){
+  $('#app').innerHTML =
+    '<div class="auth-card adm-loginbox">' +
+      '<div class="auth-logo"><div class="logo">🛠</div>管理后台</div>' +
+      '<div class="auth-sub">仅管理员账户可登录 · <a href="/" style="color:var(--brand-ink)">← 返回用户端</a></div>' +
+      '<div class="field"><label>用户名</label><input class="input" id="lg_u" autocomplete="username"></div>' +
+      '<div class="field"><label>密码</label><input class="input" id="lg_p" type="password" autocomplete="current-password"></div>' +
+      '<button class="btn primary block" id="lg_go">登录后台</button>' +
+      '<div class="auth-err" id="lg_err"></div>' +
+      (note ? '<div class="auth-note">' + esc(note) + '</div>' : '') +
+    '</div>';
+  const go = async () => {
+    const username = $('#lg_u').value.trim(), password = $('#lg_p').value;
+    if (!username || !password) { $('#lg_err').textContent = '请填写用户名与密码'; return; }
+    const { status, j } = await api('POST', '/login', { username, password });
+    if (status === 401) { $('#lg_err').textContent = '用户名或密码不正确'; return; }
+    if (status !== 200) { $('#lg_err').textContent = (j && j.message) || '登录失败'; return; }
+    $('#lg_err').textContent = '';
+    me = { username: j.username, role: j.role };
+    boot();
+  };
+  $('#lg_go').addEventListener('click', go);
+  ['lg_u','lg_p'].forEach(id => $('#' + id).addEventListener('keydown', e => { if (e.key === 'Enter') go(); }));
+  $('#lg_u').focus();
+}
+function renderForbidden(){
+  $('#app').innerHTML =
+    '<div class="auth-card adm-loginbox">' +
+      '<div class="auth-logo"><div class="logo">🚫</div>无管理权限</div>' +
+      '<div class="auth-sub">账户「' + esc(me.username) + '」不是管理员。<br>请联系管理员在后台把你设为管理员，或退出后换账户登录。</div>' +
+      '<div class="d-f" style="justify-content:center">' +
+        '<button class="btn" id="fb_back">← 返回用户端</button>' +
+        '<button class="btn danger" id="fb_logout">退出登录</button>' +
+      '</div>' +
+    '</div>';
+  $('#fb_back').addEventListener('click', () => { location.href = '/'; });
+  $('#fb_logout').addEventListener('click', doLogout);
+}
+async function doLogout(){
+  await api('POST', '/logout', {});
+  me = null; renderLogin();
+}
+
+/* ---------- 工作台 ---------- */
+function renderShell(){
+  $('#app').innerHTML =
+    '<div class="adm-head">' +
+      '<div class="logo">🛠</div>' +
+      '<div><h1>健康管理 · 管理后台</h1><div class="sub">已登录：' + esc(me.username) + '（管理员）</div></div>' +
+      '<span class="grow"></span>' +
+      '<button class="btn sm" id="thBtn">主题</button>' +
+      '<a class="btn sm" href="/" style="text-decoration:none">用户端</a>' +
+      '<button class="btn sm" id="outBtn">退出登录</button>' +
+    '</div>' +
+    '<div class="adm-tabs"><button data-t="users">👥 用户管理</button><button data-t="lib">📚 系统共享库</button></div>' +
+    '<div id="tabBody"></div>' +
+    '<div class="adm-foot">第一个注册的账户自动成为管理员 · 系统至少保留一名管理员 · 撤权即时生效，被撤者仍正常使用用户端</div>';
+  $('#thBtn').textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️ 浅色' : '🌙 深色';
+  $('#thBtn').addEventListener('click', toggleTheme);
+  $('#outBtn').addEventListener('click', doLogout);
+  $$('.adm-tabs button').forEach(b => b.addEventListener('click', () => { tab = b.dataset.t; paintTabs(); renderTab(); }));
+  paintTabs();
+}
+function paintTabs(){ $$('.adm-tabs button').forEach(b => b.classList.toggle('active', b.dataset.t === tab)); }
+function renderTab(){ if (tab === 'users') renderUsers(); else renderLib(); }
+
+/* ---------- 用户管理 ---------- */
+async function renderUsers(){
+  const box = $('#tabBody');
+  box.innerHTML = '<div class="tiny muted">载入用户列表…</div>';
+  const { status } = await loadUsers(box);
+  if (status === 401) on401();
+}
+let usersList = [];
+async function loadUsers(box){
+  const { status, j } = await api('GET', '/admin/users');
+  if (status === 403) { /* 中途被撤权 */ renderForbidden(); return { status }; }
+  if (status !== 200) { box.innerHTML = '<div class="card"><div class="empty">载入失败（HTTP ' + status + '）</div></div>'; return { status }; }
+  usersList = j.users;
+  box.innerHTML =
+    '<div class="card"><h3>👥 用户管理（' + usersList.length + ' 个账户）</h3>' +
+    '<div style="overflow-x:auto"><table class="tbl"><thead><tr>' +
+      '<th>账户</th><th>昵称</th><th>角色</th><th>数据概况</th><th>同步版本</th><th>注册于</th><th style="text-align:right">操作</th>' +
+    '</tr></thead><tbody>' +
+    usersList.map(u => {
+      const c = u.counts || {};
+      const meta = '饮食条目 ' + (c.meals || 0) + ' · 身体 ' + (c.body || 0) + ' · 训练 ' + (c.workouts || 0);
+      return '<tr data-u="' + esc(u.username) + '">' +
+        '<td><b>' + esc(u.username) + '</b>' + (u.username === me.username ? ' <span class="chip slot" style="font-size:10px;padding:1px 7px">当前</span>' : '') + '</td>' +
+        '<td>' + esc(u.name || '—') + '</td>' +
+        '<td>' + (u.role === 'admin' ? '<span class="chip b3" style="padding:1px 9px;font-size:12px">管理员</span>' : '<span class="chip" style="padding:1px 9px;font-size:12px">用户</span>') + '</td>' +
+        '<td class="tiny muted">' + esc(meta) + '</td>' +
+        '<td class="tiny">rev ' + u.rev + '</td>' +
+        '<td class="tiny muted">' + fmtDate(u.createdAt) + '</td>' +
+        '<td><div class="adm-row-ops">' +
+          '<button class="btn sm" data-act="role">' + (u.role === 'admin' ? '撤销管理员' : '设为管理员') + '</button>' +
+          '<input class="input mini" type="password" placeholder="新密码" data-act="pw">' +
+          '<button class="btn sm ghost" data-act="pw">重置密码</button>' +
+          '<button class="btn sm ghost" data-act="del" style="color:var(--danger)">删除</button>' +
+        '</div></td></tr>';
+    }).join('') +
+    '</tbody></table></div>' +
+    '<div class="tiny muted" style="margin-top:10px">重置密码会让该账户(含你自己)的所有设备下线并需重新登录;删除账户会级联清空其全部记录,不可恢复。</div></div>';
+  bindUsers();
+  return { status };
+}
+function bindUsers(){
+  $$('#tabBody tbody tr').forEach(tr => {
+    const username = tr.dataset.u;
+    const row = usersList.find(u => u.username === username);
+    const btnRole = tr.querySelector('[data-act="role"]');
+    const pwInp = tr.querySelector('input[data-act="pw"]');
+    const btnPw = tr.querySelector('button[data-act="pw"]');
+    const btnDel = tr.querySelector('[data-act="del"]');
+    btnRole.addEventListener('click', async () => {
+      const next = row.role === 'admin' ? 'user' : 'admin';
+      const r = await api('PUT', '/admin/role', { username, role: next });
+      if (r.status === 401) return on401();
+      if (r.status === 403) return renderForbidden();   /* 自己已被撤权 */
+      if (r.status === 400 && r.j && r.j.error === 'last_admin') return toast('系统至少保留一名管理员', true);
+      if (r.status !== 200) return toast('操作失败（HTTP ' + r.status + '）', true);
+      if (r.j.self && next === 'user') { toast('你已不再是管理员，后台即将返回登录视图'); me = { username: me.username, role: 'user' }; renderForbidden(); return; }
+      toast(next === 'admin' ? '已设为管理员' : '已撤销管理员'); loadUsers($('#tabBody'));
+    });
+    btnPw.addEventListener('click', async () => {
+      const password = pwInp.value;
+      if (password.length < 6) return toast('新密码至少 6 位', true);
+      if (!confirm2(btnPw, '确认重置?')) return;
+      const r = await api('PUT', '/admin/password', { username, password });
+      if (r.status === 401) return on401();
+      if (r.status === 403) return renderForbidden();
+      if (r.status !== 200) return toast((r.j && r.j.message) || '重置失败', true);
+      if (r.j.self) { toast('你的密码已重置，需重新登录'); me = null; renderLogin(); return; }
+      toast('已重置，' + username + ' 需重新登录'); loadUsers($('#tabBody'));
+    });
+    btnDel.addEventListener('click', async () => {
+      if (!confirm2(btnDel, '确认删除?')) return;
+      const r = await api('DELETE', '/admin/users', { username });
+      if (r.status === 401) return on401();
+      if (r.status === 403) return renderForbidden();
+      if (r.status === 400) return toast((r.j && r.j.message) || (r.j && r.j.error === 'cannot_delete_self' ? '不能删除自己的账户' : '操作被拒绝'), true);
+      if (r.status !== 200) return toast('删除失败（HTTP ' + r.status + '）', true);
+      toast('已删除账户 ' + username + ' 及其全部数据'); loadUsers($('#tabBody'));
+    });
+  });
+}
+/* 二次确认:第一次点击把按钮变红改文案,5 秒内再点一次才执行 */
+const confirmTimers = new WeakMap();
+function confirm2(btn, text){
+  if (btn.dataset.armed === '1') {
+    clearTimeout(confirmTimers.get(btn)); btn.dataset.armed = ''; btn.classList.remove('confirm'); btn.textContent = btn.dataset.orig;
+    return true;
+  }
+  btn.dataset.orig = btn.textContent; btn.textContent = text; btn.classList.add('confirm'); btn.dataset.armed = '1';
+  confirmTimers.set(btn, setTimeout(() => { btn.dataset.armed = ''; btn.classList.remove('confirm'); btn.textContent = btn.dataset.orig; }, 5000));
+  return false;
+}
+
+/* ---------- 系统共享库 ---------- */
+async function renderLib(){
+  const box = $('#tabBody');
+  box.innerHTML = '<div class="tiny muted">载入系统库…</div>';
+  const { status, j } = await api('GET', '/system/library');
+  if (status === 401) return on401();
+  if (status !== 200) { box.innerHTML = '<div class="card"><div class="empty">载入失败（HTTP ' + status + '）</div></div>'; return; }
+  if (!libDraft) libDraft = { foods: j.foods, exercises: j.exercises };  /* 切分页保留未保存的草稿；「放弃修改并重载」显式重置 */
+  paintLib();
+}
+function paintLib(){
+  const box = $('#tabBody');
+  box.innerHTML =
+    '<div class="card"><h3><span>🥗 食物库（' + libDraft.foods.length + '）</span></h3>' +
+      libDraft.foods.map((f, i) =>
+        '<div class="lrow"><div class="grow"><div class="b small">' + esc(f.name) + '</div>' +
+        '<div class="sub">' + (f.per100 ? ('每100g：' + Math.round(f.per100.kcal || 0) + ' kcal · P' + (f.per100.p || 0) + ' C' + (f.per100.c || 0) + ' F' + (f.per100.f || 0)) : '无营养表') + '</div></div>' +
+        '<button class="iconbtn2" data-df="' + i + '" style="color:var(--danger)">🗑</button></div>').join('') +
+      '<div class="field" style="display:flex;gap:8px;margin-top:8px"><input class="input" id="lf_n" placeholder="新食物名" style="flex:1.2"><input class="input" id="lf_k" type="number" placeholder="kcal/100g" style="width:100px"></div>' +
+      '<div class="field" style="display:flex;gap:8px"><input class="input" id="lf_p" type="number" placeholder="蛋白 g" style="flex:1"><input class="input" id="lf_c" type="number" placeholder="碳水 g" style="flex:1"><input class="input" id="lf_f" type="number" placeholder="脂肪 g" style="flex:1"><button class="btn primary" id="lf_add">＋ 食物</button></div>' +
+    '</div>' +
+    '<div class="card"><h3><span>🏋️ 动作库（' + libDraft.exercises.length + '）</span></h3>' +
+      libDraft.exercises.map((e, i) =>
+        '<div class="lrow"><div class="grow"><div class="b small">' + esc(e.name) + '</div><div class="sub">' + esc(e.muscle || '其他') + '</div></div>' +
+        '<button class="iconbtn2" data-dx="' + i + '" style="color:var(--danger)">🗑</button></div>').join('') +
+      '<div class="field" style="display:flex;gap:8px;margin-top:8px;align-items:end"><div style="flex:1.4"><label class="tiny muted">名称</label><input class="input" id="lx_n" placeholder="新动作名"></div><div style="width:130px"><label class="tiny muted">肌群</label><select class="select" id="lx_m">' + ['胸','背','腿','肩','手臂','核心','有氧','其他'].map(m => '<option>' + m + '</option>').join('') + '</select></div><button class="btn primary" id="lx_add">＋ 动作</button></div>' +
+    '</div>' +
+    '<div class="d-f" style="position:static"><button class="btn ghost" id="lib_reload">放弃修改并重载</button><button class="btn primary" id="lib_save">保存系统库</button></div>' +
+    '<div class="tiny muted" style="margin-top:8px">保存后对所有用户立即可见（用户端「系统库」页）。已注册用户已有的个人库不会被追溯改动，用户可自行从系统库挑入新条目。</div>';
+  $$('[data-df]', box).forEach(b => b.addEventListener('click', () => { libDraft.foods.splice(+b.dataset.df, 1); paintLib(); }));
+  $$('[data-dx]', box).forEach(b => b.addEventListener('click', () => { libDraft.exercises.splice(+b.dataset.dx, 1); paintLib(); }));
+  $('#lf_add').addEventListener('click', () => {
+    const name = $('#lf_n').value.trim(); if (!name) return toast('请填写食物名', true);
+    libDraft.foods.push({ name, per100: { kcal: +$('#lf_k').value || 0, p: +$('#lf_p').value || 0, c: +$('#lf_c').value || 0, f: +$('#lf_f').value || 0 } });
+    paintLib();
+  });
+  $('#lx_add').addEventListener('click', () => {
+    const name = $('#lx_n').value.trim(); if (!name) return toast('请填写动作名', true);
+    libDraft.exercises.push({ name, muscle: $('#lx_m').value });
+    paintLib();
+  });
+  $('#lib_reload').addEventListener('click', () => { libDraft = null; renderLib(); });
+  $('#lib_save').addEventListener('click', async () => {
+    const body = { foods: libDraft.foods, exercises: libDraft.exercises };
+    const r = await api('PUT', '/system/library', body);
+    if (r.status === 401) return on401();
+    if (r.status === 403) return renderForbidden();
+    if (r.status !== 200) return toast((r.j && r.j.message) || '保存失败（HTTP ' + r.status + '）', true);
+    libDraft = null; toast('系统库已保存'); renderLib();
+  });
+}
+
+/* ---------- 启动 ---------- */
+async function boot(){
+  if (!me) {
+    const { status, j } = await api('GET', '/me');
+    if (status === 200) me = { username: j.username, role: j.role };
+    else { renderLogin(); return; }
+  }
+  if (me.role !== 'admin') {
+    /* 本地记录可能过期，以 admin API 实测为准 */
+    const { status } = await api('GET', '/admin/users');
+    if (status === 403) { renderForbidden(); return; }
+    if (status === 401) { on401(); return; }
+    me.role = 'admin';   /* 中途被提升过 */
+  }
+  renderShell(); renderTab();
+}
+boot();
+</script>
+</body>
+</html>

@@ -1,7 +1,19 @@
 /* =====================================================
    常量与工具
 ===================================================== */
-const STORE_KEY = 'jjhealth_v2';
+/* 离线缓存按账户隔离:v3 起键名带用户名,同浏览器多账户互不污染 */
+const AUTH_KEY = 'jjhealth_auth_user';
+const AUTH_ROLE_KEY = 'jjhealth_auth_role';
+function storeWho(){
+  return (typeof me !== 'undefined' && me && me.username) || localStorage.getItem(AUTH_KEY) || 'guest';
+}
+function storeKey(){ return 'jjhealth_v3:' + storeWho(); }
+/* 同步元数据:记录「最后一次与服务器对齐时的 rev」+ 是否有未推送改动(dirty)。
+ * 用于关闭页面期间发生过的离线编辑:重开时与服务器 rev 比对,分叉则弹窗人工裁决,
+ * 绝不在未提示的情况下用服务器数据覆盖本机未同步改动(也不反向静默覆盖)。 */
+function metaKey(){ return 'jjhealth_v3meta:' + storeWho(); }
+function metaGet(){ try { return JSON.parse(localStorage.getItem(metaKey())); } catch(e){ return null; } }
+function metaSet(m){ try { localStorage.setItem(metaKey(), JSON.stringify(m)); } catch(e){} }
 const DAY_CN = ['日','一','二','三','四','五','六'];
 const SLOTS = [
   {id:'breakfast', label:'早餐', ic:'🍳'},
@@ -160,13 +172,34 @@ function adoptRaw(raw){
   }
   return false;
 }
+/* ---------- 账户身份(v4) ----------
+ * me = {username, role, user:{id,…}} | null。所有请求由服务端按登录身份绑定数据,
+ * 客户端 USERS 字典恒收敛为「单一成员 = 本账户档案」(adoptRaw/bootUsers/导入后重挂)。 */
+let me = null;
+function selfUid(){ return (me && me.user && me.user.id) || null; }
+function normalizeSelfTree(){
+  const sid = selfUid(); if(!sid || !USERS) return;
+  let u = USERS.users[USERS.active] || null;
+  if(!u){ const k = Object.keys(USERS.users)[0]; if(k) u = USERS.users[k]; }
+  USERS.users = {}; USERS.active = null;
+  if(!u){
+    u = freshUserData();
+    u.name = (me.user && me.user.name) || '我';
+    u.avatar = (me.user && me.user.avatar) || '🙂';
+    u.color = 'green';
+  }
+  u.id = sid; if(!u.name) u.name = '我';
+  USERS.users[sid] = u; USERS.active = sid;
+}
 function bootUsers(){
   let raw = null;
-  try { raw = JSON.parse(localStorage.getItem(STORE_KEY)); } catch(e){ raw = null; }
-  if(adoptRaw(raw)) return;
-  // —— 全新开始：建一个默认成员「我」——
+  try { raw = JSON.parse(localStorage.getItem(storeKey())); } catch(e){ raw = null; }
+  if(adoptRaw(raw)){ normalizeSelfTree(); return; }
+  // —— 无本机缓存:以登录账户身份建单人档案 ——
   USERS = { theme:'light', onboarded:false, shared: freshShared(), users:{}, active:null };
-  const u = newUser('我', '🙂', 'green');
+  const sid = selfUid();
+  const u = newUser((me && me.user && me.user.name) || '我', (me && me.user && me.user.avatar) || '🙂', 'green');
+  if(sid) u.id = sid;
   USERS.users[u.id] = u; USERS.active = u.id;
 }
 function activeUser(){ return USERS.users[USERS.active]; }
@@ -181,38 +214,63 @@ function persistActive(){
 }
 async function load(){
   /* 启动顺序：先问服务器（局域网约 1-3ms），不可达才降级到本机 localStorage。
-   * 服务器为空时，本次 save() 会把本机数据自动上推 = 首次迁移。 */
+   * 服务器为空时，本次 save() 会把本机数据自动上推 = 首次建档。
+   * v4.1 防丢改动：本机缓存带 dirty 标记（上次关闭时有未推送编辑）时——
+   *   服务器 rev 未动 → 直接补推本机；rev 动了 → 弹窗人工裁决，绝不静默覆盖任何一边。 */
   const remote = await fetchState();
-  if(remote && remote.data && adoptRaw(remote.data)){
-    srv.rev = remote.rev;
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(USERS)); } catch(e){}  // 服务器数据回写本机缓存
+  if(remote){
+    const meta = metaGet();
+    if(remote.data && (!meta || !meta.dirty)){
+      srv.rev = remote.rev;
+      adoptRaw(remote.data);
+      normalizeSelfTree();
+      try { localStorage.setItem(storeKey(), JSON.stringify(USERS)); } catch(e){}  // 服务器数据回写本机缓存
+      metaSet({ rev: remote.rev, dirty: false });
+    } else {
+      srv.rev = remote.rev;   // 服务器在线（含空库 rev=0 的首次上推场景）
+      bootUsers();
+      if(remote.data && meta && meta.dirty && meta.rev !== remote.rev){
+        const useServer = confirm('检测到上次退出时有未同步到服务器的本机改动，而服务器上本账户又有更新的数据（其他设备写入）。\n\n【确定】用服务器数据刷新本机（本机未同步的改动会被放弃）\n【取消】用本机数据覆盖服务器（其他设备后写入的改动会丢失）');
+        if(useServer){
+          adoptRaw(remote.data);
+          normalizeSelfTree();
+          try { localStorage.setItem(storeKey(), JSON.stringify(USERS)); } catch(e){}
+          metaSet({ rev: remote.rev, dirty: false });
+          toast('已采用服务器数据');
+        } else {
+          metaSet({ rev: remote.rev, dirty: true });   /* 本机为准：下方 save() 会带着 rev 推送覆盖 */
+          srv.blindNext = false;
+          toast('将以本机数据覆盖服务器');
+        }
+      } else if(meta && meta.dirty){
+        metaSet({ rev: remote.rev, dirty: true });     /* 服务器没动过：直接补推本机 */
+      }
+    }
   } else {
-    if(remote) srv.rev = remote.rev;   // 服务器在线但为空：rev=0
-    bootUsers();
+    bootUsers();   /* 完全离线：读本机缓存，dirty 状态原样保留，等下次在线裁决/补推 */
   }
   materialize(); applyTheme(); save();
 }
 function save(){
   if(state) persistActive();
   if(state && state.theme) USERS.theme = state.theme;
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(USERS)); }
+  try { localStorage.setItem(storeKey(), JSON.stringify(USERS)); }
   catch(e){ toast('保存失败：本地存储空间不足', true); }
+  const meta = metaGet() || { rev: null, dirty: false };
+  meta.dirty = true;   /* 有未推送改动；doPush 成功后清零 */
+  metaSet(meta);
   queuePush();   // 落盘后 600ms 防抖推送服务器
 }
 function wipeAll(){
-  localStorage.removeItem(STORE_KEY);
+  /* 只清本人的数据(保留昵称/头像),其他账户不受影响 */
+  const sid = USERS.active;
+  const keep = USERS.users[sid] || {};
+  localStorage.removeItem(storeKey());
+  const nu = freshUserData();
+  nu.id = sid; nu.name = keep.name; nu.avatar = keep.avatar; nu.color = keep.color;
   USERS = { theme:'light', onboarded:false, shared: freshShared(), users:{}, active:null };
-  const u = newUser('我', '🙂', 'green');
-  USERS.users[u.id] = u; USERS.active = u.id;
-  materialize(); applyTheme(); go('home');
-}
-function switchUser(id){
-  if(id === USERS.active) return;
-  save();
-  USERS.active = id;
-  materialize();
-  save();
-  toast('已切换到「' + activeUser().name + '」');
+  if(sid){ USERS.users[sid] = nu; USERS.active = sid; }
+  materialize(); applyTheme(); save(); go('home');
 }
 
 /* ---------- 服务器同步层 ----------
@@ -232,17 +290,33 @@ function srvFetch(path, opts, timeout){
 async function fetchState(){
   try {
     const r = await srvFetch('/state', { method: 'GET' }, 3000);
+    if(r.status === 401){ authExpired(); return null; }
     if(!r.ok) throw new Error('HTTP ' + r.status);
     const j = await r.json();
     srv.online = true;
+    /* 从服务器树中捕获本人 uid(离线缓存重挂 / 校验账户身份) */
+    if(j && j.data && j.data.users){
+      const su = Object.keys(j.data.users)[0];
+      if(su){ me = me || {}; me.user = Object.assign({}, me.user, { id: su }); normalizeSelfTree(); }
+    }
     return j;                    /* {rev, data|null} */
   } catch(e){
     srv.online = false;
     return null;
   }
 }
+/* 会话失效(401):停同步、清工作区、弹登录门(不 reload,留给同页重登) */
+function authExpired(){
+  if(srv.pushTimer){ clearTimeout(srv.pushTimer); srv.pushTimer = null; }
+  if(srv.retryTimer){ clearTimeout(srv.retryTimer); srv.retryTimer = null; }
+  srv.online = null; srv.rev = null; srv.blindNext = false; srv.lastSync = null;
+  me = null;
+  USERS = null; state = null;
+  const v = document.getElementById('view'); if(v) v.innerHTML = '';
+  showAuth('会话已过期,请重新登录');
+}
 function queuePush(){
-  if(srv.fatal) return;
+  if(srv.fatal || !me) return;   /* 未登录/会话失效时不推(离线只落本地缓存) */
   if(srv.pushTimer) clearTimeout(srv.pushTimer);
   srv.pushTimer = setTimeout(() => { srv.pushTimer = null; doPush(); }, 600);
 }
@@ -261,24 +335,30 @@ async function doPush(){
       body: JSON.stringify(srv.blindNext ? { data: USERS } : { rev: srv.rev, data: USERS }),
     }, 8000);
   } catch(e){ srv.online = false; refreshSyncStatus(); scheduleRetry(); return; }
+  if(r.status === 401){ authExpired(); return; }
   if(r.status === 409){ await handleConflict(); return; }
   if(!r.ok){ srv.fatal = true; toast('服务器拒绝了同步（HTTP ' + r.status + '），本机改动仍保存在本地', true); refreshSyncStatus(); return; }
   const j = await r.json().catch(() => ({}));
-  if(typeof j.rev === 'number') srv.rev = j.rev;
+  if(typeof j.rev === 'number'){
+    srv.rev = j.rev;
+    metaSet({ rev: j.rev, dirty: false });   /* 推送成功 = 本机与服务器对齐 */
+  }
   srv.blindNext = false;
   srv.online = true;
   srv.lastSync = new Date();
   refreshSyncStatus();
 }
 async function handleConflict(){
-  /* rev 落后 = 另一台设备先完成了同步。两种走向都明示，绝不静默丢数据 */
-  const useServer = confirm('服务器上有其他设备更新的数据。\n\n【确定】用服务器数据刷新本机（本机未同步的改动会被放弃）\n【取消】用本机数据覆盖服务器（其他设备后写入的改动会丢失）');
+  /* rev 落后 = 本账户的另一台设备先完成了同步。两种走向都明示，绝不静默丢数据 */
+  const useServer = confirm('服务器上（本账户的其他设备）有更新的数据。\n\n【确定】用服务器数据刷新本机（本机未同步的改动会被放弃）\n【取消】用本机数据覆盖服务器（其他设备后写入的改动会丢失）');
   if(useServer){
     const fresh = await fetchState();
     if(fresh && fresh.data && adoptRaw(fresh.data)){
       srv.rev = fresh.rev;
+      normalizeSelfTree();
       materialize(); applyTheme();
-      try { localStorage.setItem(STORE_KEY, JSON.stringify(USERS)); } catch(e){}
+      try { localStorage.setItem(storeKey(), JSON.stringify(USERS)); } catch(e){}
+      metaSet({ rev: fresh.rev, dirty: false });   /* 采用服务器 = 已对齐 */
       go(curView);
       toast('已更新为服务器最新数据');
     } else if(fresh){
@@ -299,7 +379,8 @@ function syncStatusText(){
   if(srv.online === null) return '🟢 正在连接同步服务器…';
   if(!srv.online) return '🟠 同步服务器离线：数据暂存本机，每 30 秒自动重试，服务器恢复后自动补推';
   const t = srv.lastSync ? ' · 最近同步 ' + srv.lastSync.toLocaleTimeString('zh-CN', { hour12: false }) : ' · 等待首次同步';
-  return '🟢 已连接同步服务器（数据版本 ' + srv.rev + '）' + t;
+  const who = me && me.username ? '（' + me.username + '）' : '';
+  return '🟢 已登录' + who + ' · 同步正常（数据版本 ' + srv.rev + '）' + t;
 }
 function refreshSyncStatus(){
   const el = document.getElementById('st_sync');
@@ -432,20 +513,14 @@ function demoData(){
   if(!USERS.shared.foods || !USERS.shared.foods.length) USERS.shared.foods = seedFoodArr();
   if(!USERS.shared.exercises || !USERS.shared.exercises.length) USERS.shared.exercises = seedExArr();
   const foods = USERS.shared.foods, ex = USERS.shared.exercises;
-  // 重置当前用户数据（保留名字/头像/颜色），灌入丰富演示数据
+  // 重置当前账户数据（保留名字/头像/颜色），灌入丰富演示数据
   const u = activeUser();
   Object.assign(u, freshUserData());
   seedRichMember(u, t, foods, ex);
-  // 若还没有第二人，加一位示例成员，方便体验“切换用户”
-  if(userCount() === 1){
-    const p = newUser('示例成员', '🐱', 'blue');
-    seedPartnerMember(p, t, foods);
-    USERS.users[p.id] = p;
-  }
   materialize();
   USERS.theme = state.theme;
   save(); go('home');
-  toast('已载入演示数据，共 2 位成员，点右上角切换');
+  toast('已载入演示数据');
 }
 function seedRichMember(u, t, foods, ex){
   const p = u.profile;
@@ -539,26 +614,6 @@ function seedRichMember(u, t, foods, ex){
   u.body.sort((a,b) => a.date < b.date ? -1 : 1);
   u.workouts.sort((a,b) => a.date < b.date ? -1 : 1);
 }
-function seedPartnerMember(p, t, foods){
-  p.profile = { gender:'female', birthYear:1996, height:162, currentKg:54.5 };
-  p.goal = { mode:'cut', startKg:56.5, targetKg:52, targetDate:addDays(t, 90), note:'' };
-  p.activity = 1.2; p.waterTarget = 8;
-  p.nutrition = calcNutritionFor(p);
-  let w = 56.2;
-  for(let i = 90; i >= 0; i -= 4){ w = Math.max(53.8, round(w - (Math.random()*0.35 + 0.05), 1)); p.body.push({ date:addDays(t,-i), weight: w }); }
-  const lb2 = p.body[p.body.length-1]; upsertOn(lb2, { weight:54.5, waist:65.5 });
-  p.body.sort((a,b) => a.date < b.date ? -1 : 1);
-  // 今天的餐样例（用共享食物库）
-  p.meals[t] = { breakfast:[], lunch:[], dinner:[], snack:[] };
-  const gmap = { 燕麦片:60, 牛奶:250, 鸡蛋:100, 苹果:150, 米饭:150, 鸡胸肉:120, 西兰花:150, 红薯:200 };
-  [['breakfast',['燕麦片','牛奶','鸡蛋','苹果']],['lunch',['米饭','鸡胸肉','西兰花']],['dinner',['红薯','鸡胸肉','西兰花']]].forEach(([slot,names]) => {
-    names.forEach(nm => { const fo = foods.find(f => f.name === nm); if(fo) p.meals[t][slot].push(mealItem(fo, (gmap[nm]||100)*(0.85+Math.random()*0.3))); });
-  });
-  for(let i = 6; i >= 0; i--) p.water[addDays(t,-i)] = Math.round(5 + Math.random()*4);
-  const sd = addDays(t, -1); p.sleep[sd] = { bed:'00:10', wake:'07:40', mins:450, quality:4 };
-  const sd2 = addDays(t, -2); p.sleep[sd2] = { bed:'23:40', wake:'07:10', mins:450, quality:3 };
-  p.habits.forEach(h => { for(let i = 0; i < 14; i++){ const d = addDays(t,-i); if(Math.random() < 0.65) h.done[d] = true; } });
-}
 function upsertOn(existing, patch){
   Object.keys(patch).forEach(k => { if(patch[k] !== undefined) existing[k] = patch[k]; });
 }
@@ -637,14 +692,14 @@ function renderView(){
   const au = activeUser();
   topbar.innerHTML = '<div class="page-head"><h1>' + titles[curView] + '</h1></div>' +
     '<div class="tools">' +
-      '<button class="userpill" id="userBtn" title="切换成员">' +
+      '<button class="userpill" id="userBtn" title="我的档案 / 退出登录">' +
         '<span class="av avatar-ring" style="--ring:' + userColorHex(au.color) + '">' + esc(au.avatar || '🙂') + '</span>' +
         '<span class="upn">' + esc(au.name) + '</span>' +
       '</button>' +
       '<button class="iconbtn" id="themeToggle" title="切换深色/浅色">' + (state.theme==='dark' ? '☀️' : '🌙') + '</button>' +
       '<button class="iconbtn" id="settingsBtn" title="设置">⚙️</button>' +
     '</div>';
-  $('#userBtn').onclick = openUsers;
+  $('#userBtn').onclick = openProfile;
   $('#themeToggle').onclick = toggleTheme;
   $('#settingsBtn').onclick = openSettings;
   (map[curView])();
@@ -707,7 +762,7 @@ function openSettings(){
     '<div class="tiny" style="margin:10px 0 6px;color:var(--ink-3)">活动量、饮水与营养目标，请在「目标」页的「每日目标」卡片中设置。</div>' +
     '<div class="d-f"><button class="btn ghost" id="st_demo">🚀 演示数据</button><button class="btn ghost" id="st_export">⬇ 导出</button><button class="btn ghost" id="st_import">⬆ 导入</button><button class="btn danger ghost" id="st_wipe">🗑 清空</button><button class="btn primary" id="st_save">保存</button></div>' +
     '<div class="tiny" id="st_sync" style="margin-top:10px;color:var(--ink-3)"></div>' +
-    '<div class="tiny" style="margin-top:4px;color:var(--ink-3)">同一 Wi-Fi 下各设备访问电脑上的地址，读写的是同一份服务器数据，无需手动同步；本机存储仅作离线缓存。历史备份可在上方「导出/导入」搬运。</div>' +
+    '<div class="tiny" style="margin-top:4px;color:var(--ink-3)">各设备登录同一账户，读写的就是同一份服务器数据，无需手动同步；不同账户彼此隔离。本机存储仅作当前账户的离线缓存。历史备份可在上方「导出/导入」搬运。</div>' +
     '<input type="file" id="st_file" accept=".json,application/json" style="display:none">';
   const dlg = showDialog('设置', html, {size:'lg'});
   const b = dlg.box;
@@ -719,12 +774,12 @@ function openSettings(){
   });
   $('#st_export', b).addEventListener('click', () => exportData());
   $('#st_import', b).addEventListener('click', () => {
-    if(!confirm('导入会用备份覆盖当前全部数据（含所有成员），是否继续？建议先「导出」当前数据。')) return;
+    if(!confirm('导入会用备份中的数据覆盖本账户当前数据，是否继续？建议先「导出」留底。\n（多人备份文件只取其中"当前成员"那一份；其他成员请各自登录后再导入）')) return;
     $('#st_file', b).click();
   });
   $('#st_file', b).addEventListener('change', e => { const f = e.target.files[0]; if(f) importData(f); e.target.value = ''; });
-  $('#st_demo', b).addEventListener('click', () => { if(confirm('载入演示数据会覆盖当前成员数据，并追加一位示例成员，确定？')) { demoData(); closeDialog(); } });
-  $('#st_wipe', b).addEventListener('click', () => { if(confirm('真的要清空全部数据吗？此操作不可恢复（会同步清空服务器数据）。')) wipeAll(); });
+  $('#st_demo', b).addEventListener('click', () => { if(confirm('载入演示数据会覆盖本账户当前数据，确定？')) { demoData(); closeDialog(); } });
+  $('#st_wipe', b).addEventListener('click', () => { if(confirm('真的要清空本账户全部数据吗？此操作不可恢复（会同步清空服务器上的本人数据，不影响其他账户）。')) wipeAll(); });
   refreshSyncStatus();
 }
 
@@ -745,17 +800,18 @@ function importData(file){
     try { raw = JSON.parse(rd.result); } catch(e){ toast('文件不是有效的备份 JSON', true); return; }
     if(!adoptRaw(raw)){ toast('无法识别该文件：不是本应用导出的备份', true); return; }
     USERS.onboarded = true;
+    normalizeSelfTree();   /* 多人备份只取"当前成员"一份，重挂为本账户数据 */
     materialize(); applyTheme(); save();
     if(curDialog) closeDialog();
     go('home');
-    toast('导入成功：' + userCount() + ' 位成员');
+    toast('导入成功：已作为本账户数据');
   };
   rd.onerror = () => toast('读取文件失败', true);
   rd.readAsText(file);
 }
 
 /* =====================================================
-   成员（多用户）管理
+   我的档案（v4：一账户一档案，成员切换/增删已退役）
 ===================================================== */
 function userMetaHTML(u){
   const wc = (u.workouts || []).length;
@@ -767,72 +823,44 @@ function colorOpts(sel){
   const labels = {green:'绿', blue:'蓝', orange:'橙', violet:'紫', teal:'青', pink:'粉'};
   return USER_COLORS.map(c => '<option value="' + c.id + '"' + (c.id === sel ? ' selected' : '') + '>' + (labels[c.id] || c.id) + '</option>').join('');
 }
-function openUsers(){
-  const ids = Object.keys(USERS.users);
-  const rows = ids.map(id => {
-    const u = USERS.users[id];
-    const cur = id === USERS.active;
-    const c = userColorHex(u.color);
-    return '<div class="lrow" data-sw="' + id + '" style="cursor:pointer">' +
-      '<span class="av big avatar-ring" style="--ring:' + c + '">' + esc(u.avatar || '🙂') + '</span>' +
-      '<div class="grow"><div class="b">' + esc(u.name) +
-        (cur ? ' <span class="chip" style="background:var(--brand-soft);color:var(--brand-ink);border-color:transparent">当前</span>' : '') + '</div>' +
-      '<div class="sub">' + esc(userMetaHTML(u)) + '</div></div>' +
-      '<button class="iconbtn2" data-edituser="' + id + '" title="编辑资料">✏️</button>' +
-      (ids.length > 1 ? '<button class="iconbtn2" data-deluser="' + id + '" style="color:var(--danger)" title="删除成员">🗑</button>' : '') +
-    '</div>';
-  }).join('');
+function openProfile(){
+  const u = activeUser();
+  const isAdmin = !!(me && me.role === 'admin');
   const html =
-    '<div class="tiny muted" style="margin:-2px 0 10px">每人一份独立档案，切换后整站数据跟随。食物库与动作库全成员共享；档案与营养目标在各人的 ⚙️设置 里调整。</div>' +
-    rows +
-    '<div class="mt" style="border-top:1px dashed var(--line);padding-top:12px">' +
-      '<div class="grid" style="grid-template-columns:74px 1fr 118px auto;gap:8px;align-items:end">' +
-        '<div><label class="tiny muted">头像</label><input class="input" id="nu_av" maxlength="2" value="🙂"></div>' +
-        '<div><label class="tiny muted">姓名</label><input class="input" id="nu_name" placeholder="如：孩子 / 搭档"></div>' +
-        '<div><label class="tiny muted">颜色</label><select class="select" id="nu_color">' + colorOpts('green') + '</select></div>' +
-        '<button class="btn primary" id="nu_add">＋ 添加</button>' +
-      '</div></div>';
-  const dlg = showDialog('成员管理（' + ids.length + ' 人）', html, {size:'lg'});
-  const b = dlg.box;
-  $$('[data-sw]', b).forEach(row => row.addEventListener('click', e => {
-    if(e.target.closest('[data-edituser]') || e.target.closest('[data-deluser]')) return;
-    switchUser(row.dataset.sw); closeDialog(); go(curView);
-  }));
-  $$('[data-edituser]', b).forEach(btn => btn.addEventListener('click', () => openUserEditor(btn.dataset.edituser)));
-  $$('[data-deluser]', b).forEach(btn => btn.addEventListener('click', () => {
-    const id = btn.dataset.deluser;
-    if(userCount() <= 1){ toast('至少保留一位成员', true); return; }
-    if(!confirm('删除「' + USERS.users[id].name + '」会清空其全部记录，不可恢复。确定？')) return;
-    delete USERS.users[id];
-    if(id === USERS.active){ USERS.active = Object.keys(USERS.users)[0]; materialize(); }
-    save(); closeDialog(); go(curView); toast('已删除成员');
-  }));
-  $('#nu_add', b).addEventListener('click', () => {
-    const name = $('#nu_name', b).value.trim();
-    if(!name){ toast('请填写成员姓名', true); return; }
-    const u = newUser(name, $('#nu_av', b).value.trim() || '🙂', $('#nu_color', b).value);
-    USERS.users[u.id] = u; USERS.active = u.id; materialize();
-    save(); closeDialog(); go(curView); toast('已添加「' + name + '」，可在 ⚙️设置 补充其档案');
-  });
-}
-function openUserEditor(id){
-  const u = USERS.users[id];
-  const html =
-    '<div class="tiny muted" style="margin-bottom:10px">仅编辑头像 / 姓名 / 标识色，不影响其任何记录。</div>' +
-    '<div class="form-grid">' +
-      '<div><label>头像（表情）</label><input class="input" id="ue_av" maxlength="2" value="' + esc(u.avatar || '🙂') + '"></div>' +
-      '<div><label>姓名</label><input class="input" id="ue_name" value="' + esc(u.name) + '"></div>' +
-      '<div class="span2"><label>标识色</label><select class="select" id="ue_color">' + colorOpts(u.color) + '</select></div>' +
+    '<div class="lrow" style="border:0;padding-top:0">' +
+      '<span class="av big avatar-ring" style="--ring:' + userColorHex(u.color) + '">' + esc(u.avatar || '🙂') + '</span>' +
+      '<div class="grow"><div class="b">' + esc(u.name) + (isAdmin ? ' <span class="chip" style="background:var(--brand-soft);color:var(--brand-ink);border-color:transparent">管理员</span>' : '') + '</div>' +
+      '<div class="sub">登录账户：' + esc(me ? me.username : '（离线）') + '</div></div>' +
+      '<div class="tiny muted">' + esc(userMetaHTML(u)) + '</div>' +
     '</div>' +
-    '<div class="d-f"><button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="ue_save">保存</button></div>';
-  const dlg = showDialog('编辑成员', html);
+    '<div class="form-grid" style="margin-top:6px">' +
+      '<div><label>头像（表情）</label><input class="input" id="pf_av" maxlength="2" value="' + esc(u.avatar || '🙂') + '"></div>' +
+      '<div><label>昵称</label><input class="input" id="pf_name" value="' + esc(u.name) + '"></div>' +
+      '<div class="span2"><label>标识色</label><select class="select" id="pf_color">' + colorOpts(u.color) + '</select></div>' +
+    '</div>' +
+    '<div class="d-f" style="justify-content:space-between">' +
+      '<span class="row gap8">' +
+        '<button class="btn ghost" id="pf_logout">⎋ 退出登录</button>' +
+      '</span>' +
+      '<button class="btn primary" id="pf_save">保存</button>' +
+    '</div>' +
+    (isAdmin ? '<a class="btn block" style="margin-top:12px;text-decoration:none;justify-content:center" href="/admin" target="_blank" rel="noopener">🛠 进入后台管理（系统库 · 用户权限）→</a>' : '');
+  const dlg = showDialog('我的档案', html);
   const b = dlg.box;
-  $('#ue_save', b).addEventListener('click', () => {
-    const name = $('#ue_name', b).value.trim(); if(!name){ toast('姓名不能为空', true); return; }
-    u.name = name; u.avatar = $('#ue_av', b).value.trim() || '🙂'; u.color = $('#ue_color', b).value;
+  $('#pf_save', b).addEventListener('click', () => {
+    const name = $('#pf_name', b).value.trim(); if(!name){ toast('昵称不能为空', true); return; }
+    u.name = name; u.avatar = $('#pf_av', b).value.trim() || '🙂'; u.color = $('#pf_color', b).value;
     save(); closeDialog(); go(curView); toast('已保存');
   });
-  const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
+  $('#pf_logout', b).addEventListener('click', doLogout);
+}
+async function doLogout(){
+  try { await srvFetch('/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }, 4000); } catch(e){}
+  srv.fatal = true;
+  if(srv.pushTimer){ clearTimeout(srv.pushTimer); srv.pushTimer = null; }
+  me = null;
+  localStorage.removeItem(AUTH_KEY); localStorage.removeItem(AUTH_ROLE_KEY);
+  location.reload();
 }
 
 /* =====================================================
@@ -1048,34 +1076,98 @@ function addMealDialog(date, slot, itemId){
   const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
 }
 
-/* 食物库管理 */
+/* =====================================================
+   系统共享库（v4：管理员维护，普通用户只读；个人库可从中挑入）
+===================================================== */
+let SYS_LIB = null;
+async function fetchSysLib(force){
+  if(SYS_LIB && !force) return SYS_LIB;
+  try {
+    const r = await srvFetch('/system/library', { method: 'GET' }, 4000);
+    if(r.status === 401){ authExpired(); return null; }
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    SYS_LIB = await r.json();
+    return SYS_LIB;
+  } catch(e){ return null; }
+}
+function importFoodFromSys(fo){
+  if(!fo || !fo.name) return false;
+  if(USERS.shared.foods.some(x => x.name === fo.name)){ toast('我的库已有「' + fo.name + '」', true); return false; }
+  const nf = { id: uid(), name: fo.name };
+  if(fo.per100) nf.per100 = Object.assign({}, fo.per100);
+  USERS.shared.foods.push(nf); save();
+  return true;
+}
+function importExerciseFromSys(e){
+  if(!e || !e.name) return false;
+  if(USERS.shared.exercises.some(x => x.name === e.name)){ toast('我的库已有「' + e.name + '」', true); return false; }
+  const ne = { id: uid(), name: e.name };
+  if(e.muscle) ne.muscle = e.muscle;
+  USERS.shared.exercises.push(ne); save();
+  return true;
+}
+function foodRowHTML(f, dataAttr){
+  const sub = f.per100 ? ('每100g：' + Math.round(f.per100.kcal||0) + ' kcal · P' + (f.per100.p||0) + ' C' + (f.per100.c||0) + ' F' + (f.per100.f||0)) : '无营养表';
+  return '<div class="lrow" ' + dataAttr + '><div class="grow"><div class="b">' + esc(f.name) + '</div><div class="sub">' + esc(sub) + '</div></div>';
+}
+
+/* 食物库管理：我的库（可增删）| 系统库（只读 + 挑入我的库） */
 function openFoodLib(){
-  const list = state.foods.map(f =>
-    '<div class="lrow" data-id="' + f.id + '"><div class="grow"><div class="b">' + esc(f.name) + '</div>' +
-    '<div class="sub">每100g：' + Math.round(f.per100.kcal) + ' kcal · P' + f.per100.p + ' C' + f.per100.c + ' F' + f.per100.f + '</div></div>' +
-    '<button class="btn sm ghost" data-add="' + f.id + '">＋记录</button>' +
-    '<button class="iconbtn2" data-delf="' + f.id + '" style="color:var(--danger)">🗑</button></div>').join('');
-  const html =
-    '<div class="field" style="display:flex;gap:8px"><input class="input" id="nf_name" placeholder="新食物名" style="flex:1.2"><input class="input" id="nf_kcal" type="number" placeholder="kcal/100g" style="width:96px"></div>' +
-    '<div class="field" style="display:flex;gap:8px"><input class="input" id="nf_p" type="number" placeholder="蛋白" style="flex:1"><input class="input" id="nf_c" type="number" placeholder="碳水" style="flex:1"><input class="input" id="nf_f" type="number" placeholder="脂肪" style="flex:1"><button class="btn primary" id="nf_add">添加</button></div>' +
-    '<div class="tiny muted" style="margin-bottom:8px">点 ＋ 可直接把它记到今日该餐次：先去饮食页选择餐次。</div>' + list;
-  const dlg = showDialog('食物库', html);
+  const dlg = showDialog('食物库',
+    '<div class="row" style="margin-bottom:10px"><div class="seg" id="fl_seg"></div></div>' +
+    '<div id="fl_body"><div class="tiny muted">载入中…</div></div>');
   const b = dlg.box;
-  $('#nf_add', b).addEventListener('click', () => {
-    const name = $('#nf_name', b).value.trim(); if(!name){ toast('请填名称', true); return; }
-    if(state.foods.some(x => x.name === name)){ toast('该食物已存在', true); return; }
-    state.foods.push({ id:uid(), name, per100:{ kcal:num($('#nf_kcal', b).value), p:num($('#nf_p', b).value), c:num($('#nf_c', b).value), f:num($('#nf_f', b).value) } });
-    save(); openFoodLib();
-  });
-  $$('[data-delf]', b).forEach(btn => btn.addEventListener('click', () => {
-    state.foods = state.foods.filter(f => f.id !== btn.dataset.delf); save(); openFoodLib();
-  }));
-  $$('[data-add]', b).forEach(btn => btn.addEventListener('click', () => {
-    // 加入当日当前打开日期的午餐（用户可在弹窗里选餐次会更好），这里加到日期抽屉对应 slot = 首次点击的餐次已选，暂存
-    const fo = mkFood(btn.dataset.add); if(!fo) return;
-    addMealItem(dietDate, 'snack', mealItem(fo, 100)); save();
-    closeDialog(); renderDiet(); toast('已记到' + dateCN(dietDate) + '加餐，可去修改克数');
-  }));
+  let tab = 'mine';
+  function paintSeg(){
+    $('#fl_seg', b).innerHTML =
+      '<button data-ft="mine" class="' + (tab==='mine'?'active':'') + '">我的库（' + state.foods.length + '）</button>' +
+      '<button data-ft="sys" class="' + (tab==='sys'?'active':'') + '">系统库</button>';
+    $$('#fl_seg [data-ft]', b).forEach(btn => btn.addEventListener('click', () => { tab = btn.dataset.ft; paintSeg(); render(); }));
+  }
+  function renderMine(){
+    const list = state.foods.map(f =>
+      foodRowHTML(f, 'data-id="' + f.id + '"') +
+        '<button class="btn sm ghost" data-add="' + f.id + '">＋记录</button>' +
+        '<button class="iconbtn2" data-delf="' + f.id + '" style="color:var(--danger)">🗑</button></div>').join('');
+    $('#fl_body', b).innerHTML =
+      '<div class="field" style="display:flex;gap:8px"><input class="input" id="nf_name" placeholder="新食物名" style="flex:1.2"><input class="input" id="nf_kcal" type="number" placeholder="kcal/100g" style="width:96px"></div>' +
+      '<div class="field" style="display:flex;gap:8px"><input class="input" id="nf_p" type="number" placeholder="蛋白" style="flex:1"><input class="input" id="nf_c" type="number" placeholder="碳水" style="flex:1"><input class="input" id="nf_f" type="number" placeholder="脂肪" style="flex:1"><button class="btn primary" id="nf_add">添加</button></div>' +
+      '<div class="tiny muted" style="margin-bottom:8px">点 ＋记录 可直接把它记到当日加餐；「系统库」分页可挑选管理员维护的公共食物。</div>' + (list || '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">📚</div>我的食物库是空的，去「系统库」挑一些吧</div>');
+    $('#nf_add', b).addEventListener('click', () => {
+      const name = $('#nf_name', b).value.trim(); if(!name){ toast('请填名称', true); return; }
+      if(state.foods.some(x => x.name === name)){ toast('该食物已存在', true); return; }
+      state.foods.push({ id:uid(), name, per100:{ kcal:num($('#nf_kcal', b).value), p:num($('#nf_p', b).value), c:num($('#nf_c', b).value), f:num($('#nf_f', b).value) } });
+      save(); paintSeg(); renderMine();
+    });
+    $$('[data-delf]', b).forEach(btn => btn.addEventListener('click', () => {
+      const id = btn.dataset.delf;
+      USERS.shared.foods = USERS.shared.foods.filter(f => f.id !== id);
+      state.foods = USERS.shared.foods;
+      save(); paintSeg(); renderMine();
+    }));
+    $$('[data-add]', b).forEach(btn => btn.addEventListener('click', () => {
+      const fo = mkFood(btn.dataset.add); if(!fo) return;
+      addMealItem(dietDate, 'snack', mealItem(fo, 100)); save();
+      closeDialog(); renderDiet(); toast('已记到' + dateCN(dietDate) + '加餐，可去修改克数');
+    }));
+  }
+  async function renderSys(){
+    $('#fl_body', b).innerHTML = '<div class="tiny muted">载入系统库…</div>';
+    const sys = await fetchSysLib();
+    if(tab !== 'sys') return;   /* 载入期间用户切回了我的库 */
+    if(!sys){ $('#fl_body', b).innerHTML = '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">🔌</div>服务器离线，暂时看不到系统库</div>'; return; }
+    $('#fl_body', b).innerHTML =
+      '<div class="tiny muted" style="margin-bottom:8px">系统共享库由管理员在后台维护，只读。点「＋我的库」把它挑进自己的食物库。</div>' +
+      (sys.foods.map((f, i) =>
+        foodRowHTML(f, 'data-sysf="' + i + '"') +
+        '<button class="btn sm ghost" data-impf="' + i + '">＋我的库</button></div>').join('')
+        || '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">🗂</div>系统库暂无食物</div>');
+    $$('[data-impf]', b).forEach(btn => btn.addEventListener('click', () => {
+      if(importFoodFromSys(sys.foods[num(btn.dataset.impf)])){ btn.outerHTML = '<span class="chip b3" style="padding:2px 9px;font-size:12px">已在我的库</span>'; paintSeg(); }
+    }));
+  }
+  function render(){ if(tab === 'mine') renderMine(); else renderSys(); }
+  paintSeg(); renderMine();
 }
 
 /* =====================================================
@@ -1340,8 +1432,20 @@ function openExercisePicker(cb){
   }));
 }
 
-/* ---------- 动作库 ---------- */
+/* ---------- 动作库（我的库 | 系统库） ---------- */
+let exLibTab = 'mine';
 function renderExLib(body){
+  body.innerHTML =
+    '<div class="seg" style="margin-bottom:12px" id="xl_seg">' +
+      '<button data-xlt="mine" class="' + (exLibTab==='mine'?'active':'') + '">我的动作库</button>' +
+      '<button data-xlt="sys" class="' + (exLibTab==='sys'?'active':'') + '">系统动作库</button>' +
+    '</div><div id="xl_body"></div>';
+  $$('[data-xlt]', body).forEach(btn => btn.addEventListener('click', () => { exLibTab = btn.dataset.xlt; renderExLib(body); }));
+  const sub = $('#xl_body', body);
+  if(exLibTab === 'mine') renderExLibMine(sub);
+  else renderExLibSys(sub);
+}
+function renderExLibMine(body){
   const groups = {};
   state.exercises.forEach(e => { (groups[e.muscle] = groups[e.muscle]||[]).push(e); });
   let h = '';
@@ -1350,7 +1454,8 @@ function renderExLib(body){
     h += '<div class="col"><div class="tiny muted" style="font-weight:700;margin:4px 2px 6px">' + esc(m) + '</div>' +
       groups[m].map(e => '<div class="lrow" style="border:0;padding:5px 2px"><div class="grow small">' + esc(e.name) + '</div><button class="iconbtn2" data-delx="' + e.id + '" style="width:26px;height:26px;font-size:11px;color:var(--danger)">🗑</button></div>').join('') + '</div>';
   });
-  body.innerHTML = '<div class="card"><h3>📚 动作库</h3><div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">' + h + '</div>' +
+  body.innerHTML = '<div class="card" style="margin-bottom:0"><h3>📚 我的动作库</h3><div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">' + h + '</div>' +
+    '<div class="tiny muted" style="margin-top:10px">训练中保存的新动作会自动进入这里；「系统动作库」分页可挑入管理员维护的公共动作。</div>' +
     '<div class="row gap8 mt" style="align-items:end">' +
       '<div style="flex:1"><label class="tiny muted">新动作名</label><input class="input" id="nx_name" placeholder="如：窄距俯卧撑"></div>' +
       '<div style="width:120px"><label class="tiny muted">肌群</label><select class="select" id="nx_muscle">' + MUSCLES.map(m => '<option>' + m + '</option>').join('') + '</select></div>' +
@@ -1359,10 +1464,40 @@ function renderExLib(body){
     const name = $('#nx_name', body).value.trim();
     if(!name){ toast('请填写动作名', true); return; }
     state.exercises.push({ id:uid(), name, muscle: $('#nx_muscle', body).value });
-    save(); renderExLib(body); toast('已添加');
+    save(); renderExLib($('#tabBody')); toast('已添加');
   });
   $$('[data-delx]', body).forEach(b => b.addEventListener('click', () => {
-    state.exercises = state.exercises.filter(e => e.id !== b.dataset.delx); save(); renderExLib(body);
+    const id = b.dataset.delx;
+    /* 注意:必须改 USERS.shared.exercises 本体(再重新取引用),只换 state.exercises 指向会同步不生效 */
+    USERS.shared.exercises = USERS.shared.exercises.filter(e => e.id !== id);
+    state.exercises = USERS.shared.exercises;
+    save(); renderExLib($('#tabBody'));
+  }));
+}
+async function renderExLibSys(body){
+  body.innerHTML = '<div class="tiny muted">载入系统库…</div>';
+  const sys = await fetchSysLib();
+  if(exLibTab !== 'sys') return;
+  if(!sys){ body.innerHTML = '<div class="card"><div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">🔌</div>服务器离线，暂时看不到系统库</div></div>'; return; }
+  const groups = {};
+  sys.exercises.forEach(e => { (groups[e.muscle || '其他'] = groups[e.muscle || '其他'] || []).push(e); });
+  let h = '';
+  MUSCLES.forEach(m => {
+    if(!groups[m]) return;
+    h += '<div class="col"><div class="tiny muted" style="font-weight:700;margin:4px 2px 6px">' + esc(m) + '</div>' +
+      groups[m].map((e) => {
+        const owned = USERS.shared.exercises.some(x => x.name === e.name);
+        return '<div class="lrow" style="border:0;padding:5px 2px"><div class="grow small">' + esc(e.name) + '</div>' +
+          (owned ? '<span class="chip b3" style="padding:2px 9px;font-size:12px">已有</span>'
+                 : '<button class="btn sm ghost" data-impex="' + sys.exercises.indexOf(e) + '">＋我的库</button>') + '</div>';
+      }).join('') + '</div>';
+  });
+  body.innerHTML = '<div class="card" style="margin-bottom:0"><h3>🗂 系统动作库（只读）</h3>' +
+    '<div class="tiny muted" style="margin-bottom:8px">由管理员通过后台维护，改动不影响你已有的个人库。</div>' +
+    (h ? '<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">' + h + '</div>'
+       : '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">🗂</div>系统库暂无动作</div>') + '</div>';
+  $$('[data-impex]', body).forEach(btn => btn.addEventListener('click', () => {
+    if(importExerciseFromSys(sys.exercises[num(btn.dataset.impex)])){ renderExLibSys(body); }
   }));
 }
 
@@ -2137,27 +2272,21 @@ function runFTest(){
   });
   T('plans', () => { let mon = null; for(let i = 0; i < 400 && !mon; i++){ const d = addDays(today(), -i); if(weekday(d) === 1) mon = d; } if(!planForDate(mon)) throw new Error('monday-plan-missing'); });
   T('charts', () => { const s1 = lineChartSVG({ points:[{x:'2026-01-01',y:1},{x:'2026-01-02',y:3}], color:CX.brand }); if(s1.indexOf('<svg') < 0) throw new Error('line-no-svg'); const s2 = groupedBarSVG({ days:['2026-01-01','2026-01-02'], series:[{label:'a', color:CX.c1, data:[1,2]}] }); if(s2.indexOf('<rect') < 0) throw new Error('bar-no-rect'); });
-  T('multiUser', () => {
-    if(userCount() < 2) throw new Error('demo-should-have-2-users');
-    const first = USERS.active;
-    const second = Object.keys(USERS.users).find(id => id !== first);
-    upsertBody({ date: today(), weight: 70.5 });
-    const wA = latestVal('weight');
-    switchUser(second);
-    if(latestVal('weight') > wA - 1) throw new Error('switch-not-isolated'); // 第二位体重应明显更轻
-    if(state.profile.gender !== 'female') throw new Error('profile-not-switched');
-    switchUser(first);
-    if(Math.abs((latestVal('weight') || 0) - 70.5) > 0.01) throw new Error('switch-back-lost-data');
+  T('selfTree', () => {
+    /* v4:任何时刻树里只有本账户一位成员 */
+    if(userCount() !== 1) throw new Error('should-have-1-user');
+    const sid = selfUid();
+    if(sid && Object.keys(USERS.users)[0] !== sid) throw new Error('uid-mismatch');
   });
   T('adoptRoundtrip', () => {
     const snap = JSON.parse(JSON.stringify(USERS));
-    if(!adoptRaw(snap)) throw new Error('v3-adopt-fail');
-    materialize();
-    if(userCount() !== 2) throw new Error('count-should-be-2');
+    if(!adoptRaw(snap)) throw new Error('v4-adopt-fail');
+    normalizeSelfTree(); materialize();
+    if(userCount() !== 1) throw new Error('count-should-be-1');
     const leg = { profile:{gender:'male',birthYear:1988,height:180,currentKg:90}, theme:'dark', onboarded:true, foods:[], exercises:[], body:[{date:today(), weight:90}] };
     if(!adoptRaw(leg)) throw new Error('legacy-adopt-fail');
-    materialize();
-    if(userCount() !== 1 || activeUser().name !== '我') throw new Error('legacy-user-fail');
+    normalizeSelfTree(); materialize();
+    if(userCount() !== 1) throw new Error('legacy-user-fail');
     if(activeUser().profile.currentKg !== 90) throw new Error('legacy-kg-fail');
     if(!USERS.shared.foods.length) throw new Error('shared-seed-missing');
   });
@@ -2169,7 +2298,78 @@ function runFTest(){
   box.textContent = L.join('\n');
   document.body.appendChild(box);
 }
-async function init(){
+/* =====================================================
+   登录门(v4 鉴权)
+===================================================== */
+async function apiMe(){
+  try {
+    const r = await srvFetch('/me', { method: 'GET' }, 3000);
+    if(r.status === 401){ me = null; return 'anon'; }
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    me = j;                                  /* {username, role, user:{id, name, …}} */
+    localStorage.setItem(AUTH_KEY, j.username);
+    localStorage.setItem(AUTH_ROLE_KEY, j.role);
+    return 'authed';
+  } catch(e){ return 'offline'; }
+}
+function showAuth(offlineNote){
+  hideAuth();
+  const el = document.createElement('div');
+  el.id = 'authgate'; el.className = 'authgate';
+  el.innerHTML =
+    '<div class="auth-card">' +
+      '<div class="auth-logo"><div class="logo">💪</div>健康管理</div>' +
+      '<div class="auth-sub">登录你的账户 · 数据只属于你，其他账户互不可见</div>' +
+      '<div class="auth-seg"><button data-m="login" class="active">登录</button><button data-m="reg">注册新账户</button></div>' +
+      '<div class="field"><label>用户名</label><input class="input" id="ag_u" autocomplete="username" placeholder="字母/数字/下划线，2-32 位"></div>' +
+      '<div class="field hidden" id="ag_namewrap"><label>昵称</label><input class="input" id="ag_n" placeholder="显示用的名字，如：小陈"></div>' +
+      '<div class="field"><label>密码</label><input class="input" id="ag_p" type="password" autocomplete="current-password" placeholder="至少 6 位"></div>' +
+      '<button class="btn primary block" id="ag_go">登录</button>' +
+      '<div class="auth-err" id="ag_err"></div>' +
+      (offlineNote ? '<div class="auth-note">' + esc(offlineNote) + '</div>' : '') +
+    '</div>';
+  document.body.appendChild(el);
+  const setErr = m => { $('#ag_err', el).textContent = m || ''; };
+  let mode = 'login';
+  $$('.auth-seg button', el).forEach(btn => btn.addEventListener('click', () => {
+    mode = btn.dataset.m;
+    $$('.auth-seg button', el).forEach(x => x.classList.toggle('active', x === btn));
+    $('#ag_namewrap', el).classList.toggle('hidden', mode !== 'reg');
+    $('#ag_go', el).textContent = mode === 'reg' ? '注册并进入' : '登录';
+    $('#ag_p', el).autocomplete = mode === 'reg' ? 'new-password' : 'current-password';
+    setErr('');
+  }));
+  const submit = async () => {
+    setErr('');
+    const username = $('#ag_u', el).value.trim();
+    const password = $('#ag_p', el).value;
+    const name = $('#ag_n', el).value.trim();
+    if(!username || !password){ setErr('请填写用户名与密码'); return; }
+    let r, j = {};
+    try {
+      r = await fetch('/api/' + (mode === 'reg' ? 'register' : 'login'), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(mode === 'reg' ? { username, password, name } : { username, password }),
+      });
+      try { j = await r.json(); } catch(e){}
+    } catch(e){ setErr('连不上服务器：请确认电脑上的服务窗口已开启'); return; }
+    if(r.status === 401){ setErr(mode === 'reg' ? '注册失败：请检查填写内容' : '用户名或密码不正确'); return; }
+    if(r.status === 409){ setErr('该用户名已被占用，换一个'); return; }
+    if(!r.ok){ setErr((j && j.message) || '失败（HTTP ' + r.status + '）'); return; }
+    me = { username: j.username, role: j.role, user: null };
+    localStorage.setItem(AUTH_KEY, j.username);
+    localStorage.setItem(AUTH_ROLE_KEY, j.role);
+    hideAuth();
+    await startMain();
+  };
+  $('#ag_go', el).addEventListener('click', submit);
+  ['ag_u', 'ag_n', 'ag_p'].forEach(id => { const i = $('#' + id, el); if(i) i.addEventListener('keydown', e => { if(e.key === 'Enter') submit(); }); });
+  $('#ag_u', el).focus();
+}
+function hideAuth(){ const el = document.getElementById('authgate'); if(el) el.remove(); }
+
+async function startMain(offlineBoot){
   await load();
   rebuildNav();
   const qs = new URLSearchParams(location.search);
@@ -2177,14 +2377,28 @@ async function init(){
     const u = activeUser();
     const pre = document.createElement('pre');
     pre.id = 'selftest';
-    pre.textContent = JSON.stringify({ users:userCount(), active:activeUser().name, kg:u.profile.currentKg, body:u.body.length, foods:USERS.shared.foods.length, ex:USERS.shared.exercises.length, theme:USERS.theme, onboarded:!!USERS.onboarded });
+    pre.textContent = JSON.stringify({ user:activeUser().name, uid:selfUid(), role:me&&me.role, kg:u.profile.currentKg, body:u.body.length, foods:USERS.shared.foods.length, ex:USERS.shared.exercises.length, theme:USERS.theme, onboarded:!!USERS.onboarded });
     document.body.appendChild(pre);
     return;
   }
   if(qs.has('selftest')){ runSelfTest(); return; }
   if(qs.has('ftest')){ demoData(); runFTest(); return; }
   if(qs.has('shot')){ demoData(); if(NAV.some(n => n.id === qs.get('shot'))) go(qs.get('shot')); return; }
+  if(offlineBoot){ srv.online = false; toast('服务器离线：正显示本机缓存，恢复后自动补同步', true); }
   if(!USERS.onboarded){ showOnboard(); }
   go('home');
+}
+async function init(){
+  const st = await apiMe();
+  if(st === 'authed'){ startMain(); return; }
+  if(st === 'anon'){ showAuth(); return; }
+  /* 服务器不可达：有上次登录的账户与缓存 → 离线模式；否则只能登录页提示 */
+  const cached = localStorage.getItem(AUTH_KEY);
+  if(cached){
+    me = { username: cached, role: localStorage.getItem(AUTH_ROLE_KEY) || 'user', user: null };
+    startMain(true);
+  } else {
+    showAuth('连不上服务器：请确认电脑上的服务窗口已开启，登录/注册需要服务器在线');
+  }
 }
 init();

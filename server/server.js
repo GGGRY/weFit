@@ -1,12 +1,15 @@
 'use strict';
 /* =====================================================
-   健康管理 · 本地同步服务器（零 npm 依赖）
+   健康管理 · 同步服务器（零 npm 依赖 · v4 账户鉴权版）
    node server.js  →  http://localhost:8123
-   - 静态托管 ../public（页面 3 个文件，显式路径映射）
-   - GET/PUT /api/state：整体状态读写（rev 乐观并发）
+   - 静态托管 ../public（页面 3 个文件，显式路径映射；登录页是前端的一部分，静态资源保持公开）
+   - 鉴权中间件：除 login/register/health/静态文件外，/api/* 一律要求会话 Cookie
+   - POST /api/register|/api/login：注册/登录（首个注册账户 = admin）
+   - GET/PUT /api/state：本人数树读写（每用户 rev 乐观并发，写路径只触碰自己子树）
+   - GET /api/system/library：读系统共享库；PUT：仅 admin
+   - /api/admin/*（v4.1，仅 admin）：用户列表 / 设撤管理员 / 重置密码（踢会话）/ 删除账户（CASCADE 清数据）
    - GET /api/health：诊断
-   手机与电脑访问同一进程 = 同一份数据库，天然同步。
-   注意：v1 面向可信局域网，无鉴权；上云前必须加登录/token。
+   手机与电脑登录同一账户 = 同一份数据，天然同步；不同账户彼此隔离。
    ===================================================== */
 const http = require('node:http');
 const fs = require('node:fs');
@@ -14,6 +17,8 @@ const path = require('node:path');
 const os = require('node:os');
 const dbm = require('./db');
 const mapper = require('./mapper');
+const auth = require('./auth');
+const { copyLibrary } = require('./seed');
 
 const DEFAULT_PORT = Number(process.env.PORT || 8123);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -25,14 +30,18 @@ const STATIC_FILES = {
   '/index.html': { file: 'index.html', type: 'text/html; charset=utf-8' },
   '/css/style.css': { file: 'css/style.css', type: 'text/css; charset=utf-8' },
   '/js/app.js': { file: 'js/app.js', type: 'text/javascript; charset=utf-8' },
+  /* 管理后台(v4.1)：页面本身公开，数据面全部走 /api/admin/* 的 admin 守卫 */
+  '/admin': { file: 'admin.html', type: 'text/html; charset=utf-8' },
+  '/admin.html': { file: 'admin.html', type: 'text/html; charset=utf-8' },
 };
 
-function sendJson(res, code, obj) {
+function sendJson(res, code, obj, extraHeaders) {
   const body = JSON.stringify(obj);
-  res.writeHead(code, {
+  const headers = Object.assign({
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
-  });
+  }, extraHeaders || {});
+  res.writeHead(code, headers);
   res.end(body);
 }
 
@@ -56,6 +65,21 @@ function readBody(req) {
   });
 }
 
+/* 读 JSON body；PAYLOAD_TOO_LARGE → 413，坏 JSON/坏类型 → 4xx；失败时返回 null（已响应） */
+async function readJson(req, res) {
+  const ct = String(req.headers['content-type'] || '');
+  if (!ct.includes('application/json')) { sendJson(res, 415, { error: 'json_required' }); return null; }
+  let raw;
+  try { raw = (await readBody(req)).toString('utf8'); }
+  catch (e) {
+    if (e && e.code === 'PAYLOAD_TOO_LARGE') { sendJson(res, 413, { error: 'payload_too_large' }); return null; }
+    sendJson(res, 400, { error: 'read_failed' });
+    return null;
+  }
+  try { return JSON.parse(raw); }
+  catch (e) { sendJson(res, 400, { error: 'invalid_json' }); return null; }
+}
+
 function serveStatic(res, key) {
   const entry = STATIC_FILES[key];
   const full = path.normalize(path.join(PUBLIC_DIR, entry.file));
@@ -67,45 +91,245 @@ function serveStatic(res, key) {
   });
 }
 
+/* ---------- 系统库读写 ---------- */
+function readSystemLibrary(db) {
+  const row = db.prepare('SELECT system_json FROM app WHERE id = 1').get();
+  try {
+    const j = JSON.parse(row && row.system_json);
+    if (j && Array.isArray(j.foods) && Array.isArray(j.exercises)) return j;
+  } catch (e) { /* fallthrough */ }
+  return { foods: [], exercises: [] };
+}
+
+const FOOD_NUM_KEYS = ['kcal', 'p', 'c', 'f'];
+function sanitizeLibrary(body) {
+  if (!body || !Array.isArray(body.foods) || !Array.isArray(body.exercises)) return null;
+  const foods = [];
+  for (const f of body.foods.slice(0, 5000)) {
+    if (!f || typeof f.name !== 'string' || !f.name.trim()) return null;
+    const o = { id: typeof f.id === 'string' && f.id ? f.id : auth.genId(), name: f.name.trim().slice(0, 80) };
+    const per = {};
+    if (f.per100 && typeof f.per100 === 'object') {
+      FOOD_NUM_KEYS.forEach(k => { const n = Number(f.per100[k]); if (Number.isFinite(n) && n >= 0) per[k] = n; });   /* 负数营养值丢弃 */
+    }
+    if (Object.keys(per).length) o.per100 = per;
+    foods.push(o);
+  }
+  const exercises = [];
+  for (const e of body.exercises.slice(0, 5000)) {
+    if (!e || typeof e.name !== 'string' || !e.name.trim()) return null;
+    const o = { id: typeof e.id === 'string' && e.id ? e.id : auth.genId(), name: e.name.trim().slice(0, 80) };
+    if (typeof e.muscle === 'string' && e.muscle.trim()) o.muscle = e.muscle.trim().slice(0, 20);
+    exercises.push(o);
+  }
+  return { foods, exercises };
+}
+
+/* ---------- 鉴权端点 ---------- */
+async function handleRegister(db, req, res) {
+  const body = await readJson(req, res); if (!body) return;
+  const username = String(body.username || '').trim();
+  const password = String(body.password || '');
+  const name = String(body.name || '').trim().slice(0, 40);
+  const bad = auth.checkCredentials(username, password);
+  if (bad) { sendJson(res, 400, { error: 'invalid_credentials', message: bad }); return; }
+  if (!name) { sendJson(res, 400, { error: 'invalid_credentials', message: '请填写昵称' }); return; }
+  if (db.prepare('SELECT 1 FROM accounts WHERE username = ?').get(username)) {
+    sendJson(res, 409, { error: 'username_taken' }); return;
+  }
+  const uid = auth.genId();
+  const lib = copyLibrary(readSystemLibrary(db));
+  let isFirst;
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    /* 首账户判定放进写事务内：BEGIN IMMEDIATE 串行化写者，杜绝并发首注册双 admin */
+    isFirst = !db.prepare('SELECT 1 FROM accounts LIMIT 1').get();
+    mapper.createUser(db, uid, { name, library: lib });
+    db.prepare('INSERT INTO accounts(username, user_id, pwd, role, created_at) VALUES (?,?,?,?,?)')
+      .run(username, uid, auth.hashPassword(password), isFirst ? 'admin' : 'user', Date.now());
+    db.exec('COMMIT');
+  } catch (e) {
+    try { db.exec('ROLLBACK'); } catch (e2) { /* ignore */ }
+    if (/UNIQUE/i.test(String(e && e.message))) { sendJson(res, 409, { error: 'username_taken' }); return; }
+    throw e;
+  }
+  const token = auth.createSession(db, username);
+  sendJson(res, 201, { ok: true, username, role: isFirst ? 'admin' : 'user' },
+    { 'Set-Cookie': auth.cookieHeader(token) });
+}
+
+async function handleLogin(db, req, res) {
+  const body = await readJson(req, res); if (!body) return;
+  const username = String(body.username || '').trim();
+  const password = String(body.password || '');
+  const acc = db.prepare('SELECT pwd, role FROM accounts WHERE username = ?').get(username);
+  if (!acc || !auth.verifyPassword(password, acc.pwd)) {
+    sendJson(res, 401, { error: 'bad_credentials' }); return;
+  }
+  const token = auth.createSession(db, username);
+  sendJson(res, 200, { ok: true, username, role: acc.role },
+    { 'Set-Cookie': auth.cookieHeader(token) });
+}
+
+/* ---------- 业务路由（命中并已响应 → 返回 undefined；未命中 → false） ---------- */
+async function handleState(db, req, res, sessionUser, pathname) {
+  if (req.method === 'GET' && pathname === '/api/state') {
+    sendJson(res, 200, mapper.composeUser(db, sessionUser.userId));
+    return;
+  }
+  if (req.method === 'PUT' && pathname === '/api/state') {
+    const body = await readJson(req, res);
+    if (!body) return;
+    if (!mapper.isValidUserState(body.data)) {
+      sendJson(res, 400, { error: 'invalid_state', hint: 'data 需包含本人 users 与 shared:{foods,exercises}' });
+      return;
+    }
+    /* 只取本人那一份：树里其他用户的键一律忽略（A 永远写不到 B） */
+    const result = mapper.replaceUser(db, sessionUser.userId, body.data, body.rev);
+    if (!result.ok) {
+      if (result.error === 'rev_conflict') { sendJson(res, 409, { error: 'rev_conflict', rev: result.rev }); return; }
+      if (result.error === 'no_self') { sendJson(res, 400, { error: 'invalid_state', hint: '树中必须包含当前登录账户的成员档案' }); return; }
+      sendJson(res, 401, { error: 'unauthorized' }); return;
+    }
+    sendJson(res, 200, { rev: result.rev });
+    return;
+  }
+  if (req.method === 'POST' && pathname === '/api/logout') {
+    const cookies = auth.parseCookies(req);
+    auth.deleteSession(db, cookies[auth.COOKIE_NAME]);
+    sendJson(res, 200, { ok: true }, { 'Set-Cookie': auth.clearCookieHeader() });
+    return;
+  }
+  if (req.method === 'GET' && pathname === '/api/me') {
+    const u = db.prepare('SELECT id, name, avatar, color, onboarded FROM users WHERE id = ?').get(sessionUser.userId) || {};
+    sendJson(res, 200, { ok: true, username: sessionUser.username, role: sessionUser.role, user: u });
+    return;
+  }
+  return false;
+}
+
+/* ---------- 管理后台 API（v4.1：仅 admin；撤权即时生效——role 每请求现查） ---------- */
+async function handleAdmin(db, req, res, sessionUser, pathname) {
+  if (!pathname.startsWith('/api/admin/')) return false;
+  if (sessionUser.role !== 'admin') { sendJson(res, 403, { error: 'admin_only' }); return; }
+
+  const adminCount = () => db.prepare("SELECT COUNT(*) AS n FROM accounts WHERE role = 'admin'").get().n;
+  const findAccount = username => db.prepare('SELECT a.username, a.role, a.user_id FROM accounts a WHERE a.username = ?').get(username);
+
+  if (req.method === 'GET' && pathname === '/api/admin/users') {
+    const rows = db.prepare(`
+      SELECT a.username, a.role, a.created_at, u.name, u.rev,
+             (SELECT COUNT(*) FROM body_records b WHERE b.user_id = u.id) AS body_n,
+             (SELECT COUNT(*) FROM workouts w WHERE w.user_id = u.id) AS wk_n,
+             (SELECT COUNT(*) FROM meals m WHERE m.user_id = u.id) AS meal_n
+      FROM accounts a JOIN users u ON u.id = a.user_id
+      ORDER BY a.created_at`).all();
+    sendJson(res, 200, { users: rows.map(r => ({
+      username: r.username, name: r.name, role: r.role, createdAt: r.created_at, rev: r.rev,
+      counts: { body: r.body_n, workouts: r.wk_n, meals: r.meal_n },
+    })) });
+    return;
+  }
+
+  if (req.method === 'PUT' && pathname === '/api/admin/role') {
+    const body = await readJson(req, res); if (!body) return;
+    const username = String(body.username || '');
+    const role = body.role;
+    if (role !== 'admin' && role !== 'user') { sendJson(res, 400, { error: 'invalid_role' }); return; }
+    const acc = findAccount(username);
+    if (!acc) { sendJson(res, 404, { error: 'not_found', path: pathname }); return; }
+    if (role === 'user' && acc.role === 'admin' && adminCount() <= 1) {
+      sendJson(res, 400, { error: 'last_admin', message: '系统至少保留一名管理员' }); return;
+    }
+    db.prepare('UPDATE accounts SET role = ? WHERE username = ?').run(role, username);
+    sendJson(res, 200, { ok: true, self: username === sessionUser.username, username, role });
+    return;
+  }
+
+  if (req.method === 'PUT' && pathname === '/api/admin/password') {
+    const body = await readJson(req, res); if (!body) return;
+    const username = String(body.username || '');
+    const password = String(body.password || '');
+    const acc = findAccount(username);
+    if (!acc) { sendJson(res, 404, { error: 'not_found', path: pathname }); return; }
+    if (password.length < 6 || password.length > 128) {
+      sendJson(res, 400, { error: 'invalid_password', message: '密码需为 6-128 位' }); return;
+    }
+    db.prepare('UPDATE accounts SET pwd = ? WHERE username = ?').run(auth.hashPassword(password), username);
+    db.prepare('DELETE FROM sessions WHERE username = ?').run(username);  /* 强制该账户全部会话下线 */
+    sendJson(res, 200, { ok: true, kicked: true, self: username === sessionUser.username });
+    return;
+  }
+
+  if (req.method === 'DELETE' && pathname === '/api/admin/users') {
+    const body = await readJson(req, res); if (!body) return;
+    const username = String(body.username || '');
+    const acc = findAccount(username);
+    if (!acc) { sendJson(res, 404, { error: 'not_found', path: pathname }); return; }
+    if (username === sessionUser.username) { sendJson(res, 400, { error: 'cannot_delete_self' }); return; }
+    if (acc.role === 'admin' && adminCount() <= 1) {
+      sendJson(res, 400, { error: 'last_admin', message: '不能删除最后一名管理员' }); return;
+    }
+    try {
+      db.exec('BEGIN IMMEDIATE');
+      db.prepare('DELETE FROM sessions WHERE username = ?').run(username);
+      /* 删 users 行:accounts(FK→users CASCADE)与其下 12 张子表一并级联清空 */
+      db.prepare('DELETE FROM users WHERE id = ?').run(acc.user_id);
+      db.exec('COMMIT');
+    } catch (e) {
+      try { db.exec('ROLLBACK'); } catch (e2) { /* ignore */ }
+      throw e;
+    }
+    sendJson(res, 200, { ok: true, username });
+    return;
+  }
+
+  return false;
+}
+
+async function handleSystemLibrary(db, req, res, sessionUser, pathname) {
+  if (req.method === 'GET' && pathname === '/api/system/library') {
+    sendJson(res, 200, readSystemLibrary(db));
+    return;
+  }
+  if (req.method === 'PUT' && pathname === '/api/system/library') {
+    if (sessionUser.role !== 'admin') { sendJson(res, 403, { error: 'admin_only' }); return; }
+    const body = await readJson(req, res);
+    if (!body) return;
+    const lib = sanitizeLibrary(body);
+    if (!lib) { sendJson(res, 400, { error: 'invalid_library', hint: '需 {foods:[{name,per100}], exercises:[{name,muscle}]}' }); return; }
+    db.prepare('UPDATE app SET system_json = ? WHERE id = 1').run(JSON.stringify(lib));
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+  return false;
+}
+
 async function handle(db, req, res) {
   let pathname;
   try { pathname = new URL(req.url, 'http://localhost').pathname; }
   catch { sendJson(res, 400, { error: 'bad_url' }); return; }
 
   try {
+    /* ---- 公开端点 ---- */
     if (req.method === 'GET' && pathname === '/api/health') {
-      const n = db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
-      sendJson(res, 200, { ok: true, rev: mapper.currentRev(db), users: n });
+      const accounts = db.prepare('SELECT COUNT(*) AS n FROM accounts').get().n;
+      sendJson(res, 200, { ok: true, accounts, auth: true });
       return;
     }
-    if (req.method === 'GET' && pathname === '/api/state') {
-      sendJson(res, 200, mapper.compose(db));
-      return;
-    }
-    if (req.method === 'PUT' && pathname === '/api/state') {
-      let payload;
-      try { payload = JSON.parse((await readBody(req)).toString('utf8')); }
-      catch (e) {
-        if (e && e.code === 'PAYLOAD_TOO_LARGE') { sendJson(res, 413, { error: 'payload_too_large' }); return; }
-        sendJson(res, 400, { error: 'invalid_json' });
-        return;
-      }
-      if (!payload || !mapper.isValidState(payload.data)) {
-        sendJson(res, 400, { error: 'invalid_state', hint: 'data 需包含 users 与 shared:{foods,exercises}' });
-        return;
-      }
-      const cur = mapper.currentRev(db);
-      /* rev 缺省视为盲写（离线客户端回线首推的场景）；带 rev 且过期 → 409 */
-      if (payload.rev !== undefined && payload.rev !== null && payload.rev !== cur) {
-        sendJson(res, 409, { error: 'rev_conflict', rev: cur });
-        return;
-      }
-      const rev = mapper.split(db, payload.data);
-      sendJson(res, 200, { rev });
-      return;
-    }
-    if ((req.method === 'GET' || req.method === 'HEAD') && STATIC_FILES[pathname]) {
-      serveStatic(res, pathname);
+    if (req.method === 'POST' && pathname === '/api/register') { await handleRegister(db, req, res); return; }
+    if (req.method === 'POST' && pathname === '/api/login') { await handleLogin(db, req, res); return; }
+    if ((req.method === 'GET' || req.method === 'HEAD') && STATIC_FILES[pathname]) { serveStatic(res, pathname); return; }
+
+    /* ---- 鉴权中间件：其余 /api/* 必须登录 ---- */
+    if (pathname.startsWith('/api/')) {
+      const cookies = auth.parseCookies(req);
+      const sessionUser = auth.getSessionUser(db, cookies[auth.COOKIE_NAME]);
+      if (!sessionUser) { sendJson(res, 401, { error: 'unauthorized' }); return; }
+      if (await handleState(db, req, res, sessionUser, pathname) !== false) return;
+      if (await handleSystemLibrary(db, req, res, sessionUser, pathname) !== false) return;
+      if (await handleAdmin(db, req, res, sessionUser, pathname) !== false) return;
+      sendJson(res, 404, { error: 'not_found', path: pathname });
       return;
     }
     sendJson(res, 404, { error: 'not_found', path: pathname });
@@ -135,10 +359,12 @@ function start(opts) {
     server.listen(port, opts.host || HOST, () => {
       const actual = server.address().port;
       if (!opts.quiet) {
+        const n = db.prepare('SELECT COUNT(*) AS c FROM accounts').get().c;
         console.log('💪 健康管理 · 同步服务器已启动');
         console.log('   本机访问   http://localhost:' + actual);
         for (const { ip } of lanIPs()) console.log('   手机/同网   http://' + ip + ':' + actual);
         console.log('   数据库     ' + (opts.dbPath || process.env.DB_PATH || dbm.DEFAULT_DB));
+        console.log('   账户       ' + (n === 0 ? '尚无任何账户 — 打开网页注册第一个账户（自动成为管理员）' : '已注册 ' + n + ' 个账户'));
         console.log('   保持本窗口开启；Ctrl+C 或关闭窗口即停止服务');
       }
       resolve({ server, port: actual, db });

@@ -1,11 +1,13 @@
 'use strict';
 /* =====================================================
    数据库层（零依赖：Node 内置 node:sqlite）
-   职责：打开/建表。数据转换在 mapper.js，HTTP 在 server.js。
+   职责：打开/建表/迁移。数据转换在 mapper.js，HTTP 在 server.js，鉴权在 auth.js。
+   v4 起：鉴权账户 + 会话持久化 + 账户级数据隔离（每用户独立 rev / 个人库）。
    ===================================================== */
 const fs = require('node:fs');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
+const { seedLibrary } = require('./seed');
 
 const DEFAULT_DB = path.join(__dirname, 'data', 'jjhealth.db');
 
@@ -131,13 +133,48 @@ CREATE TABLE IF NOT EXISTS habit_done (
   PRIMARY KEY (user_id, habit_id, date)
 );
 CREATE INDEX IF NOT EXISTS idx_body_date ON body_records(user_id, date);
+/* v4：登录账户与会话（老数据不迁移——存量成员视为作废，新账户注册即建档） */
+CREATE TABLE IF NOT EXISTS accounts (
+  username TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  pwd TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'user',
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  token TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_username ON sessions(username);
 `;
 
-const ALL_TABLES = [
-  'habit_done', 'habits', 'water_records', 'sleep_records', 'body_records',
-  'workout_sets', 'workout_items', 'workouts', 'plan_items', 'plan_defs',
-  'meals', 'meal_days', 'exercises', 'foods', 'users', 'app',
-];
+/* 对既有数据库做幂等列迁移（SQLite 的 ADD COLUMN 无 IF NOT EXISTS，先查 table_info） */
+function tableCols(db, table) {
+  return db.prepare('PRAGMA table_info(' + table + ')').all().map(r => r.name);
+}
+function addColumn(db, table, col, decl) {
+  if (!tableCols(db, table).includes(col)) db.exec('ALTER TABLE ' + table + ' ADD COLUMN ' + col + ' ' + decl);
+}
+function migrate(db) {
+  /* 每用户独立：乐观并发版本号、界面偏好、个人食物/动作库（JSON 整存保真） */
+  addColumn(db, 'users', 'rev', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(db, 'users', 'theme', 'TEXT');
+  addColumn(db, 'users', 'onboarded', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(db, 'users', 'foods_json', 'TEXT');
+  addColumn(db, 'users', 'exercises_json', 'TEXT');
+  /* 系统共享库：单行 app 上整存 {foods, exercises}，管理员维护 */
+  addColumn(db, 'app', 'system_json', 'TEXT');
+  db.exec('INSERT OR IGNORE INTO app(id) VALUES (1)');
+  const row = db.prepare('SELECT system_json FROM app WHERE id = 1').get();
+  let ok = false;
+  try {
+    const j = JSON.parse(row.system_json);
+    ok = !!(j && Array.isArray(j.foods) && Array.isArray(j.exercises));
+  } catch (e) { /* 空/坏 JSON → 重播种 */ }
+  if (!ok) db.prepare('UPDATE app SET system_json = ? WHERE id = 1').run(JSON.stringify(seedLibrary()));
+}
 
 function open(dbPath) {
   const file = dbPath || process.env.DB_PATH || DEFAULT_DB;
@@ -148,7 +185,8 @@ function open(dbPath) {
   db.exec('PRAGMA synchronous = NORMAL;');
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA);
+  migrate(db);
   return db;
 }
 
-module.exports = { open, DEFAULT_DB, ALL_TABLES };
+module.exports = { open, DEFAULT_DB };

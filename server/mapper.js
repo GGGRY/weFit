@@ -1,83 +1,97 @@
 'use strict';
 /* =====================================================
-   USERS JSON 树 ⇄ 关系表 双向转换
-   核心不变量：split(db, X) 之后 compose(db).data 必须与 X 深度相等
-   （数组顺序、对象键的"存在/缺失"都保真；profile/goal/nutrition
-   等形状固定的小配置对象用 JSON 列整存整取，天然保真）。
+   单用户 状态树 ⇄ 关系表 双向转换(v4 账户隔离版)
+   核心不变量:replaceUser(db, uid, X) 之后 composeUser(db, uid).data
+   必须与 X 的本人数树深度相等(数组顺序、键"存在/缺失"都保真)。
+   每用户独立 rev;个人食物/动作库整存 users.foods_json/exercises_json。
+   老版本的全库替换(split/clearAll/compose)已删除——那正是
+   "多人同时写互相覆盖"的根因,写路径只允许触碰自己那一份。
    ===================================================== */
 
 const SLOTS = ['breakfast', 'lunch', 'dinner', 'snack'];
 const BODY_KEYS = ['weight', 'chest', 'waist', 'hip', 'arm', 'thigh', 'bf'];
+
+/* 带 user_id 外键的子表(删自己子树用;顺序无关,写事务内完成) */
+const USER_DATA_TABLES = [
+  'habit_done', 'habits', 'water_records', 'sleep_records', 'body_records',
+  'workout_sets', 'workout_items', 'workouts', 'plan_items', 'plan_defs',
+  'meals', 'meal_days',
+];
 
 const nz = v => (v === undefined || v === null ? null : v);           // 写库：undefined → NULL
 const jz = v => (v === undefined || v === null ? null : JSON.stringify(v));
 const jsonParse = t => (t === null || t === undefined ? null : JSON.parse(t));
 const put = (o, k, v) => { if (v !== null && v !== undefined) o[k] = v; }; // 读库：NULL → 键缺失
 
-function isValidState(s) {
+/* 客户端 PUT 的 data 需是"整树形状"(前端原样复用),但服务端只取本人那一份 */
+function isValidUserState(s) {
   return !!s && typeof s === 'object'
     && s.users && typeof s.users === 'object' && !Array.isArray(s.users)
     && s.shared && typeof s.shared === 'object'
     && Array.isArray(s.shared.foods) && Array.isArray(s.shared.exercises);
 }
 
-function currentRev(db) {
-  const row = db.prepare('SELECT rev FROM app WHERE id = 1').get();
-  return row ? row.rev : 0;
+function userRev(db, uid) {
+  const row = db.prepare('SELECT rev FROM users WHERE id = ?').get(uid);
+  return row ? row.rev : null;
 }
 
-function clearAll(db) {
-  /* 整体替换：全表清空后重灌。关闭外键避免删除顺序问题（事务内完成，失败即回滚） */
+/* ---------- 注册建档:一条 users 行 + 个人库初值(系统库拷贝) ---------- */
+function createUser(db, uid, info) {
+  db.prepare(`INSERT INTO users(id, seq, name, avatar, color, activity, water_target,
+              profile_json, goal_json, nutrition_json, rev, theme, onboarded,
+              foods_json, exercises_json)
+              VALUES (?,?,?,NULL,NULL,NULL,NULL,NULL,NULL,NULL,0,'light',0,?,?)`)
+    .run(uid, 0, nz(info && info.name),
+      jz((info && info.library && info.library.foods) || []),
+      jz((info && info.library && info.library.exercises) || []));
+}
+
+/* ---------- 写入:只替换本人子树 ---------- */
+function deleteUserData(db, uid) {
+  for (const t of USER_DATA_TABLES) db.prepare('DELETE FROM ' + t + ' WHERE user_id = ?').run(uid);
+}
+
+/* expectedRev:undefined/null = 盲写(离线回线首推场景);带值且过期 → rev_conflict */
+function replaceUser(db, uid, data, expectedRev) {
+  const cur = userRev(db, uid);
+  if (cur === null) return { ok: false, error: 'no_user' };
+  /* 树里必须携带本人那一份——防止客户端 id 错位时把空对象当"本人数据"清空子树 */
+  if (!data.users || !Object.prototype.hasOwnProperty.call(data.users, uid)) {
+    return { ok: false, error: 'no_self' };
+  }
+  if (expectedRev !== undefined && expectedRev !== null && expectedRev !== cur) {
+    return { ok: false, error: 'rev_conflict', rev: cur };
+  }
+  const u = (data.users && data.users[uid]) || {};
+  const shared = data.shared || {};
+  const nextRev = cur + 1;
+  /* 全表清空-重灌在本用户范围内进行;关闭外键避免删除顺序问题(事务内完成,失败即回滚) */
   db.exec('PRAGMA foreign_keys = OFF;');
-  db.exec(`
-    DELETE FROM habit_done; DELETE FROM habits; DELETE FROM water_records;
-    DELETE FROM sleep_records; DELETE FROM body_records; DELETE FROM workout_sets;
-    DELETE FROM workout_items; DELETE FROM workouts; DELETE FROM plan_items;
-    DELETE FROM plan_defs; DELETE FROM meals; DELETE FROM meal_days;
-    DELETE FROM exercises; DELETE FROM foods; DELETE FROM users; DELETE FROM app;
-  `);
-  db.exec('PRAGMA foreign_keys = ON;');
-}
-
-/* ---------- 写入：整树拆解 ---------- */
-function split(db, USERS) {
-  const nextRev = currentRev(db) + 1;
   db.exec('BEGIN IMMEDIATE');
   try {
-    clearAll(db);
-    insertAll(db, USERS, nextRev);
+    deleteUserData(db, uid);
+    db.prepare(`UPDATE users SET name = ?, avatar = ?, color = ?, activity = ?, water_target = ?,
+                profile_json = ?, goal_json = ?, nutrition_json = ?, theme = ?, onboarded = ?,
+                foods_json = ?, exercises_json = ?, rev = ? WHERE id = ?`)
+      .run(nz(u.name), nz(u.avatar), nz(u.color), nz(u.activity), nz(u.waterTarget),
+        jz(u.profile), jz(u.goal), jz(u.nutrition),
+        nz(data.theme) || 'light', data.onboarded ? 1 : 0,
+        jz(shared.foods || []), jz(shared.exercises || []),
+        nextRev, uid);
+    insertUserData(db, uid, u);
     db.exec('COMMIT');
   } catch (e) {
     try { db.exec('ROLLBACK'); } catch (e2) { /* 回滚失败不掩盖原始错误 */ }
+    db.exec('PRAGMA foreign_keys = ON;');
     throw e;
   }
-  return nextRev;
+  db.exec('PRAGMA foreign_keys = ON;');
+  return { ok: true, rev: nextRev };
 }
 
-function insertAll(db, USERS, rev) {
-  const appIns = db.prepare('INSERT INTO app(id, theme, onboarded, active_user_id, rev) VALUES (1, ?, ?, ?, ?)');
-  appIns.run(nz(USERS.theme) || 'light', USERS.onboarded ? 1 : 0, nz(USERS.active), rev);
-
-  const foodIns = db.prepare('INSERT INTO foods(id, seq, name, kcal, p, c, f) VALUES (?,?,?,?,?,?,?)');
-  USERS.shared.foods.forEach((fo, i) => {
-    const per = fo.per100 || {};
-    foodIns.run(fo.id, i, nz(fo.name), nz(per.kcal), nz(per.p), nz(per.c), nz(per.f));
-  });
-  const exIns = db.prepare('INSERT INTO exercises(id, seq, name, muscle) VALUES (?,?,?,?)');
-  USERS.shared.exercises.forEach((e, i) => exIns.run(e.id, i, nz(e.name), nz(e.muscle)));
-
-  Object.keys(USERS.users).forEach((uid, uSeq) => {
-    const u = USERS.users[uid] || {};
-    insertUser(db, uid, uSeq, u);
-  });
-}
-
-function insertUser(db, uid, uSeq, u) {
-  db.prepare(`INSERT INTO users(id, seq, name, avatar, color, activity, water_target,
-              profile_json, goal_json, nutrition_json) VALUES (?,?,?,?,?,?,?,?,?,?)`)
-    .run(uid, uSeq, nz(u.name), nz(u.avatar), nz(u.color), nz(u.activity), nz(u.waterTarget),
-      jz(u.profile), jz(u.goal), jz(u.nutrition));
-
+/* 除 users 行外的全部子记录(与旧版 insertUser 的子表部分逐字段一致,保往返形状) */
+function insertUserData(db, uid, u) {
   /* 饮食：meal_days 标记存在的日期；四餐次固定枚举，未知键忽略（应用不会产生） */
   const dayIns = db.prepare('INSERT INTO meal_days(user_id, date) VALUES (?,?)');
   const mealIns = db.prepare(`INSERT INTO meals(user_id, date, slot, seq, item_id, name,
@@ -159,45 +173,30 @@ function insertUser(db, uid, uSeq, u) {
   });
 }
 
-/* ---------- 读出：整树重建 ---------- */
-function compose(db) {
-  const row = db.prepare('SELECT * FROM app WHERE id = 1').get();
+/* ---------- 读出:单人数树(前端 USERS 容器天然只含自己一位成员) ---------- */
+function composeUser(db, uid) {
+  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(uid);
   if (!row) return { rev: 0, data: null };
 
   const shared = {
-    foods: db.prepare('SELECT * FROM foods ORDER BY seq').all().map(r => {
-      const o = { id: r.id };
-      put(o, 'name', r.name);
-      const per = {};
-      put(per, 'kcal', r.kcal); put(per, 'p', r.p); put(per, 'c', r.c); put(per, 'f', r.f);
-      if (Object.keys(per).length) o.per100 = per;
-      return o;
-    }),
-    exercises: db.prepare('SELECT * FROM exercises ORDER BY seq').all().map(r => {
-      const o = { id: r.id };
-      put(o, 'name', r.name); put(o, 'muscle', r.muscle);
-      return o;
-    }),
+    foods: jsonParse(row.foods_json) || [],
+    exercises: jsonParse(row.exercises_json) || [],
   };
 
-  const users = {};
-  for (const ur of db.prepare('SELECT * FROM users ORDER BY seq').all()) {
-    const u = { id: ur.id };
-    put(u, 'name', ur.name); put(u, 'avatar', ur.avatar); put(u, 'color', ur.color);
-    put(u, 'activity', ur.activity); put(u, 'waterTarget', ur.water_target);
-    put(u, 'profile', jsonParse(ur.profile_json));
-    put(u, 'goal', jsonParse(ur.goal_json));
-    put(u, 'nutrition', jsonParse(ur.nutrition_json));
-    Object.assign(u, readUserData(db, ur.id));
-    users[ur.id] = u;
-  }
+  const u = { id: row.id };
+  put(u, 'name', row.name); put(u, 'avatar', row.avatar); put(u, 'color', row.color);
+  put(u, 'activity', row.activity); put(u, 'waterTarget', row.water_target);
+  put(u, 'profile', jsonParse(row.profile_json));
+  put(u, 'goal', jsonParse(row.goal_json));
+  put(u, 'nutrition', jsonParse(row.nutrition_json));
+  Object.assign(u, readUserData(db, uid));
 
   const data = {
-    theme: row.theme,
+    theme: row.theme || 'light',
     onboarded: !!row.onboarded,
     shared,
-    users,
-    active: nz(row.active_user_id),
+    users: { [uid]: u },
+    active: uid,
   };
   return { rev: row.rev, data };
 }
@@ -221,11 +220,11 @@ function readUserData(db, uid) {
 
   /* 周计划 */
   const plans = {};
-  const planItems = db.prepare('SELECT * FROM plan_items ORDER BY weekday, seq').all();
+  const planItems = db.prepare('SELECT * FROM plan_items WHERE user_id = ? ORDER BY weekday, seq').all(uid);
   for (const d of db.prepare('SELECT * FROM plan_defs WHERE user_id = ? ORDER BY weekday').all(uid)) {
     const p = {};
     put(p, 'id', d.plan_id); put(p, 'name', d.name);
-    p.items = planItems.filter(r => r.user_id === uid && r.weekday === d.weekday).map(r => {
+    p.items = planItems.filter(r => r.weekday === d.weekday).map(r => {
       const it = {};
       put(it, 'id', r.item_id); put(it, 'exId', r.ex_id); put(it, 'exName', r.ex_name);
       put(it, 'muscle', r.muscle); put(it, 'sets', r.sets); put(it, 'reps', r.reps); put(it, 'weight', r.weight);
@@ -236,15 +235,15 @@ function readUserData(db, uid) {
 
   /* 训练日志 */
   const workouts = [];
-  const wiAll = db.prepare('SELECT * FROM workout_items ORDER BY seq').all();
-  const wsAll = db.prepare('SELECT * FROM workout_sets ORDER BY item_seq, seq').all();
+  const wiAll = db.prepare('SELECT * FROM workout_items WHERE user_id = ? ORDER BY seq').all(uid);
+  const wsAll = db.prepare('SELECT * FROM workout_sets WHERE user_id = ? ORDER BY item_seq, seq').all(uid);
   for (const w of db.prepare('SELECT * FROM workouts WHERE user_id = ? ORDER BY seq').all(uid)) {
     const o = {};
     put(o, 'id', w.workout_id); put(o, 'date', w.date); put(o, 'name', w.name); put(o, 'note', w.note);
-    o.items = wiAll.filter(r => r.user_id === uid && r.workout_id === w.workout_id).map(r => {
+    o.items = wiAll.filter(r => r.workout_id === w.workout_id).map(r => {
       const it = {};
       put(it, 'id', r.item_id); put(it, 'exId', r.ex_id); put(it, 'exName', r.ex_name); put(it, 'muscle', r.muscle);
-      it.sets = wsAll.filter(s => s.user_id === uid && s.workout_id === w.workout_id && s.item_seq === r.seq).map(s => {
+      it.sets = wsAll.filter(s => s.workout_id === w.workout_id && s.item_seq === r.seq).map(s => {
         const set = {};
         put(set, 'reps', s.reps); put(set, 'weight', s.weight);
         return set;
@@ -275,16 +274,16 @@ function readUserData(db, uid) {
 
   /* 习惯 */
   const habits = [];
-  const hdAll = db.prepare('SELECT user_id, habit_id, date FROM habit_done').all();
+  const hdAll = db.prepare('SELECT habit_id, date FROM habit_done WHERE user_id = ?').all(uid);
   for (const h of db.prepare('SELECT * FROM habits WHERE user_id = ? ORDER BY seq').all(uid)) {
     const o = {};
     put(o, 'id', h.habit_id); put(o, 'name', h.name); put(o, 'icon', h.icon); put(o, 'color', h.color);
     o.done = {};
-    hdAll.filter(r => r.user_id === uid && r.habit_id === h.habit_id).forEach(r => { o.done[r.date] = true; });
+    hdAll.filter(r => r.habit_id === h.habit_id).forEach(r => { o.done[r.date] = true; });
     habits.push(o);
   }
 
   return { meals, plans, workouts, body, habits, sleep, water };
 }
 
-module.exports = { isValidState, currentRev, split, compose };
+module.exports = { isValidUserState, userRev, createUser, replaceUser, composeUser };
