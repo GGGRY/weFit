@@ -1,6 +1,6 @@
 # 健康管理 · 项目备忘录
 
-> 更新：2026-09-05（**v4.1：独立管理后台 /admin** · v4：账户鉴权 + 数据隔离 + 双层资源库；同日 v3.2：睡眠饮水记录并入概览页，导航页移除）｜ v3.1：概览/目标页信息架构整理 + 移动端适配 ｜ v3（2026-09-04）：前端 + 后端 + SQLite 架构，解决跨设备同步 ｜ 旧单文件版存档于 `legacy/index.html`
+> 更新：2026-09-06（**v4.4：同步回线收敛 + 调试钩子门卫补全 + 审查发现修复**）｜ 2026-09-05（**v4.3：代码审查修复——同步防覆盖补强 + 服务端/后台加固**；同日 v4.1：独立管理后台 /admin · v4：账户鉴权 + 数据隔离 + 双层资源库；同日 v4.2：移除体重"主目标"功能（进度环/目标虚线/引导选择），热量倾向并入「每日目标」编辑；同日 v3.2：睡眠饮水记录并入概览页，导航页移除）｜ v3.1：概览/目标页信息架构整理 + 移动端适配 ｜ v3（2026-09-04）：前端 + 后端 + SQLite 架构，解决跨设备同步 ｜ 旧单文件版存档于 `legacy/index.html`
 
 ## 一、项目定位
 
@@ -10,7 +10,7 @@
 - **前端** `public/`：`index.html` + `css/style.css` + `js/app.js` 三文件，无构建工具，样式/脚本/图标仍全内联零外部依赖
 - **后端** `server/`：Node 内置 `node:http` + 内置 `node:sqlite` + 内置 `node:crypto`，**npm 依赖为零**，`node server.js` 即起
 - **鉴权**（v4）：scrypt 密码哈希 + SQLite 持久会话（30 天）+ HttpOnly Cookie；除登录/注册/健康检查/静态页外全部 API 走鉴权中间件
-- **数据库** `server/data/jjhealth.db`：集合型数据拆为 18 张关系表（餐次/训练/身体/睡眠/饮水/习惯/账户/会话…），profile/goal/nutrition 与个人食物/动作库等形状固定对象 JSON 列整存保真
+- **数据库** `server/data/jjhealth.db`：集合型数据拆为 16 张关系表（餐次/训练/身体/睡眠/饮水/习惯/账户/会话…；v4.3 新库 schema，旧遗留表不再建），profile/goal/nutrition 与个人食物/动作库等形状固定对象 JSON 列整存保真
 - **同步模型**：同一服务器 + **登录同一账户** = 读写同一份本人数据，天然同步；**不同账户彼此隔离**；浏览器 localStorage 降级为按账户分键的离线缓存，服务器为准数据源
 - **启动**：Windows 双击项目根目录 `start.bat`，Linux/macOS 运行 `./start.sh`（或 `cd server && node server.js`），端口 8123
 - **手机访问**：与电脑同 Wi-Fi 时打开 `http://<电脑IP>:8123`（服务器启动窗口会打印可用地址）
@@ -24,7 +24,7 @@
 - 今日饮食卡：摄入 vs 目标（"还差/已超 xx%"紧跟标签文字）+ 进度条 + **蛋白/碳水/脂肪三 chip**（仅当天有饮食时显示）
 - **每日打卡卡从「目标」页移入**（近 7 天网格 + 🔥连击 + 新习惯添加），打卡后原地刷新概览
 - 页面顺序：问候+tile → 今日饮食 → 今日计划 → 今日饮水/今日睡眠 → 每日打卡
-- 已移除：体重 7 天差值小字、"今日概览"卡（睡眠/BMI 不在首页展示）、"主目标"卡（目标进度归「目标」页）
+- 已移除：体重 7 天差值小字、"今日概览"卡（睡眠/BMI 不在首页展示）；"主目标"卡 v3.1 起撤出首页（当时目标进度归「目标」页，v4.2 体重目标功能整体移除）
 
 ### 2. 饮食 🍽️
 - 早/午/晚/加餐四餐次记录，可前后翻页回看任意日期补记
@@ -43,7 +43,7 @@
 ### 4. 身体数据 📏
 - 7 项指标：体重/胸围/腰围/臀围/臂围/大腿围/体脂率；可按任意日期补记，同日再存自动合并覆盖
 - BMI 圆环；各指标最新值 + 7 天变化
-- 任选指标近 60 条趋势折线（体重图含目标虚线）；历史表格 + 查看全部
+- 任选指标近 60 条趋势折线；历史表格 + 查看全部
 - 记录体重自动同步「当前体重」（供 BMR 计算）
 
 ### 5. 睡眠与饮水 💧😴（v3.2：并入概览页，原导航页已移除）
@@ -52,14 +52,15 @@
 - 睡眠归属语义不变：记录键 = 「起床那天」
 - 两张趋势图仍在统计页（v3.1 迁入）
 
-### 6. 目标 🎯（导航原名"目标打卡"，v3.1 改名；打卡已迁至概览）
-- 主目标：减脂(-400kcal)/保持/增肌(+300kcal)，起点/目标/期限 → 完成度环 + 每周节奏评估
-- **每日目标卡（原"每日营养目标"）**：只显示目标值不显示当日进度——kcal hero + 蛋白/碳水/脂肪三 tile + 活动量/每日饮水两 tile
-- 「修改目标」统一弹窗：自动计算勾选 + 活动量 + 饮水目标 + 四大营养素；自动模式改活动量即时重算
-- **⚙️设置弹窗瘦身为纯"基础资料 + 数据管理"**：活动量、饮水、营养目标设置全部移出设置（v3.1），设置保存不再触碰营养目标（自动模式经 syncNutrition 重算，手动模式保留原值）
+### 6. 目标 🎯（导航原名"目标打卡"，v3.1 改名；打卡已迁至概览；v4.2 移除体重目标功能）
+- **每日目标卡**：只显示目标值不显示当日进度——kcal hero + 蛋白/碳水/脂肪三 tile + 活动量/每日饮水两 tile
+- 「修改目标」弹窗 = 热量倾向 + 活动量 + 饮水目标 + 四大营养素 + 自动计算勾选；**热量倾向（v4.2，原"主目标模式"）**：减脂 −400 / 保持 / 增肌 +300 kcal，存于 `state.goal.mode`；自动档 = BMR×活动系数按倾向增减（增肌档蛋白质按 1.8g/kg），改热量倾向/活动量即时重算
+- 新账户/演示数据默认「减脂」档（引导弹窗不再询问，可随时在每日目标里改）
+- **⚙️设置弹窗瘦身为纯"基础资料 + 数据管理"**：热量倾向、活动量、饮水、营养目标设置全部移出设置（v3.1/v4.2），设置保存不再触碰营养目标（自动模式经 syncNutrition 重算，手动模式保留原值）
+- 已移除（v4.2，体重目标功能退役）：引导"主要目标"下拉、🎯主目标卡/完成度环/每周节奏评估、身体页与统计页目标虚线、统计"距目标"tile、`goalSummaryHTML/openGoalEditor`；旧数据 `goal.startKg/targetKg/targetDate/note` 不再读写（无害残留，新数据仅 `{mode}`）
 
 ### 7. 统计 📊
-- 8 个汇总卡 + 6 张图（体重趋势/热量对比/营养素供能/每周训练容量 + **睡眠时长、每日饮水量**（近 14 天柱状，并排一行；记录在概览页完成））
+- 7 个汇总卡（v4.2 移除"距目标"）+ 6 张图（体重趋势/热量对比/营养素供能/每周训练容量 + **睡眠时长、每日饮水量**（近 14 天柱状，并排一行；记录在概览页完成））
 
 ### 8. 账户体系、管理后台与双层资源库 👥（v4 + v4.1）
 - **登录门**：打开页面先 `GET /api/me` 探测会话；未登录显示全屏登录/注册页（不可关闭）；**第一个注册的账户自动成为管理员**
@@ -77,8 +78,10 @@
 - **权威数据**在 `server/data/jjhealth.db`；每次保存：localStorage 落盘（即时，本人键）+ 600ms 防抖 `PUT /api/state`（异步，**只写本人子树**）
 - **启动顺序**：探测登录态 → 读服务器本人数树（局域网毫秒级）→ 服务器不可达降级读本账户缓存；注册即建档并自动登录
 - **离线**：已登录过的账户照常可记录（缓存键隔离），每 30 秒自动重试，服务器恢复后自动补推（首推前从服务器树捕获本人 uid 并本地重挂）
-- **离线期间关了页面（v4.1）**：本机关闭前若有未推送改动，重开时与服务器比对——服务器没动 → **静默自动补推**；服务器前进了（本账户其他设备写过）→ **弹窗人工裁决**（采用服务器 / 本机覆盖），两个方向都不会静默丢改动。实现：`jjhealth_v3meta:<用户名>` 存 `{rev, dirty}`，save 置 dirty、推送成功复位
+- **离线期间关了页面（v4.1）**：本机关闭前若有未推送改动，重开时与服务器比对——服务器没动 → **静默自动补推**；服务器前进了（本账户其他设备写过）→ **弹窗人工裁决**（采用服务器 / 本机覆盖），两个方向都不会静默丢改动。实现：`jjhealth_v3meta:<用户名>` 存 `{rev, dirty, gen}`（v4.4 起编辑代数写入 meta），save 置 dirty 并 gen+1，推送成功且期间无新编辑（gen 未变）才复位
 - **冲突**：**每用户独立 rev**；运行中本账户另一设备先写会触发 409 弹窗由用户裁决（同上两选一）；其他账户的写入永远不会与本账户冲突
+- **v4.3 同步补强（代码审查修复）**：离线回线首推改用「上次对齐版本 `meta.rev`」做 CAS 期望（从未对齐过以 0 试探），不再取服务器当前 rev 自证匹配——**409 裁决不可再被绕过**；干净启动不再无条件 save（只在需补推/首次建档/本机覆盖时推送，杜绝"零编辑被标脏→误报冲突→旧缓存覆盖新数据"链）；推送响应仅在期间无新编辑时清 dirty（dirtyGen 代数计数，堵 600ms 竞态）；服务器坏形状响应不写缓存、不标对齐；`authExpired` 一并清 `fatal`（同页重登即恢复同步）；退出登录必须拿到服务器确认才清本地重进（防共享设备串号）；`?ftest`/`?shot` 钩子需手动确认（URL 追加 `&devok` 跳过）；`ensureUserIntact` 只补缺失字段不再整树重置；服务端：scrypt 改异步且不夹在写事务内、`replaceUser` 外键恢复改 finally、非对象 JSON body 显式 400（旧版挂死）、系统库超限显式 400（旧版静默截断）、requireAdmin 收敛角色守卫、种子数据收敛 `public/js/seed-data.js` 单一来源、新库 schema 去除遗留表/列、/admin 页补网络异常处理与 esc 实体修正
+- **v4.4 回线收敛与健壮性（v4.3 审查复核后的落地修复）**：裁决逻辑收敛为单一 `converge()`（load 启动 / 30s 回线 `retrySync()` / 409 冲突三入口共用，冲突文案单源 `CONFLICT_MSG`）；**完全离线启动（含干净缓存）也挂 30s 回线定时器**——旧版干净启动永不重连，服务器恢复后不拉取他设备写入，状态栏却承诺自动重试；编辑代数 `gen` 移入共享 meta（替代每页内存 `dirtyGen`，跨标签页不再互相清脏，类型归一进 `metaGet`）；`doPush` 加在途保护（同 rev PUT 不再并发自撞假 409，弹窗期间的新编辑也在 finally 接续推送）；400 `invalid_state`（离线首推树未挂本账户 uid）自动 `fetchState` 重挂后重推，不再置 fatal 卡死会话；裁决「用服务器」采纳失败改由定时器静默重试（`wantServer`），不静默停留也不弹窗骚扰；`?selftest` 并入统一确认门卫（旧版漏检直接清库）、`?shot` 先校验视图名再动数据、钩子用 `history.replaceState` 剥除（防 `&devok` 常驻刷新重放）；退出登录 401 视为已退出（会话被重置密码踢掉时不再被关在失效账户里）；营养 0 值合法保留（`??` 语义，编辑器与 `target()` 同步修）、热量倾向非法/缺失值按「保持」归一显示、mode→文案/选项并入 `GOAL_MODE` 单表；muscle 渲染补 `esc`（系统库唯一裸拼点）；演示数据灌入补种子缺失守卫（旧版中途抛错停在半演示态）；系统库缓存改为进入动作库页/食物库弹窗时失效一次（旧 `force=true` 使 SYS_LIB 只写不读、每个导入动作整库重下）；肌群枚举并入 seed-data.js（`SEED_MUSCLES`，admin 后台选择器同源）；admin 网络/鉴权守卫收敛为 `guard()`（同状态曾三种文案、保存路径漏 status 0）、boot 角色实测探测块删除（/me 与 requireAdmin 同源、探测只会双倍请求+5xx 误提权）；注册事务内重查用户名（预检与事务间隔着 scrypt 的并发窗口不再只靠 UNIQUE 兜底）；T3.5 改 `require` seed-data 同源深比对（连营养值一起防漂移，不再用正则抠文件）
 - 鉴权语义：所有 `/api/state`、`/api/system/library` 等未登录一律 401 → 前端清工作区弹登录门；写操作要求 `Content-Type: application/json`；会话 30 天存库，服务器重启不掉线
 - ⚙️设置弹窗顶部显示同步状态行（登录账户 / 版本 rev / 最近同步时间 / 离线提示）
 - 导出/导入 JSON 备份功能保留（**只针对本人数据**；导入多人备份时取其中"当前成员"一份重挂为本账户数据）；「清空」只清本账户子树 + 本账户缓存
@@ -88,7 +91,7 @@
 - 响应式：手机底部 Tab / 桌面左侧分组边栏；弹窗手机端底部升起
 - **移动端适配（v3.1 修复）**：`.tile` 自带 `min-width:130px` 是多列网格溢出根因，网格列一律 `minmax(0,1fr)` + 子项 `min-width:0`；每日目标五 tile 自适应收窄；概览打卡区改为**左列名字固定 + 右侧 7 天格横向滚动**（≤560px 圆钮缩至 27px、行高两列严格对齐）
 - 深/浅色主题（v4 起每账户独立）；手写 SVG 图表；首次引导；Toast；危险操作二次确认
-- 开发调试钩子：`?selftest` 全视图渲染、`?ftest` 13 项功能自测、`?shot=视图名`、`?probe` 数据摘要
+- 开发调试钩子：`?selftest` 全视图渲染、`?ftest` 13 项功能自测、`?shot=视图名`、`?probe` 数据摘要（**三个会覆盖当前账户为演示数据**的钩子 `?selftest`/`?ftest`/`?shot` 共用同一确认门卫，v4.4 起确认/取消后自动从地址栏剥除钩子——旧版 `&devok` 常驻 URL 会在每次刷新时静默重置真实账户；`?shot` 先校验视图名再动数据，拼错名不毁数据；自动化场景仍可 URL 追加 `&devok` 跳过确认）
 
 ## 三、代码结构速览
 
@@ -100,15 +103,16 @@ JJ_HealthManagement/
 │  ├─ index.html                #   页面骨架
 │  ├─ admin.html                #   管理后台（v4.1 自包含单文件；/admin 路由）
 │  ├─ css/style.css             #   设计令牌 + 组件样式（含登录门/后台样式）
+│  ├─ js/seed-data.js           #   食物/动作库种子唯一数据源（前端加载；服务端 require，v4.3）
 │  └─ js/app.js                 #   全部业务 JS + 同步层 + 登录门/双层库 UI
 ├─ server/                      # 后端（零 npm 依赖）
 │  ├─ server.js                 #   node:http：鉴权中间件 + 静态托管 + 登录/注册 + 本人数树读写 + 系统库 + /api/admin/*
-│  ├─ auth.js                   #   scrypt 密码哈希 / 会话 token / Cookie 解析（node:crypto）
-│  ├─ seed.js                   #   系统库种子（与前端 SEED_* 同步）+ 个人库初始拷贝
-│  ├─ db.js                     #   node:sqlite 建表 + 幂等列迁移（18 张表，每用户 rev）
+│  ├─ auth.js                   #   异步 scrypt 密码哈希 / 会话 token / Cookie 解析（node:crypto）
+│  ├─ seed.js                   #   系统库种子构建（数据源 = public/js/seed-data.js）+ 个人库初始拷贝
+│  ├─ db.js                     #   node:sqlite 建表 + 幂等列迁移（新库 16 张表，每用户 rev）
 │  ├─ mapper.js                 #   单人数树 ⇄ 关系表；不变量：PUT→GET 深度相等（只触碰本人子树）
-│  ├─ test/roundtrip.test.js    #   55 项断言：鉴权 + 双账户隔离 + 系统库权限 + 形状保真 + 规模压测
-│  ├─ test/admin.test.js        #   38 项断言：后台 API（角色/重置密码/删号 + 护栏）
+│  ├─ test/roundtrip.test.js    #   57 项断言：鉴权 + 双账户隔离 + 系统库权限 + 形状保真 + 规模压测 + v4.3 回归
+│  ├─ test/admin.test.js        #   39 项断言：后台 API（角色/重置密码/删号 + 护栏）
 │  └─ data/jjhealth.db          #   SQLite 数据库（.gitignore 已排除）
 ├─ legacy/index.html            # 旧单文件版（离线可用，回退参考）
 └─ memo.md
@@ -119,17 +123,17 @@ JJ_HealthManagement/
 - **数据接口（v4 / v4.1）**：公开 = `POST /api/register`、`POST /api/login`、`GET /api/health`、静态页（含 `/admin`）；登录后可用 = `GET/PUT /api/state`（**本人数树**，`{rev?, data}`——rev 过期 409、缺省盲写；服务端只取 `data.users[本人uid]` 那一份，其余键忽略，缺本人键则 400 拒绝防误清空）、`GET /api/me`、`POST /api/logout`、`GET /api/system/library`（**PUT 仅 admin**）；**后台 API（仅 admin，v4.1）** = `GET /api/admin/users`（列表+数据概况）、`PUT /api/admin/role`（设/撤管理员，防"最后一个管理员"）、`PUT /api/admin/password`（重置并强制该账户下线）、`DELETE /api/admin/users`（删账户级联清数据，不可删自己）
 - **API 仍是"整树 state"风格**（v4 粒度收窄为单账户）：细粒度 CRUD 端点留待未来按需追加，mapper 后的关系表结构已支持
 
-### 数据库结构（`server/data/jjhealth.db` · 18 张表，建表与列迁移见 `server/db.js`）
+### 数据库结构（`server/data/jjhealth.db` · 建表与列迁移见 `server/db.js`；v4.3 起新库 16 张表，老库遗留表/列保留不删，避免破坏性迁移）
 
 设计原则：会增长的集合拆为真正关系表；profile/goal/nutrition 与个人库等形状固定的小对象用 JSON 列整存保真；有数组语义处一律带 `seq` 保证顺序往返一致；成员数据全部 `REFERENCES users(id) ON DELETE CASCADE`；v4 幂等迁移用 `PRAGMA table_info` 检查后 `ALTER TABLE ADD COLUMN`（旧库文件直接升级，v3 及以前的旧成员数据保留但不再读取）。
 
 | 表 | 主键 | 说明 |
 |---|---|---|
-| `app` | id（恒为 1，单行） | 全局单行：`system_json`（**系统共享库**，管理员维护）；theme/active/rev 为遗留列，v4 起不再读写 |
-| `users` | id | 成员档案：seq, name, avatar, color, activity, water_target + `profile_json` / `goal_json` / `nutrition_json` + **v4 新列**：`rev`（每用户乐观并发）/ `theme` / `onboarded` / `foods_json` / `exercises_json`（**个人食物/动作库**） |
+| `app` | id（恒为 1，单行） | 全局单行：`system_json`（**系统共享库**，管理员维护）；theme/onboarded/active_user_id/rev 为 v4 起不再读写的遗留列（v4.3 新库 schema 已移除） |
+| `users` | id | 成员档案：name, avatar, color, activity, water_target + `profile_json` / `goal_json` / `nutrition_json` + **v4 新列**：`rev`（每用户乐观并发）/ `theme` / `onboarded` / `foods_json` / `exercises_json`（**个人食物/动作库**）；v4.3 新库不再建 `seq` |
 | `accounts` | username | **v4 登录账户**：user_id（绑定档案，CASCADE）/ pwd（`scrypt$盐$哈希`）/ role（首个注册 = `admin`，其余 `user`）/ created_at |
 | `sessions` | token | **v4 会话**：username / created_at / expires_at（30 天，存库 = 服务器重启不掉线） |
-| ~~`foods`~~ / ~~`exercises`~~ | id | 旧全局共享库：v4 起为遗留表不再读写（系统库改存 `app.system_json`） |
+| ~~`foods`~~ / ~~`exercises`~~ | id | 旧全局共享库：v4 起不再读写（系统库改存 `app.system_json`）；v4.3 新库不再建表，存量库遗留表保留 |
 | `meal_days` | (user_id, date) | "日期被打开过"标记——餐次 4 槽全空也要能原样还原 |
 | `meals` | (user_id, date, slot, seq) | 饮食条目：slot=早/午/晚/加餐, item_id, name, kcal, p, c, f, g |
 | `plan_defs` | (user_id, weekday) | 周计划头：plan_id, name |
@@ -144,7 +148,7 @@ JJ_HealthManagement/
 | `habit_done` | (user_id, habit_id, date) | 打卡记录（一行 = 一次打卡） |
 
 - **连接参数**：`journal_mode = DELETE`（不留常驻 -wal 边文件，OneDrive 同步友好）、`synchronous = NORMAL`、`foreign_keys = ON`
-- **往返不变量**（mapper.js）：单人数树 PUT→GET 深度相等——JSON 列与关系表拆分/重组必须保形状，且写路径只触碰本人子树，`test/roundtrip.test.js` 55 项断言守此约定（含双账户隔离与系统库权限）
+- **往返不变量**（mapper.js）：单人数树 PUT→GET 深度相等——JSON 列与关系表拆分/重组必须保形状，且写路径只触碰本人子树，`test/roundtrip.test.js` 57 项断言守此约定（含双账户隔离与系统库权限）
 
 ## 四、已知边界与技术债
 
@@ -183,6 +187,6 @@ manifest + service worker，手机"添加到主屏幕"像独立 App（app.js 内
 - **管理后台**：浏览器访问 `http://<服务器>:8123/admin`，仅管理员账户可登录；普通用户即使在登录页输对了密码也会看到"无管理权限"提示
 - **v4 升级说明（一次性）**：旧成员数据不再展示（既定"从零开始"）；想留底请在升级前用旧版运行导出备份，或直接保留 `jjhealth.db` 文件副本
 - **换电脑**：整个文件夹拷走（OneDrive 同步即等价），`server/data/jjhealth.db` 就是全部数据（含账户与会话）
-- **跑测试**：`cd server && node test/roundtrip.test.js && node test/admin.test.js`（55 + 38 项断言）；浏览器 `?ftest` 13 项功能自测
+- **跑测试**：`cd server && node test/roundtrip.test.js && node test/admin.test.js`（57 + 39 项断言）；浏览器 `?ftest` 13 项功能自测（会覆盖为演示数据，需确认或 `&devok`）
 - **清零重来**：⚙️设置 → 🗑清空（仅本账户，服务器同步清本人子树，不可恢复，先导出留底）；**全库重来**：停服务后删除 `server/data/jjhealth.db`
 - **忘记密码**：找任一管理员在后台「用户管理 → 重置密码」处理（该账户会被强制下线）；若所有管理员都失联：停服务删库重来（最后手段）

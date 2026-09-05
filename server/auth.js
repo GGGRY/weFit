@@ -6,24 +6,29 @@
    - 进程重启会话不丢(存库,不落内存)
    ===================================================== */
 const crypto = require('node:crypto');
+const { promisify } = require('node:util');
+const scryptAsync = promisify(crypto.scrypt);
 
 const COOKIE_NAME = 'wefit_sid';
 const SESSION_TTL_MS = 30 * 24 * 3600 * 1000;
 const SCRYPT_KEYLEN = 64;
 
-function hashPassword(pw) {
+/* v4.3：scrypt 改异步——同步版一次约 50-150ms，会卡死单线程事件循环
+ * （所有用户的请求排队），注册路径此前还把它夹在 BEGIN IMMEDIATE 里持写锁跑完。
+ * 存储格式不变（scrypt$盐$哈希），既有口令散列照常验证。 */
+async function hashPassword(pw) {
   const salt = crypto.randomBytes(16);
-  const hash = crypto.scryptSync(String(pw), salt, SCRYPT_KEYLEN);
+  const hash = await scryptAsync(String(pw), salt, SCRYPT_KEYLEN);
   return 'scrypt$' + salt.toString('hex') + '$' + hash.toString('hex');
 }
 
-function verifyPassword(pw, stored) {
+async function verifyPassword(pw, stored) {
   try {
     const [tag, saltHex, hashHex] = String(stored).split('$');
     if (tag !== 'scrypt' || !saltHex || !hashHex) return false;
     const salt = Buffer.from(saltHex, 'hex');
     const want = Buffer.from(hashHex, 'hex');
-    const got = crypto.scryptSync(String(pw), salt, want.length);
+    const got = await scryptAsync(String(pw), salt, want.length);
     return want.length === got.length && crypto.timingSafeEqual(want, got);
   } catch (e) { return false; }
 }

@@ -36,10 +36,12 @@
 ## 测试
 
 ```bash
-cd server && node test/roundtrip.test.js   # 鉴权 + 双账户隔离 + 往返保真（55 项）
-             node test/admin.test.js        # 管理后台 API：角色/重置密码/删号护栏（38 项）
+cd server && node test/roundtrip.test.js   # 鉴权 + 双账户隔离 + 往返保真（57 项）
+             node test/admin.test.js        # 管理后台 API：角色/重置密码/删号护栏（39 项）
 ```
 
 浏览器调试钩子：`?ftest`（功能自测）、`?selftest`（全视图渲染）、`?shot=视图名`、`?probe`（数据摘要）。
+
+> ⚠️ `?selftest`、`?ftest` 与 `?shot` 都会先用**演示数据覆盖当前账户**并自动同步到服务器（真实数据丢失）。三个钩子共用同一确认弹窗（v4.4 起，`?selftest` 之前漏检），【取消】则按真实数据正常进入，且确认/取消后钩子都会从地址栏剥除（避免书签/刷新反复触发）；自动化场景可在 URL 追加 `&devok` 跳过确认。
 
 > v4 升级说明：v3 及以前的旧成员数据不再展示（"从零开始"决策）；需要留底先备份 `server/data/jjhealth.db`。局域网内即开即用；公网部署请先上 HTTPS（详见 memo.md 技术债）。

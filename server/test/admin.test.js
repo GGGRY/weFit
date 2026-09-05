@@ -67,18 +67,19 @@ async function main() {
   r = await B.req('PUT', '/api/system/library', { foods: [], exercises: [] });
   ok('T3d 回归:普通用户改系统库仍→403', r.status === 403);
 
-  /* T3.5 种子防漂移：服务端系统库种子必须与前端 SEED_* 常量一致（两处双份维护） */
-  const appSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'public', 'js', 'app.js'), 'utf8');
-  const namesFrom = block => {
-    const m = appSrc.match(new RegExp('const ' + block + ' = \\[([\\s\\S]*?)\\n\\];'));
-    return m ? [...m[1].matchAll(/name:'([^']+)'/g)].map(x => x[1]) : null;
-  };
-  const fNames = namesFrom('SEED_FOODS'), eNames = namesFrom('SEED_EXERCISES');
+  /* T3.5 种子防漂移：系统库种子与唯一数据源 seed-data.js 一致（v4.4 起直接 require 同源
+   * 深比对——连 per100/muscle 数值一起防漂移；旧写法用正则从文件抠名字，与排版耦合，
+   * 且只比对名字：当年两份拷贝的香蕉/苹果 f 数值漂移正是漏网形态） */
+  const seedData = require(path.join(__dirname, '..', '..', 'public', 'js', 'seed-data.js'));
   r = await A.req('GET', '/api/system/library');
-  ok('T3.5 系统库种子与前端 SEED_* 一致', fNames && eNames && r.status === 200
-    && JSON.stringify(fNames) === JSON.stringify(r.json.foods.map(f => f.name))
-    && JSON.stringify(eNames) === JSON.stringify(r.json.exercises.map(e => e.name)),
-    'foods ' + (fNames || []).length + ' vs ' + r.json.foods.length + ' / ex ' + (eNames || []).length + ' vs ' + r.json.exercises.length);
+  const foodEq = seedData.SEED_FOODS.map(f => ({ name: f.name, per100: f.per100 }));
+  const exEq = seedData.SEED_EXERCISES.map(e => ({ name: e.name, muscle: e.muscle }));
+  const foodGot = r.json.foods.map(f => ({ name: f.name, per100: f.per100 }));
+  const exGot = r.json.exercises.map(e => ({ name: e.name, muscle: e.muscle }));
+  ok('T3.5 系统库种子与 seed-data.js 一致(名称+营养值)',
+    r.status === 200 && JSON.stringify(foodEq) === JSON.stringify(foodGot)
+      && JSON.stringify(exEq) === JSON.stringify(exGot),
+    'foods ' + foodGot.length + ' vs ' + foodEq.length + ' / ex ' + exGot.length + ' vs ' + exEq.length);
 
   /* T4 列表与附加信息 */
   r = await A.req('GET', '/api/admin/users');

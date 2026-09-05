@@ -26,6 +26,7 @@
 <body>
 <div class="adm-wrap" id="app"></div>
 <div id="toasts"></div>
+<script src="js/seed-data.js"></script>
 <script>
 'use strict';
 /* =====================================================
@@ -36,7 +37,7 @@
    ===================================================== */
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
-const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39"}[c]));
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c]));
 const fmtDate = ms => new Date(ms).toLocaleDateString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit' });
 
 /* 主题:跟随上次选择在两个账户态间保持一致 */
@@ -57,12 +58,27 @@ function toast(msg, isErr){
 let me = null;          /* {username, role} */
 let tab = 'users';      /* users | lib */
 let libDraft = null;    /* 系统库编辑草稿 */
+const OFFLINE_MSG = '连不上服务器：请确认电脑上的服务窗口已开启';
+/* v4.4:统一网络/鉴权守卫——连不上(0)/会话失效(401)/被撤权(403)归一收口并返回 false。
+ * 三个用户操作按钮曾各自手抄三连判断、同一状态三种文案,renderLib 的保存还漏了 status 0;
+ * 后续新增受护 API 只需 if(!guard(r)) return;。 */
+function guard(r, msg){
+  if(!r) return false;
+  if(r.status === 0){ toast(msg || OFFLINE_MSG, true); return false; }
+  if(r.status === 401){ on401(); return false; }
+  if(r.status === 403){ renderForbidden(); return false; }
+  return true;
+}
 
 async function api(method, path, body){
   const opt = { method, headers: {} };
   if (body !== undefined) opt.headers['Content-Type'] = 'application/json';
   if (body !== undefined) opt.body = JSON.stringify(body);
-  const r = await fetch('/api' + path, opt);
+  let r;
+  /* v4.3：网络层异常(服务未启动/中途宕机)归一为 status:0，调用点据此显示可读提示，
+   * 旧版 fetch reject 会让 boot() 抛出未处理拒绝、整页永久空白。 */
+  try { r = await fetch('/api' + path, opt); }
+  catch(e){ return { status: 0, j: null }; }
   let j = null; try { j = await r.json(); } catch(e){}
   return { status: r.status, j };
 }
@@ -84,10 +100,11 @@ function renderLogin(note){
     const username = $('#lg_u').value.trim(), password = $('#lg_p').value;
     if (!username || !password) { $('#lg_err').textContent = '请填写用户名与密码'; return; }
     const { status, j } = await api('POST', '/login', { username, password });
+    if (status === 0) { $('#lg_err').textContent = OFFLINE_MSG; return; }
     if (status === 401) { $('#lg_err').textContent = '用户名或密码不正确'; return; }
     if (status !== 200) { $('#lg_err').textContent = (j && j.message) || '登录失败'; return; }
     $('#lg_err').textContent = '';
-    me = { username: j.username, role: j.role };
+    me = { username: (j && j.username) || username, role: (j && j.role) || 'user' };
     boot();
   };
   $('#lg_go').addEventListener('click', go);
@@ -108,7 +125,9 @@ function renderForbidden(){
   $('#fb_logout').addEventListener('click', doLogout);
 }
 async function doLogout(){
-  await api('POST', '/logout', {});
+  /* v4.3：拿到服务器确认(或会话本就失效)才清本地——否则 Cookie 仍在，下次打开自动回到原账户 */
+  const { status } = await api('POST', '/logout', {});
+  if (status !== 200 && status !== 401){ toast('服务器未确认退出，会话可能仍有效——请重试', true); return; }
   me = null; renderLogin();
 }
 
@@ -139,14 +158,15 @@ function renderTab(){ if (tab === 'users') renderUsers(); else renderLib(); }
 async function renderUsers(){
   const box = $('#tabBody');
   box.innerHTML = '<div class="tiny muted">载入用户列表…</div>';
-  const { status } = await loadUsers(box);
-  if (status === 401) on401();
+  await loadUsers(box);   /* 401/403/0 已在 loadUsers 内统一收口 */
 }
 let usersList = [];
 async function loadUsers(box){
   const { status, j } = await api('GET', '/admin/users');
-  if (status === 403) { /* 中途被撤权 */ renderForbidden(); return { status }; }
-  if (status !== 200) { box.innerHTML = '<div class="card"><div class="empty">载入失败（HTTP ' + status + '）</div></div>'; return { status }; }
+  if (status === 403) { renderForbidden(); return; }   /* 中途被撤权 */
+  if (status === 401) { on401(); return; }
+  if (status === 0) { box.innerHTML = '<div class="card"><div class="empty">' + OFFLINE_MSG + '</div></div>'; return; }
+  if (status !== 200) { box.innerHTML = '<div class="card"><div class="empty">载入失败（HTTP ' + status + '）</div></div>'; return; }
   usersList = j.users;
   box.innerHTML =
     '<div class="card"><h3>👥 用户管理（' + usersList.length + ' 个账户）</h3>' +
@@ -173,7 +193,6 @@ async function loadUsers(box){
     '</tbody></table></div>' +
     '<div class="tiny muted" style="margin-top:10px">重置密码会让该账户(含你自己)的所有设备下线并需重新登录;删除账户会级联清空其全部记录,不可恢复。</div></div>';
   bindUsers();
-  return { status };
 }
 function bindUsers(){
   $$('#tabBody tbody tr').forEach(tr => {
@@ -186,8 +205,7 @@ function bindUsers(){
     btnRole.addEventListener('click', async () => {
       const next = row.role === 'admin' ? 'user' : 'admin';
       const r = await api('PUT', '/admin/role', { username, role: next });
-      if (r.status === 401) return on401();
-      if (r.status === 403) return renderForbidden();   /* 自己已被撤权 */
+      if (!guard(r)) return;   /* v4.4:0(连不上)/401/403 统一收口(旧版三连手抄) */
       if (r.status === 400 && r.j && r.j.error === 'last_admin') return toast('系统至少保留一名管理员', true);
       if (r.status !== 200) return toast('操作失败（HTTP ' + r.status + '）', true);
       if (r.j.self && next === 'user') { toast('你已不再是管理员，后台即将返回登录视图'); me = { username: me.username, role: 'user' }; renderForbidden(); return; }
@@ -198,8 +216,7 @@ function bindUsers(){
       if (password.length < 6) return toast('新密码至少 6 位', true);
       if (!confirm2(btnPw, '确认重置?')) return;
       const r = await api('PUT', '/admin/password', { username, password });
-      if (r.status === 401) return on401();
-      if (r.status === 403) return renderForbidden();
+      if (!guard(r)) return;   /* v4.4:统一收口 */
       if (r.status !== 200) return toast((r.j && r.j.message) || '重置失败', true);
       if (r.j.self) { toast('你的密码已重置，需重新登录'); me = null; renderLogin(); return; }
       toast('已重置，' + username + ' 需重新登录'); loadUsers($('#tabBody'));
@@ -207,8 +224,7 @@ function bindUsers(){
     btnDel.addEventListener('click', async () => {
       if (!confirm2(btnDel, '确认删除?')) return;
       const r = await api('DELETE', '/admin/users', { username });
-      if (r.status === 401) return on401();
-      if (r.status === 403) return renderForbidden();
+      if (!guard(r)) return;   /* v4.4:统一收口 */
       if (r.status === 400) return toast((r.j && r.j.message) || (r.j && r.j.error === 'cannot_delete_self' ? '不能删除自己的账户' : '操作被拒绝'), true);
       if (r.status !== 200) return toast('删除失败（HTTP ' + r.status + '）', true);
       toast('已删除账户 ' + username + ' 及其全部数据'); loadUsers($('#tabBody'));
@@ -232,7 +248,9 @@ async function renderLib(){
   const box = $('#tabBody');
   box.innerHTML = '<div class="tiny muted">载入系统库…</div>';
   const { status, j } = await api('GET', '/system/library');
+  if (status === 403) { renderForbidden(); return; }   /* v4.4:中途被撤权与用户管理页口径一致 */
   if (status === 401) return on401();
+  if (status === 0) { box.innerHTML = '<div class="card"><div class="empty">' + OFFLINE_MSG + '</div></div>'; return; }
   if (status !== 200) { box.innerHTML = '<div class="card"><div class="empty">载入失败（HTTP ' + status + '）</div></div>'; return; }
   if (!libDraft) libDraft = { foods: j.foods, exercises: j.exercises };  /* 切分页保留未保存的草稿；「放弃修改并重载」显式重置 */
   paintLib();
@@ -252,7 +270,7 @@ function paintLib(){
       libDraft.exercises.map((e, i) =>
         '<div class="lrow"><div class="grow"><div class="b small">' + esc(e.name) + '</div><div class="sub">' + esc(e.muscle || '其他') + '</div></div>' +
         '<button class="iconbtn2" data-dx="' + i + '" style="color:var(--danger)">🗑</button></div>').join('') +
-      '<div class="field" style="display:flex;gap:8px;margin-top:8px;align-items:end"><div style="flex:1.4"><label class="tiny muted">名称</label><input class="input" id="lx_n" placeholder="新动作名"></div><div style="width:130px"><label class="tiny muted">肌群</label><select class="select" id="lx_m">' + ['胸','背','腿','肩','手臂','核心','有氧','其他'].map(m => '<option>' + m + '</option>').join('') + '</select></div><button class="btn primary" id="lx_add">＋ 动作</button></div>' +
+      '<div class="field" style="display:flex;gap:8px;margin-top:8px;align-items:end"><div style="flex:1.4"><label class="tiny muted">名称</label><input class="input" id="lx_n" placeholder="新动作名"></div><div style="width:130px"><label class="tiny muted">肌群</label><select class="select" id="lx_m">' + SEED_MUSCLES.map(m => '<option>' + m + '</option>').join('') + '</select></div><button class="btn primary" id="lx_add">＋ 动作</button></div>' +   /* v4.4:肌群枚举与用户端同源(seed-data.js),不再各抄一份 */
     '</div>' +
     '<div class="d-f" style="position:static"><button class="btn ghost" id="lib_reload">放弃修改并重载</button><button class="btn primary" id="lib_save">保存系统库</button></div>' +
     '<div class="tiny muted" style="margin-top:8px">保存后对所有用户立即可见（用户端「系统库」页）。已注册用户已有的个人库不会被追溯改动，用户可自行从系统库挑入新条目。</div>';
@@ -272,8 +290,7 @@ function paintLib(){
   $('#lib_save').addEventListener('click', async () => {
     const body = { foods: libDraft.foods, exercises: libDraft.exercises };
     const r = await api('PUT', '/system/library', body);
-    if (r.status === 401) return on401();
-    if (r.status === 403) return renderForbidden();
+    if (!guard(r)) return;   /* v4.4:补上 status 0 分支(旧版服务器宕机时弹「保存失败(HTTP 0)」) */
     if (r.status !== 200) return toast((r.j && r.j.message) || '保存失败（HTTP ' + r.status + '）', true);
     libDraft = null; toast('系统库已保存'); renderLib();
   });
@@ -283,16 +300,13 @@ function paintLib(){
 async function boot(){
   if (!me) {
     const { status, j } = await api('GET', '/me');
-    if (status === 200) me = { username: j.username, role: j.role };
-    else { renderLogin(); return; }
+    if (status === 200) me = { username: (j && j.username) || '', role: (j && j.role) || 'user' };
+    else { renderLogin(status === 0 ? OFFLINE_MSG : undefined); return; }
   }
-  if (me.role !== 'admin') {
-    /* 本地记录可能过期，以 admin API 实测为准 */
-    const { status } = await api('GET', '/admin/users');
-    if (status === 403) { renderForbidden(); return; }
-    if (status === 401) { on401(); return; }
-    me.role = 'admin';   /* 中途被提升过 */
-  }
+  /* v4.4:删除角色实测探测块——/me 的 role 与 requireAdmin 读同一张 accounts 表、同一时刻,
+   * 重检不可能翻案,却会:丢弃 200 载荷后 renderTab 又整表拉一次(双倍请求);且 500 等
+   * 状态穿透时把普通用户误设成 admin UI。五个管理面自带 401/403/0 守卫,非管理员在
+   * 首个管理请求后自然落到「无管理权限」页。 */
   renderShell(); renderTab();
 }
 boot();

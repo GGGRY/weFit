@@ -12,7 +12,12 @@ function storeKey(){ return 'jjhealth_v3:' + storeWho(); }
  * 用于关闭页面期间发生过的离线编辑:重开时与服务器 rev 比对,分叉则弹窗人工裁决,
  * 绝不在未提示的情况下用服务器数据覆盖本机未同步改动(也不反向静默覆盖)。 */
 function metaKey(){ return 'jjhealth_v3meta:' + storeWho(); }
-function metaGet(){ try { return JSON.parse(localStorage.getItem(metaKey())); } catch(e){ return null; } }
+function metaGet(){ try { const m = JSON.parse(localStorage.getItem(metaKey())); if(!m) return null;
+  /* v4.4:类型归一——rev 只认 number/null(历史脏数据/手改 localStorage 的字符串会让
+   * 语义比较走样),gen 只认 number,其余一律归零/置空后按干净状态处理 */
+  if(m.rev !== null && typeof m.rev !== 'number') m.rev = null;
+  if(typeof m.gen !== 'number') m.gen = 0;
+  return m; } catch(e){ return null; } }
 function metaSet(m){ try { localStorage.setItem(metaKey(), JSON.stringify(m)); } catch(e){} }
 const DAY_CN = ['日','一','二','三','四','五','六'];
 const SLOTS = [
@@ -28,6 +33,15 @@ const ACTIVITIES = [
   {v:1.55, label:'较高（每周运动6-7次）'},
   {v:1.725,label:'很高（体力劳动/每日两练）'},
 ];
+/* 热量倾向对 TDEE 的增减档(v4.2 引入)：计算器 / 目标页说明 / ftest 断言共用此单一来源，
+ * 杜绝魔法数三处抄写漂移（v4.3 审查修复）。
+ * v4.4：展示文案/编辑器选项并入同一表——旧版用符号反推「减脂/增肌」文案、选项另抄一份。 */
+const GOAL_MODE = {
+  cut:      { adj:-400, label:'减脂', opt:'减脂（热量赤字）' },
+  maintain: { adj:0,    label:'保持', opt:'保持' },
+  bulk:     { adj:300,  label:'增肌', opt:'增肌（热量盈余）' },
+};
+const GOAL_ADJ = { cut: GOAL_MODE.cut.adj, maintain: GOAL_MODE.maintain.adj, bulk: GOAL_MODE.bulk.adj };
 const NAV = [
   {id:'home',  label:'概览',    ic:'🏠'},
   {id:'diet',  label:'饮食',    ic:'🍽️'},
@@ -61,32 +75,11 @@ function age(){ return new Date().getFullYear() - state.profile.birthYear; }
 /* =====================================================
    默认数据
 ===================================================== */
-const SEED_FOODS = [
-  {name:'米饭', per100:{kcal:116, p:2.6, c:25.9, f:0.3}},
-  {name:'鸡胸肉', per100:{kcal:118, p:22, c:0.6, f:3}},
-  {name:'鸡蛋', per100:{kcal:143, p:12.6, c:0.9, f:9.5}},
-  {name:'牛奶', per100:{kcal:65, p:3.3, c:4.9, f:3.6}},
-  {name:'全麦面包', per100:{kcal:246, p:11, c:44, f:4}},
-  {name:'燕麦片', per100:{kcal:367, p:13, c:61, f:7}},
-  {name:'红薯', per100:{kcal:86, p:1.6, c:20, f:0.2}},
-  {name:'香蕉', per100:{kcal:93, p:1.4, c:22, f:0.2}},
-  {name:'苹果', per100:{kcal:53, p:0.4, c:13.7, f:0.2}},
-  {name:'西兰花', per100:{kcal:34, p:2.8, c:4.3, f:0.4}},
-  {name:'三文鱼', per100:{kcal:139, p:17.2, c:0, f:7.3}},
-  {name:'瘦牛肉', per100:{kcal:125, p:20, c:0, f:4.6}},
-  {name:'花生酱', per100:{kcal:600, p:25, c:20, f:50}},
-  {name:'乳清蛋白粉', per100:{kcal:400, p:80, c:6, f:7}},
-];
-const SEED_EXERCISES = [
-  {name:'杠铃卧推', muscle:'胸'}, {name:'上斜哑铃卧推', muscle:'胸'}, {name:'哑铃飞鸟', muscle:'胸'},
-  {name:'引体向上', muscle:'背'}, {name:'杠铃划船', muscle:'背'}, {name:'高位下拉', muscle:'背'}, {name:'坐姿划船', muscle:'背'},
-  {name:'杠铃深蹲', muscle:'腿'}, {name:'腿举', muscle:'腿'}, {name:'罗马尼亚硬拉', muscle:'腿'}, {name:'箭步蹲', muscle:'腿'},
-  {name:'站姿推举', muscle:'肩'}, {name:'哑铃侧平举', muscle:'肩'},
-  {name:'哑铃二头弯举', muscle:'手臂'}, {name:'绳索三头下压', muscle:'手臂'},
-  {name:'平板支撑', muscle:'核心'}, {name:'悬垂举腿', muscle:'核心'},
-  {name:'跑步机慢跑', muscle:'有氧'},
-];
-const MUSCLES = ['胸','背','腿','肩','手臂','核心','有氧','其他'];
+/* 食物/动作种子库:v4.3 起收敛到 js/seed-data.js 单一来源(index.html 先于本文件加载,
+ * 服务端 server/seed.js require 同一份),此处不再另抄一份。 */
+/* v4.4:肌群枚举收敛到 seed-data.js 单一来源(admin.html 选择器同源;曾各抄一份互不感知)。
+ * 内联数组仅为 seed-data.js 缺失时的兜底——增删肌群请改 seed-data.js 里的 SEED_MUSCLES。 */
+const MUSCLES = (typeof SEED_MUSCLES !== 'undefined' && SEED_MUSCLES) || ['胸','背','腿','肩','手臂','核心','有氧','其他'];
 
 /* ---------- 多用户架构 ----------
  * USERS 是持久化容器：theme + 共享库(shared.foods/exercises) + 用户字典(users)。
@@ -115,7 +108,7 @@ function defaultHabits(){ return [
 function freshUserData(){
   return {
     profile:{ gender:'male', birthYear:1992, height:175, currentKg:72 },
-    goal:{ mode:'cut', startKg:null, targetKg:66, targetDate:addDays(today(), 120), note:'' },
+    goal:{ mode:'cut' },   /* mode = 热量倾向（cut/maintain/bulk），驱动营养自动计算 */
     activity:1.375,
     nutrition:{ auto:true, kcal:null, protein:null, carbs:null, fat:null },
     waterTarget:8,
@@ -140,7 +133,10 @@ function userCount(){ return Object.keys(USERS.users).length; }
 let USERS = null;
 let state = null;
 function ensureUserIntact(u){
-  DATA_FIELDS.forEach(k => { if(u[k] === undefined) Object.assign(u, freshUserData()); });
+  /* v4.3 修复:逐字段只补缺失键。旧写法"任一字段缺失就 Object.assign 整份 freshUserData"
+   * 会把导入备份里已在场的其余字段一并重置为默认值(静默丢数据)。 */
+  const fresh = freshUserData();
+  DATA_FIELDS.forEach(k => { if(u[k] === undefined) u[k] = fresh[k]; });
   if(u.meals === undefined) u.meals = {};
   if(u.sleep === undefined) u.sleep = {};
   if(u.water === undefined) u.water = {};
@@ -215,40 +211,39 @@ async function load(){
   /* 启动顺序：先问服务器（局域网约 1-3ms），不可达才降级到本机 localStorage。
    * 服务器为空时，本次 save() 会把本机数据自动上推 = 首次建档。
    * v4.1 防丢改动：本机缓存带 dirty 标记（上次关闭时有未推送编辑）时——
-   *   服务器 rev 未动 → 直接补推本机；rev 动了 → 弹窗人工裁决，绝不静默覆盖任何一边。 */
+   *   服务器 rev 未动 → 直接补推本机；rev 动了 → 弹窗人工裁决，绝不静默覆盖任何一边。
+   * v4.3 审查修复：
+   *   · 干净启动（刚采纳服务器数据、本机无改动）不再无条件 save()——旧写法把零编辑
+   *     也标成 dirty，600ms 内关页会让下次启动误报「有未同步改动」，选「本机为准」
+   *     还会把上次缓存推上去覆盖服务器更新。现在只在真正需要补推/首次建档/本机覆盖时推送。
+   *   · 校验 adoptRaw 返回值：服务器坏形状不再写入毒缓存、不标「已对齐」。
+   * v4.4：在线启动的裁决全部收敛到 converge()（与回线重试、409 冲突同一套规则）；
+   *   完全离线启动无论脏净都挂 30s 回线定时器——此前干净缓存启动永不重连
+   *   （重试链只在「推送失败」路径建立），服务器恢复后不自动拉取其他设备的写入，
+   *   状态栏却还承诺「每 30 秒自动重试」。 */
   const remote = await fetchState();
   if(remote){
-    const meta = metaGet();
-    if(remote.data && (!meta || !meta.dirty)){
-      srv.rev = remote.rev;
-      adoptRaw(remote.data);
-      normalizeSelfTree();
-      try { localStorage.setItem(storeKey(), JSON.stringify(USERS)); } catch(e){}  // 服务器数据回写本机缓存
-      metaSet({ rev: remote.rev, dirty: false });
-    } else {
-      srv.rev = remote.rev;   // 服务器在线（含空库 rev=0 的首次上推场景）
-      bootUsers();
-      if(remote.data && meta && meta.dirty && meta.rev !== remote.rev){
-        const useServer = confirm('检测到上次退出时有未同步到服务器的本机改动，而服务器上本账户又有更新的数据（其他设备写入）。\n\n【确定】用服务器数据刷新本机（本机未同步的改动会被放弃）\n【取消】用本机数据覆盖服务器（其他设备后写入的改动会丢失）');
-        if(useServer){
-          adoptRaw(remote.data);
-          normalizeSelfTree();
-          try { localStorage.setItem(storeKey(), JSON.stringify(USERS)); } catch(e){}
-          metaSet({ rev: remote.rev, dirty: false });
-          toast('已采用服务器数据');
-        } else {
-          metaSet({ rev: remote.rev, dirty: true });   /* 本机为准：下方 save() 会带着 rev 推送覆盖 */
-          srv.blindNext = false;
-          toast('将以本机数据覆盖服务器');
-        }
-      } else if(meta && meta.dirty){
-        metaSet({ rev: remote.rev, dirty: true });     /* 服务器没动过：直接补推本机 */
-      }
-    }
-  } else {
-    bootUsers();   /* 完全离线：读本机缓存，dirty 状态原样保留，等下次在线裁决/补推 */
+    const outcome = await converge(remote);
+    if(outcome === 'push'){ bootUsers(); save(); }              /* 本机为准/补推：读缓存后整树推送 */
+    else if(outcome === 'adopt-fail'){ srv.rev = null; bootUsers(); toast('服务器响应形状异常，本次启动使用本机缓存', true); }
+    /* outcome==='adopt'：adoptRemote 已回写缓存并标对齐，无需再推 */
+    materialize(); applyTheme();
+    return;
   }
-  materialize(); applyTheme(); save();
+  bootUsers();   /* 完全离线：读本机缓存，dirty 状态原样保留，等回线收敛裁决/补推 */
+  materialize(); applyTheme();
+  const meta = metaGet();
+  const needPush = !localStorage.getItem(storeKey()) || !!(meta && meta.dirty);
+  if(needPush) save();   /* 无缓存 = 刚建档回线后首推；脏缓存 = 回线后补推 */
+  scheduleRetry();
+}
+/* 采纳服务器树：回写本机缓存 + 声明对齐（dirty 清零）。形状不被接受返回 false，调用方降级。 */
+function adoptRemote(remote){
+  if(!adoptRaw(remote.data)) return false;
+  normalizeSelfTree();
+  try { localStorage.setItem(storeKey(), JSON.stringify(USERS)); } catch(e){}
+  metaSet({ rev: remote.rev, dirty: false });
+  return true;
 }
 function save(){
   if(state) persistActive();
@@ -256,7 +251,10 @@ function save(){
   try { localStorage.setItem(storeKey(), JSON.stringify(USERS)); }
   catch(e){ toast('保存失败：本地存储空间不足', true); }
   const meta = metaGet() || { rev: null, dirty: false };
-  meta.dirty = true;   /* 有未推送改动；doPush 成功后清零 */
+  meta.dirty = true;   /* 有未推送改动；推送成功且期间无新编辑时清零 */
+  meta.gen = (meta.gen || 0) + 1;   /* v4.4：编辑代数写进共享 meta(跨标签页/重载仍有效)。
+                                     * 旧 dirtyGen 是每页内存计数器，另一标签页的写入看不见它，
+                                     * 守不住「多标签页共享」的 dirty 标志。 */
   metaSet(meta);
   queuePush();   // 落盘后 600ms 防抖推送服务器
 }
@@ -278,7 +276,11 @@ function wipeAll(){
  * 保存 → 600ms 防抖推送；离线 → 30s 自动重试；版本冲突 → 由用户裁决。
  */
 const API_BASE = '/api';
-const srv = { online: null, rev: null, lastSync: null, pushTimer: null, retryTimer: null, blindNext: false, fatal: false };
+const srv = { online: null, rev: null, lastSync: null, pushTimer: null, retryTimer: null,
+  blindNext: false, fatal: false,
+  pushing: false, pushPending: false,      /* v4.4 在途保护：同 rev 的 PUT 绝不并发 */
+  wantServer: false, wantGen: 0,           /* v4.4：已选「用服务器」；wantGen = 作出选择时的编辑代数 */
+  noSelfTries: 0 };                        /* v4.4：no_self 自动恢复的尝试计数 */
 
 function srvFetch(path, opts, timeout){
   const ac = new AbortController();
@@ -300,6 +302,9 @@ async function fetchState(){
     }
     return j;                    /* {rev, data|null} */
   } catch(e){
+    /* v4.3:「服务器应答异常(5xx/坏 JSON)」与「联系不上」都降级为离线缓存读,但控制台留痕;
+     * 静默覆盖风险已由 meta.rev CAS + dirty 裁决堵上,降级不再等于丢数据风险 */
+    console.warn('[sync] fetchState 失败:', e && e.message);
     srv.online = false;
     return null;
   }
@@ -308,7 +313,9 @@ async function fetchState(){
 function authExpired(){
   if(srv.pushTimer){ clearTimeout(srv.pushTimer); srv.pushTimer = null; }
   if(srv.retryTimer){ clearTimeout(srv.retryTimer); srv.retryTimer = null; }
-  srv.online = null; srv.rev = null; srv.blindNext = false; srv.lastSync = null;
+  /* v4.3:一并清 fatal——同页重登后必须恢复同步,否则一次瞬时 5xx 之后重登的会话永久瘫 */
+  srv.online = null; srv.rev = null; srv.blindNext = false; srv.lastSync = null; srv.fatal = false;
+  srv.pushing = false; srv.pushPending = false; srv.wantServer = false; srv.wantGen = 0; srv.noSelfTries = 0;
   me = null;
   USERS = null; state = null;
   const v = document.getElementById('view'); if(v) v.innerHTML = '';
@@ -319,62 +326,169 @@ function queuePush(){
   if(srv.pushTimer) clearTimeout(srv.pushTimer);
   srv.pushTimer = setTimeout(() => { srv.pushTimer = null; doPush(); }, 600);
 }
+/* 冲突裁决弹窗文案：load 启动裁决与 409 冲突共用一处，避免两种措辞各自漂移 */
+const CONFLICT_MSG = '本机有未同步到服务器的改动，而服务器上本账户又有更新的数据（可能来自其他设备）。\n\n【确定】用服务器数据刷新本机（本机未同步的改动会被放弃）\n【取消】用本机数据覆盖服务器（其他设备后写入的改动会丢失）';
+
+/* ---------- 收敛裁决(v4.4)：load 启动 / 回线重试 / 409 冲突 共用 ----------
+ * 前提：remote 已从服务器取回。按共享 meta{rev,dirty,gen} 分派：
+ *   'adopt'      已采纳服务器数据（缓存+对齐已写好，本机无未推送改动，无需再推）
+ *   'adopt-fail' 服务器形状无法接受：保持本机缓存，调用方按上下文降级（启动读缓存/回线续试）
+ *   'push'       本机为准（或空库首建）：调用方负责把本机树推上去
+ * 干净 → 采纳；脏且服务器已前移 → 弹窗人工裁决（两种走向都明示，绝不静默覆盖任何一边）；
+ * 同代脏 / 空库 → 补推。 */
+async function converge(remote){
+  const meta = metaGet();
+  if(remote.data && (!meta || !meta.dirty)){
+    if(adoptRemote(remote)){ srv.rev = remote.rev; return 'adopt'; }
+    srv.rev = null;
+    return 'adopt-fail';
+  }
+  if(remote.data && meta && meta.dirty && meta.rev !== remote.rev){
+    const useServer = confirm(CONFLICT_MSG);
+    if(useServer){
+      const fresh = await fetchState();   /* 弹窗等待期间服务器可能又前移：采纳最新一次 */
+      if(fresh && fresh.data && adoptRemote(fresh)){ srv.rev = fresh.rev; return 'adopt'; }
+      srv.rev = null;
+      return 'adopt-fail';
+    }
+    metaSet({ rev: remote.rev, dirty: true });   /* 本机为准：CAS 基线提到服务器当前 rev，随后的 push 覆盖 */
+    return 'push';
+  }
+  return 'push';   /* 服务器没动过(同代脏)或空库：补推本机 = 首次建档上推；基线已在 meta.rev */
+}
+
 async function doPush(){
   if(srv.fatal) return;
-  if(srv.rev === null && !srv.blindNext){        /* 离线状态下发生首推：先向服务器取当前版本号 */
-    const fresh = await fetchState();
-    if(!fresh){ scheduleRetry(); return; }
-    srv.rev = fresh.rev;
-  }
-  let r;
+  if(srv.pushing){ srv.pushPending = true; return; }   /* v4.4 在途保护：同 rev 的 PUT 并发必自撞 409 */
+  srv.pushing = true;
   try {
-    r = await srvFetch('/state', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(srv.blindNext ? { data: USERS } : { rev: srv.rev, data: USERS }),
-    }, 8000);
-  } catch(e){ srv.online = false; refreshSyncStatus(); scheduleRetry(); return; }
-  if(r.status === 401){ authExpired(); return; }
-  if(r.status === 409){ await handleConflict(); return; }
-  if(!r.ok){ srv.fatal = true; toast('服务器拒绝了同步（HTTP ' + r.status + '），本机改动仍保存在本地', true); refreshSyncStatus(); return; }
-  const j = await r.json().catch(() => ({}));
-  if(typeof j.rev === 'number'){
-    srv.rev = j.rev;
-    metaSet({ rev: j.rev, dirty: false });   /* 推送成功 = 本机与服务器对齐 */
+    if(srv.rev === null && !srv.blindNext){
+      /* v4.3 离线回线首推:用「本机上次对齐的版本」做 CAS 期望值——
+       * 旧写法先取服务器当前 rev 再拿它当期望值推,必然命中、永不 409,
+       * 等于离线启动的旧缓存静默覆盖其他设备的新写入(违背「绝不悄悄丢改动」)。
+       * 无 meta(从未对齐过)= 以 0 试探:服务器空库 = 首次建档;非空 → 409 → 人工裁决。 */
+      const meta = metaGet();
+      srv.rev = (meta && typeof meta.rev === 'number') ? meta.rev : 0;
+    }
+    const gen = (metaGet() || {}).gen || 0;   /* v4.4:发出前的编辑代数(取自共享 meta,响应回来比对) */
+    let r;
+    try {
+      r = await srvFetch('/state', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(srv.blindNext ? { data: USERS } : { rev: srv.rev, data: USERS }),
+      }, 8000);
+    } catch(e){ srv.online = false; refreshSyncStatus(); scheduleRetry(); return; }
+    if(r.status === 401){ authExpired(); return; }
+    if(r.status === 409){ await handleConflict(); return; }
+    if(!r.ok){
+      const j = await r.json().catch(() => ({}));
+      if(r.status === 400 && j && j.error === 'invalid_state' && (srv.noSelfTries++) < 2){
+        /* v4.4:400 invalid_state = 树里没有本登录账户那一份(启动即离线时铸了随机 uid)。
+         * 拉一次服务器:fetchState 会把本机内容重挂到服务器 uid 下(离线编辑不丢),
+         * 再按原 CAS 规则重推——旧版直接置 fatal,同步在本会话内永久卡死直到刷新。 */
+        const fresh = await fetchState();
+        if(fresh){ refreshSyncStatus(); queuePush(); return; }
+        scheduleRetry(); refreshSyncStatus(); return;
+      }
+      srv.fatal = true; srv.noSelfTries = 0;
+      toast('服务器拒绝了同步（HTTP ' + r.status + '），本机改动仍保存在本地', true); refreshSyncStatus(); return;
+    }
+    srv.noSelfTries = 0;
+    const j = await r.json().catch(() => ({}));
+    if(typeof j.rev === 'number'){
+      srv.rev = j.rev;
+      const meta = metaGet() || {};
+      /* v4.3 竞态修复 + v4.4:比对 meta.gen(跨标签页共享)而非内存计数器——
+       * 推送在途期间(本页或其他标签页)又发生 save() 时保持 dirty 并续推,
+       * 前一次推送的迟到响应不会抹掉新编辑的脏标记。 */
+      if((meta.gen || 0) === gen) metaSet({ rev: j.rev, dirty: false });   /* 期间无新编辑 = 已对齐 */
+      else { metaSet({ rev: j.rev, dirty: true }); queuePush(); }   /* 对齐基线更新,新改动继续推 */
+      srv.wantServer = false;   /* 已与服务器对齐,不再需要「用服务器」重试 */
+    }
+    srv.blindNext = false;
+    srv.online = true;
+    srv.lastSync = new Date();
+    refreshSyncStatus();
+  } finally {
+    srv.pushing = false;
+    if(srv.pushPending){ srv.pushPending = false; queuePush(); }   /* 在途期间攒下的新推送接上 */
   }
-  srv.blindNext = false;
-  srv.online = true;
-  srv.lastSync = new Date();
-  refreshSyncStatus();
 }
 async function handleConflict(){
   /* rev 落后 = 本账户的另一台设备先完成了同步。两种走向都明示，绝不静默丢数据 */
-  const useServer = confirm('服务器上（本账户的其他设备）有更新的数据。\n\n【确定】用服务器数据刷新本机（本机未同步的改动会被放弃）\n【取消】用本机数据覆盖服务器（其他设备后写入的改动会丢失）');
+  const useServer = confirm(CONFLICT_MSG);
   if(useServer){
+    /* v4.4:采纳失败(服务器瞬断/坏形状)不再静默收场——挂 wantServer,
+     * 由 30s 回线定时器静默拉取采纳(不再每次弹窗骚扰,也不会一直停在旧数据);
+     * wantGen 快照:若等待期间用户又产生新编辑,重试时不再盲采纳(见 retrySync) */
+    srv.wantServer = true;
+    srv.wantGen = (metaGet() || {}).gen || 0;
     const fresh = await fetchState();
-    if(fresh && fresh.data && adoptRaw(fresh.data)){
+    if(fresh && fresh.data && adoptRemote(fresh)){
+      srv.wantServer = false;
       srv.rev = fresh.rev;
-      normalizeSelfTree();
       materialize(); applyTheme();
-      try { localStorage.setItem(storeKey(), JSON.stringify(USERS)); } catch(e){}
-      metaSet({ rev: fresh.rev, dirty: false });   /* 采用服务器 = 已对齐 */
       go(curView);
       toast('已更新为服务器最新数据');
-    } else if(fresh){
-      srv.rev = fresh.rev;
+    } else {
+      toast('暂时取不到服务器数据：本机改动已保留，恢复后会自动重试', true);
+      scheduleRetry();
     }
   } else {
-    srv.blindNext = true;                        /* 下一次推送不带 rev，盲写覆盖 */
+    srv.blindNext = true;                        /* 用户已明确选择覆盖:下一次推送不带 rev，盲写 */
+    srv.wantServer = false;
     queuePush();
   }
   refreshSyncStatus();
 }
 function scheduleRetry(){
   if(srv.retryTimer) return;
-  srv.retryTimer = setTimeout(() => { srv.retryTimer = null; queuePush(); }, 30000);
+  srv.retryTimer = setTimeout(() => { srv.retryTimer = null; retrySync(); }, 30000);
+}
+/* v4.4 回线收敛:30s 定时器到点后按「上次意图」分派——
+ *   · 用户已选「用服务器」但采纳失败(wantServer) → 静默拉取采纳并刷新界面;
+ *   · 本会话从未对齐过(启动即离线) → 拉服务器走 converge 同款裁决(含人工裁决弹窗);
+ *   · 已有对齐基线/盲写中 → 维持原推送节奏(queuePush)。 */
+async function retrySync(){
+  if(srv.fatal || !me) return;
+  if(srv.wantServer){
+    const fresh = await fetchState();
+    if(fresh && fresh.data && ((metaGet() || {}).gen || 0) === srv.wantGen && adoptRemote(fresh)){
+      /* gen 未变 = 作出「用服务器」选择后没有新编辑:按用户意图采纳 */
+      srv.wantServer = false;
+      srv.rev = fresh.rev;
+      materialize(); applyTheme(); go(curView);
+      toast('已更新为服务器最新数据');
+    } else if(fresh){
+      /* 等待期间又产生新编辑(gen 前进):不再盲采纳——交给常规裁决,避免静默覆盖新改动 */
+      srv.wantServer = false;
+      const outcome = await converge(fresh);
+      if(outcome === 'adopt'){ materialize(); applyTheme(); go(curView); toast('已更新为服务器最新数据'); }
+      else if(outcome === 'adopt-fail'){ scheduleRetry(); }
+      else queuePush();
+    } else {
+      scheduleRetry();   /* 服务器还没回来/形状仍坏 → 30s 后继续静默重试 */
+    }
+    refreshSyncStatus();
+    return;
+  }
+  if(srv.rev !== null || srv.blindNext){ queuePush(); return; }
+  const remote = await fetchState();
+  if(!remote){ scheduleRetry(); refreshSyncStatus(); return; }
+  const outcome = await converge(remote);
+  if(outcome === 'adopt'){
+    materialize(); applyTheme(); go(curView);
+    toast('已恢复同步：本机已更新为服务器最新数据');
+  } else if(outcome === 'adopt-fail'){
+    scheduleRetry();   /* 多为瞬时/版本错配：恢复后再收敛 */
+  } else {
+    queuePush();       /* 本机为准/补推 */
+  }
+  refreshSyncStatus();
 }
 function syncStatusText(){
-  if(srv.fatal) return '🔴 同步被服务器拒绝（本机改动已存本地），重启应用可重试';
+  if(srv.fatal) return '🔴 同步被服务器拒绝（本机改动已存本地），刷新页面或重新登录后可恢复';
   if(srv.online === null) return '🟢 正在连接同步服务器…';
   if(!srv.online) return '🟠 同步服务器离线：数据暂存本机，每 30 秒自动重试，服务器恢复后自动补推';
   const t = srv.lastSync ? ' · 最近同步 ' + srv.lastSync.toLocaleTimeString('zh-CN', { hour12: false }) : ' · 等待首次同步';
@@ -394,9 +508,7 @@ function bmrOf(p){
 }
 function calcNutritionFor(u){
   const tdee = bmrOf(u.profile) * u.activity;
-  let adj = 0;
-  if(u.goal.mode === 'cut') adj = -400;
-  else if(u.goal.mode === 'bulk') adj = 300;
+  const adj = GOAL_ADJ[u.goal && u.goal.mode] || 0;
   const kcal = Math.round(tdee + adj);
   const kg = u.profile.currentKg;
   const pg = u.goal.mode === 'bulk' ? 1.8 : 1.6;
@@ -412,7 +524,13 @@ function calcNutrition(){ return calcNutritionFor(state); }
 function syncNutrition(){
   if(state.nutrition.auto){ state.nutrition = Object.assign({auto:true}, calcNutrition()); }
 }
-function target(){ syncNutrition(); return { kcal:state.nutrition.kcal||2000, p:state.nutrition.protein||120, c:state.nutrition.carbs||200, f:state.nutrition.fat||55 }; }
+function target(){
+  syncNutrition();
+  const n = state.nutrition, has = v => v !== null && v !== undefined;
+  /* v4.4:nullish 兜底——合法的 0 值目标(手动档)不再被 || 显示成默认值 */
+  return { kcal: has(n.kcal) ? n.kcal : 2000, p: has(n.protein) ? n.protein : 120,
+           c: has(n.carbs) ? n.carbs : 200, f: has(n.fat) ? n.fat : 55 };
+}
 
 /* ---------- 饮食数据辅助 ---------- */
 function mkFood(id){ return state.foods.find(f => f.id === id); }
@@ -523,7 +641,7 @@ function demoData(){
 function seedRichMember(u, t, foods, ex){
   const p = u.profile;
   p.currentKg = 71.2; p.height = 175; p.birthYear = 1992;
-  u.goal = { mode:'cut', startKg:71.2, targetKg:66, targetDate:addDays(t, 100), note:'为夏天做准备，每周约0.4kg' };
+  u.goal = { mode:'cut' };
   u.activity = 1.375; u.waterTarget = 8;
   u.nutrition = calcNutritionFor(u);
   // 体重/围度：从 ~120 天前缓慢下降，围度每周一次
@@ -565,9 +683,11 @@ function seedRichMember(u, t, foods, ex){
   const pushPlan = [['杠铃卧推',4,8,70],['哑铃飞鸟',3,12,12],['坐姿划船',3,10,45]];
   const pullPlan = [['引体向上',4,8,0],['杠铃划船',4,10,60],['哑铃二头弯举',3,12,14]];
   const legPlan  = [['杠铃深蹲',4,8,90],['腿举',3,12,140],['罗马尼亚硬拉',3,10,80]];
-  const toItems = list => list.map(([nm,sets,reps,weight]) => {
-    const e = ex.find(x => x.name === nm);
-    return { id:uid(), exId:e.id, exName:e.name, muscle:e.muscle, sets, reps, weight };
+  /* v4.4:个人库可能被删过个别种子动作——查不到就跳过该项,不让 demoData 中途抛 TypeError
+   * (旧版停在半演示态,随后任意保存会把残缺树推上服务器;餐食路径早已有同款守卫) */
+  const toItems = list => list.flatMap(([nm,sets,reps,weight]) => {
+    const e = ex.find(x => x.name === nm); if(!e) return [];
+    return [{ id:uid(), exId:e.id, exName:e.name, muscle:e.muscle, sets, reps, weight }];
   });
   u.plans['1'] = { id:uid(), name:'推日', items:toItems(pushPlan) };
   u.plans['3'] = { id:uid(), name:'拉日', items:toItems(pullPlan) };
@@ -582,16 +702,16 @@ function seedRichMember(u, t, foods, ex){
   while(cursor <= t){
     if([1,3,5].indexOf(weekday(cursor)) >= 0){
       const ci = [1,3,5].indexOf(weekday(cursor));
-      const items = cycles[ci].items.map(([nm, baseW, baseRm]) => {
-        const e = ex.find(x => x.name === nm);
+      const items = cycles[ci].items.flatMap(([nm, baseW, baseRm]) => {
+        const e = ex.find(x => x.name === nm); if(!e) return [];   /* v4.4:同 toItems 的空值守卫 */
         const prog = Math.floor((parseISO(t) - parseISO(cursor)) / (1000*60*60*24*14));
         const w = Math.max(0, Math.round(baseW + prog * 2 + Math.random()*2));
         const reps = baseRm + Math.floor(Math.random()*3);
         const sets = [];
         for(let i2=0;i2<3;i2++){ sets.push({ reps: reps + Math.floor(Math.random()*2)-1, weight: w }); }
-        return { id:uid(), exId:e.id, exName:e.name, muscle:e.muscle, sets };
+        return [{ id:uid(), exId:e.id, exName:e.name, muscle:e.muscle, sets }];
       });
-      u.workouts.push({ id:uid(), date:cursor, name:cycles[ci].name, items, note:'' });
+      if(items.length) u.workouts.push({ id:uid(), date:cursor, name:cycles[ci].name, items, note:'' });
     }
     cursor = addDays(cursor, 1);
   }
@@ -709,16 +829,12 @@ function renderView(){
 function showOnboard(){
   const html =
     '<div class="empty" style="padding:6px 4px 2px"><div class="e-ic">👋</div></div>' +
-    '<p style="margin:2px 0 14px;color:var(--ink-2)">欢迎使用健康管理！简单填几项基础信息，就能开始估算你的每日营养目标。也可以先载入<b>演示数据</b>看看整个工具的效果。</p>' +
+    '<p style="margin:2px 0 14px;color:var(--ink-2)">欢迎使用健康管理！简单填几项基础信息，就能开始估算你的每日营养目标（按减脂倾向估算，之后可在「目标」页的每日目标里改热量倾向）。也可以先载入<b>演示数据</b>看看整个工具的效果。</p>' +
     '<div class="form-grid">' +
       '<div><label>性别</label><select class="select" id="ob_gender"><option value="male">男</option><option value="female">女</option></select></div>' +
       '<div><label>出生年份</label><input class="input" id="ob_year" type="number" min="1930" max="2020" value="1992"></div>' +
       '<div><label>身高 cm</label><input class="input" id="ob_height" type="number" min="130" max="230" value="175"></div>' +
       '<div><label>当前体重 kg</label><input class="input" id="ob_weight" type="number" min="30" max="300" value="72"></div>' +
-      '<div class="span2"><label>主要目标</label><select class="select" id="ob_mode">' +
-        '<option value="cut">减脂（热量赤字，每周约0.4-0.5kg）</option>' +
-        '<option value="maintain">保持 / 增肌减脂缓慢进行</option>' +
-        '<option value="bulk">增肌（热量盈余）</option></select></div>' +
       '<div class="span2"><label>日常活动量</label><select class="select" id="ob_act">' + ACTIVITIES.map(a => '<option value="' + a.v + '">' + a.label + '</option>').join('') + '</select></div>' +
     '</div>' +
     '<div class="d-f" style="position:static;justify-content:space-between;margin-top:18px">' +
@@ -727,7 +843,6 @@ function showOnboard(){
     '</div>';
   const dlg = showDialog('开始使用', html, {size:'lg'});
   const b = dlg.box;
-  $('#ob_mode', b).value = state.goal.mode;
   $('#ob_act', b).value = String(state.activity);
   const collect = () => {
     state.profile = {
@@ -737,8 +852,6 @@ function showOnboard(){
       currentKg: num($('#ob_weight', b).value) || 72,
     };
     state.activity = num($('#ob_act', b).value);
-    state.goal.mode = $('#ob_mode', b).value;
-    if(state.goal.startKg === null) state.goal.startKg = state.profile.currentKg;
     syncNutrition(); save();
   };
   $('#ob_demo', b).addEventListener('click', () => { collect(); closeDialog(); demoData(); });
@@ -757,7 +870,7 @@ function openSettings(){
       '<div><label>身高 cm</label><input class="input" id="st_height" type="number" min="130" max="230" value="' + state.profile.height + '"></div>' +
       '<div><label>当前体重 kg</label><input class="input" id="st_weight" type="number" min="30" max="300" value="' + state.profile.currentKg + '"></div>' +
     '</div>' +
-    '<div class="tiny" style="margin:10px 0 6px;color:var(--ink-3)">活动量、饮水与营养目标，请在「目标」页的「每日目标」卡片中设置。</div>' +
+    '<div class="tiny" style="margin:10px 0 6px;color:var(--ink-3)">热量倾向、活动量、饮水与营养目标，请在「目标」页的「每日目标」卡片中设置。</div>' +
     '<div class="d-f"><button class="btn ghost" id="st_demo">🚀 演示数据</button><button class="btn ghost" id="st_export">⬇ 导出</button><button class="btn ghost" id="st_import">⬆ 导入</button><button class="btn danger ghost" id="st_wipe">🗑 清空</button><button class="btn primary" id="st_save">保存</button></div>' +
     '<div class="tiny" id="st_sync" style="margin-top:10px;color:var(--ink-3)"></div>' +
     '<div class="tiny" style="margin-top:4px;color:var(--ink-3)">各设备登录同一账户，读写的就是同一份服务器数据，无需手动同步；不同账户彼此隔离。本机存储仅作当前账户的离线缓存。历史备份可在上方「导出/导入」搬运。</div>' +
@@ -767,7 +880,6 @@ function openSettings(){
   $('#st_gender', b).value = state.profile.gender;
   $('#st_save', b).addEventListener('click', () => {
     state.profile = { gender:$('#st_gender', b).value, birthYear:num($('#st_year', b).value)||1992, height:num($('#st_height', b).value)||175, currentKg:num($('#st_weight', b).value)||state.profile.currentKg };
-    if(state.goal.startKg === null) state.goal.startKg = state.profile.currentKg;
     syncNutrition(); save(); closeDialog(); renderView(); toast('已保存');
   });
   $('#st_export', b).addEventListener('click', () => exportData());
@@ -853,9 +965,20 @@ function openProfile(){
   $('#pf_logout', b).addEventListener('click', doLogout);
 }
 async function doLogout(){
-  try { await srvFetch('/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }, 4000); } catch(e){}
+  /* v4.3：退出必须拿到服务器确认再清本地——旧版吞掉网络错误直接 reload，
+   * Cookie/会话行还有效，reload 后 /api/me 自动放行，共享设备下一个人会直接进上一个人的账户。
+   * v4.4：401 视为已退出（会话被管理员重置密码/删除时 /api/logout 在会话门处即返回 401，
+   * 服务器侧会话已删，本地没理由滞留——旧版把 401 当失败，用户被关在失效账户里）。 */
+  let state2 = null;   /* 'done' 已确认 | 'dead' 会话已失效 | 'fail' 其他非 2xx | 'down' 连不上 */
+  try {
+    const r = await srvFetch('/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }, 4000);
+    state2 = r.ok ? 'done' : (r.status === 401 ? 'dead' : 'fail');
+  } catch(e){ state2 = 'down'; }
+  if(state2 === 'fail'){ toast('服务器未确认退出，会话可能仍有效——请重试', true); return; }
+  if(state2 === 'down'){ toast('服务器离线：无法确认退出，会话 Cookie 仍在——恢复联网后请再次退出', true); return; }
   srv.fatal = true;
   if(srv.pushTimer){ clearTimeout(srv.pushTimer); srv.pushTimer = null; }
+  if(srv.retryTimer){ clearTimeout(srv.retryTimer); srv.retryTimer = null; }
   me = null;
   localStorage.removeItem(AUTH_KEY); localStorage.removeItem(AUTH_ROLE_KEY);
   location.reload();
@@ -925,20 +1048,6 @@ function renderHome(){
   if(q) q.addEventListener('click', startTodayWorkout);
   const g = $('#view [data-go2="diet"]');
   if(g) g.addEventListener('click', () => go('diet'));
-}
-
-function goalSummaryHTML(){
-  const g = state.goal;
-  const cur = latestVal('weight') || state.profile.currentKg;
-  if(!g.targetKg || !g.startKg) return '<div class="tiny muted">还没有设定体重目标，去「目标」页设置。</div>';
-  const start = g.startKg, target = g.targetKg;
-  const total = Math.abs(target - start), done = Math.abs(start - cur);
-  const pct = total ? clamp(Math.round(done/total*100), 0, 100) : 0;
-  const modeLabel = {cut:'减脂', bulk:'增肌', maintain:'保持'}[g.mode] || '';
-  return '<div class="small">目标体重 <b>' + target + 'kg</b>（' + modeLabel + '）</div>' +
-    '<div class="meter" style="margin-top:7px"><i style="width:' + pct + '%"></i></div>' +
-    '<div style="display:flex;justify-content:space-between;margin-top:5px" class="tiny muted"><span>' + start + 'kg 起点</span><span class="b" style="color:var(--brand-ink)">' + cur + 'kg</span><span>' + target + 'kg 目标</span></div>' +
-    (g.targetDate ? '<div class="tiny muted" style="margin-top:4px">目标日期 ' + dateCN(g.targetDate) + '</div>' : '');
 }
 
 /* =====================================================
@@ -1074,8 +1183,8 @@ function addMealDialog(date, slot, itemId){
    系统共享库（v4：管理员维护，普通用户只读；个人库可从中挑入）
 ===================================================== */
 let SYS_LIB = null;
-async function fetchSysLib(force){
-  if(SYS_LIB && !force) return SYS_LIB;
+async function fetchSysLib(){
+  if(SYS_LIB) return SYS_LIB;
   try {
     const r = await srvFetch('/system/library', { method: 'GET' }, 4000);
     if(r.status === 401){ authExpired(); return null; }
@@ -1084,6 +1193,10 @@ async function fetchSysLib(force){
     return SYS_LIB;
   } catch(e){ return null; }
 }
+/* v4.4:系统库在「每次进入食物库弹窗 / 训练动作库页」时拉取一次,之后导入与分页切换都走内存——
+ * 旧版两处调用点 force=true 把 SYS_LIB 写成只写不读的死缓存,每个导入动作/每次切系统库
+ * 都整库重下(上限 5000 条)。管理员的改动发生在另一个页面会话,进入时失效一次已足够新。 */
+function invalidateSysLib(){ SYS_LIB = null; }
 function importFoodFromSys(fo){
   if(!fo || !fo.name) return false;
   if(USERS.shared.foods.some(x => x.name === fo.name)){ toast('我的库已有「' + fo.name + '」', true); return false; }
@@ -1107,6 +1220,7 @@ function foodRowHTML(f, dataAttr){
 
 /* 食物库管理：我的库（可增删）| 系统库（只读 + 挑入我的库） */
 function openFoodLib(){
+  invalidateSysLib();   /* v4.4:每次打开弹窗拉一次系统库即可,弹窗内切分页不再重下 */
   const dlg = showDialog('食物库',
     '<div class="row" style="margin-bottom:10px"><div class="seg" id="fl_seg"></div></div>' +
     '<div id="fl_body"><div class="tiny muted">载入中…</div></div>');
@@ -1147,7 +1261,7 @@ function openFoodLib(){
   }
   async function renderSys(){
     $('#fl_body', b).innerHTML = '<div class="tiny muted">载入系统库…</div>';
-    const sys = await fetchSysLib();
+    const sys = await fetchSysLib();   /* v4.4:本次弹窗已失效过缓存,首拉后切分页走内存 */
     if(tab !== 'sys') return;   /* 载入期间用户切回了我的库 */
     if(!sys){ $('#fl_body', b).innerHTML = '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">🔌</div>服务器离线，暂时看不到系统库</div>'; return; }
     $('#fl_body', b).innerHTML =
@@ -1173,6 +1287,7 @@ function segBar(sel, items){
 }
 
 function renderTrain(){
+  invalidateSysLib();   /* v4.4:每次进入训练页使系统库缓存失效,保证跨会话看到管理员最新改动 */
   $('#view').innerHTML =
     '<div class="row" style="align-items:center;justify-content:space-between;margin-bottom:14px">' +
       segBar(trainTab, [
@@ -1341,7 +1456,7 @@ function openWorkoutDlg(date, planKey, editId){
       '<input class="ws_w" data-i="' + i + '" data-j="' + j + '" type="number" min="0" step="0.5" value="' + (s.weight || '') + '" placeholder="自重" style="width:52px;background:transparent;border:0;text-align:center" title="kg，自重留空">' +
       '</span>');
     return '<div class="lrow" style="align-items:flex-start" data-witem="' + i + '">' +
-      '<div class="grow" style="padding-top:4px"><div class="b small">' + esc(it.exName || '未命名动作') + ' <span class="tiny muted">' + (it.muscle||'') + '</span></div>' +
+      '<div class="grow" style="padding-top:4px"><div class="b small">' + esc(it.exName || '未命名动作') + ' <span class="tiny muted">' + esc(it.muscle || '') + '</span></div>' +   /* v4.4:muscle 经系统库可被管理员侧写入,须转义(审查发现唯一裸拼点) */
       '<div class="sub" style="margin-top:4px">' + setInputs.join('') +
       '<button class="btn sm ghost" data-addset="' + i + '" style="padding:3px 8px;font-size:12px">＋组</button></div></div>' +
       '<button class="iconbtn2" data-removeitem="' + i + '" style="color:var(--danger);width:30px;height:30px;font-size:14px">✕</button></div>';
@@ -1470,9 +1585,13 @@ function renderExLibMine(body){
 }
 async function renderExLibSys(body){
   body.innerHTML = '<div class="tiny muted">载入系统库…</div>';
-  const sys = await fetchSysLib();
+  const sys = await fetchSysLib();   /* v4.4:renderTrain 入口已失效缓存,本页首拉一次即可 */
   if(exLibTab !== 'sys') return;
   if(!sys){ body.innerHTML = '<div class="card"><div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">🔌</div>服务器离线，暂时看不到系统库</div></div>'; return; }
+  paintSysLib(body, sys);
+}
+/* 渲染系统动作库列表(数据在内存,导入/切换分页后重绘,不再整库重下) */
+function paintSysLib(body, sys){
   const groups = {};
   sys.exercises.forEach(e => { (groups[e.muscle || '其他'] = groups[e.muscle || '其他'] || []).push(e); });
   let h = '';
@@ -1491,7 +1610,7 @@ async function renderExLibSys(body){
     (h ? '<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">' + h + '</div>'
        : '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">🗂</div>系统库暂无动作</div>') + '</div>';
   $$('[data-impex]', body).forEach(btn => btn.addEventListener('click', () => {
-    if(importExerciseFromSys(sys.exercises[num(btn.dataset.impex)])){ renderExLibSys(body); }
+    if(importExerciseFromSys(sys.exercises[num(btn.dataset.impex)])){ paintSysLib(body, sys); }
   }));
 }
 
@@ -1527,7 +1646,7 @@ function renderBody(){
   }).join('');
 
   const metricOpts = MEASURES.map(m => '<option value="' + m.id + '"' + (m.id===bodyMetric?' selected':'') + '>' + esc(m.label) + '</option>').join('');
-  const chart = chartCard('chartBody', bodyMetric === 'weight' ? '体重趋势（含目标）' : (MEASURES.find(m=>m.id===bodyMetric)||{}).label + ' 趋势', '近60条 · 鼠标悬停查看数值',
+  const chart = chartCard('chartBody', (MEASURES.find(m=>m.id===bodyMetric)||{}).label + ' 趋势', '近60条 · 鼠标悬停查看数值',
     '<select class="select" id="bm_select" style="max-width:120px;padding:5px 8px">' + metricOpts + '</select>');
 
   // 最近记录表
@@ -1606,16 +1725,10 @@ function renderBodyChart(metric){
   if(recs.length < 2){ $('#chartBody').innerHTML = '<div class="empty"><div class="e-ic">📏</div>数据不足，先去记录几次吧</div>'; return; }
   const pts = recs.map(r => ({ x:r.date, y:r[metric] }));
   const out = pts.slice(Math.max(0, pts.length - 60));
-  // 体重目标参考线
-  let ref = null;
-  if(metric === 'weight' && state.goal.targetKg){
-    ref = { y: state.goal.targetKg, label:'目标 ' + state.goal.targetKg };
-  }
   const svg = lineChartSVG({
     points: out,
     color: 'var(--brand)',
     fill: true,
-    ref,
     yUnit: mdef.unit,
     fmtY: v => mdef.id === 'bf' ? v.toFixed(0) : (v < 10 ? v.toFixed(1) : v.toFixed(0)),
   });
@@ -1788,42 +1901,10 @@ function renderWaterChart(){
    目标
 ===================================================== */
 function renderGoals(){
-  const g = state.goal;
-  const cur = latestVal('weight') || state.profile.currentKg;
-  const start = g.startKg || cur;
-  const tgt = g.targetKg || cur;
-  const modeLabel = {cut:'减脂', bulk:'增肌', maintain:'保持'}[g.mode] || '';
-
-  // 目标进度 hero
-  const total = Math.abs(tgt - start) || 1;
-  const done = Math.abs(start - cur);
-  const pct = clamp(Math.round(done / total * 100), 0, 100);
-  const need = Math.abs(cur - tgt);
-  const dirLabel = cur > tgt ? '要减' : '要增';
-
-  // 目标卡
-  const goalCard =
-    '<div class="card"><h3>🎯 主目标</h3>' +
-    '<div class="row" style="align-items:center;gap:18px;flex-wrap:wrap">' +
-      '<div class="goal-ring" style="width:104px;height:104px">' +
-        '<svg width="104" height="104"><circle cx="52" cy="52" r="45" fill="none" stroke="var(--surface-3)" stroke-width="11"></circle><circle id="gr_c" cx="52" cy="52" r="45" fill="none" stroke="var(--brand)" stroke-width="11" stroke-linecap="round" stroke-dasharray="282.7" stroke-dashoffset="282.7"></circle></svg>' +
-        '<div class="gv"><b id="gr_v" style="font-size:20px">' + pct + '%</b><span class="tiny muted">已完成</span></div>' +
-      '</div>' +
-      '<div class="grow" style="min-width:170px">' +
-        '<div class="lrow" style="border:0;padding:3px 0"><span class="tiny muted" style="width:64px">当前</span><b>' + cur + ' kg</b></div>' +
-        '<div class="lrow" style="border:0;padding:3px 0"><span class="tiny muted" style="width:64px">起点</span><span>' + start + ' kg</span></div>' +
-        '<div class="lrow" style="border:0;padding:3px 0"><span class="tiny muted" style="width:64px">目标</span><span>' + tgt + ' kg · ' + modeLabel + '</span></div>' +
-        (g.targetDate ? '<div class="lrow" style="border:0;padding:3px 0"><span class="tiny muted" style="width:64px">期限</span><span>' + dateCN(g.targetDate) + '</span></div>' : '') +
-      '</div>' +
-      '<button class="btn" id="goal_edit">修改目标</button>' +
-    '</div>' +
-    (g.targetDate ? '<div class="tiny muted" style="margin-top:10px">还' + dirLabel + ' <b>' + need.toFixed(1) + 'kg</b>，距期限 ' + daysTo(g.targetDate) + ' 天，约每周 ' + round(need / Math.max(1, daysTo(g.targetDate)/7), 2) + 'kg（合理区间 0.2-0.8kg/周）</div>' : '') +
-    '</div>';
-
-  // 每日目标卡（营养 + 活动量 + 饮水）
+  // 每日目标卡（营养 + 活动量 + 饮水；热量倾向决定自动计算的档位）
   const T = target();
   const actLabel = (ACTIVITIES.find(a => String(a.v) === String(state.activity)) || {}).label || state.activity;
-  const nutCard =
+  const html =
     '<div class="card"><h3><span>🥗 每日目标</span><span class="grow"></span><button class="btn sm" id="nut_edit">修改目标</button></h3>' +
     '<div style="margin:2px 0 12px"><span class="hero" style="font-size:34px;color:var(--brand-ink)">' + T.kcal + '<span class="unit">kcal</span></span></div>' +
     '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">' +
@@ -1835,14 +1916,15 @@ function renderGoals(){
       '<div class="tile" style="box-shadow:none;background:var(--surface-2);min-width:0;padding:11px 10px"><div class="lab">活动量</div><div class="val" style="font-size:15px;line-height:1.35;white-space:normal">' + esc(actLabel) + '</div></div>' +
       '<div class="tile" style="box-shadow:none;background:var(--surface-2);min-width:0;padding:11px 10px"><div class="lab">每日饮水</div><div class="val" style="font-size:19px">' + state.waterTarget + '<span class="unit">杯</span></div></div>' +
     '</div>' +
-    '<div class="tiny muted mt">目标基于 BMR ' + Math.round(bmr()) + ' kcal × 活动系数 ' + state.activity + (state.goal.mode!=='maintain' ? ' 及' + (state.goal.mode==='cut'?'-400':'+300') + ' 调整' : '') + (state.nutrition.auto ? '（自动计算中）' : '（当前为手动设定）') + '；饮水目标用于概览页「今日饮水」卡的达标判断。点右上角「修改目标」可调整。</div>' +
+    '<div class="tiny muted mt">自动目标 = BMR ' + Math.round(bmr()) + ' kcal × 活动系数 ' + state.activity +
+      (function(){ const g = GOAL_MODE[state.goal.mode];   /* v4.4:文案直接查表,不再按 adj 符号反推 */
+        if(!g) return '';
+        if(!g.adj) return '（热量倾向：' + g.label + '，不增减）';
+        return '，再按热量倾向「' + g.label + '」' + (g.adj > 0 ? '+' : '−') + Math.abs(g.adj) + ' kcal'; })() +
+      (state.nutrition.auto ? '（自动计算中）' : '（当前为手动设定）') +
+      '；饮水目标用于概览页「今日饮水」卡的达标判断。点「修改目标」可改热量倾向、活动量、饮水与营养素。</div>' +
     '</div>';
-
-  const html = goalCard + nutCard;
   $('#view').innerHTML = html;
-  const gr = $('#gr_c');
-  gr.style.strokeDashoffset = String(282.7 * (1 - pct/100));
-  $('#goal_edit').addEventListener('click', openGoalEditor);
   $('#nut_edit').addEventListener('click', openNutritionEditor);
 }
 
@@ -1851,8 +1933,10 @@ function renderGoals(){
 function openNutritionEditor(){
   const n = state.nutrition;
   const html =
-    '<div class="chkline" style="margin-bottom:12px"><input type="checkbox" id="ne_auto"' + (n.auto ? ' checked' : '') + '> <span>根据基础代谢与目标自动计算</span></div>' +
+    '<div class="chkline" style="margin-bottom:12px"><input type="checkbox" id="ne_auto"' + (n.auto ? ' checked' : '') + '> <span>根据基础代谢、活动量与热量倾向自动计算</span></div>' +
     '<div class="form-grid">' +
+      '<div class="span2"><label>热量倾向</label><select class="select" id="ne_mode">' +
+        ['cut','maintain','bulk'].map(m => '<option value="' + m + '">' + GOAL_MODE[m].opt + '</option>').join('') + '</select></div>' +
       '<div class="span2"><label>日常活动量</label><select class="select" id="ne_act">' + ACTIVITIES.map(a => '<option value="' + a.v + '">' + a.label + '</option>').join('') + '</select></div>' +
       '<div class="span2"><label>每日饮水目标（杯）</label><input class="input" id="ne_water" type="number" min="1" max="30" value="' + state.waterTarget + '"></div>' +
     '</div>' +
@@ -1865,19 +1949,29 @@ function openNutritionEditor(){
     '<div class="d-f"><button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="ne_save">保存</button></div>';
   const dlg = showDialog('修改每日目标', html);
   const b = dlg.box;
+  const hasV = v => v !== null && v !== undefined;
   $('#ne_act', b).value = String(state.activity);
+  /* v4.4:mode 缺失/非法(旧版数据 goal 无 mode)按「保持」显示——与计算兜底 GOAL_MODE 缺省一致。
+   * 旧版 select.value 落空:下拉空白/选中项与实际计算分叉,保存后还把 '' 永久写回 */
+  $('#ne_mode', b).value = Object.keys(GOAL_MODE).includes(state.goal.mode) ? state.goal.mode : 'maintain';
   const c0 = calcNutrition();
-  $('#ne_kcal', b).value = n.kcal || c0.kcal;
-  $('#ne_protein', b).value = n.protein || c0.protein;
-  $('#ne_carbs', b).value = n.carbs || c0.carbs;
-  $('#ne_fat', b).value = n.fat || c0.fat;
+  /* v4.4:?? 保留合法的 0 值(如手动档把碳水设为 0)——旧版 || 会在重开+保存时把 0 悄悄换成计算默认值 */
+  $('#ne_kcal', b).value = hasV(n.kcal) ? n.kcal : c0.kcal;
+  $('#ne_protein', b).value = hasV(n.protein) ? n.protein : c0.protein;
+  $('#ne_carbs', b).value = hasV(n.carbs) ? n.carbs : c0.carbs;
+  $('#ne_fat', b).value = hasV(n.fat) ? n.fat : c0.fat;
+  const pickVals = () => ({ act: num($('#ne_act', b).value) || 1.2, mode: $('#ne_mode', b).value });
+  const fillCalc = c => { $('#ne_kcal', b).value = c.kcal; $('#ne_protein', b).value = c.protein; $('#ne_carbs', b).value = c.carbs; $('#ne_fat', b).value = c.fat; };
   const setNut = on => {
     $$('#neGrid input', b).forEach(i => i.disabled = on);
-    if(on){ const c = calcNutrition(); $('#ne_kcal', b).value = c.kcal; $('#ne_protein', b).value = c.protein; $('#ne_carbs', b).value = c.carbs; $('#ne_fat', b).value = c.fat; }
+    if(on){ const v = pickVals(); fillCalc(calcNutritionFor({ profile: state.profile, activity: v.act, goal: { mode: v.mode } })); }
   };
   $('#ne_auto', b).addEventListener('change', e => setNut(e.target.checked));
+  $('#ne_mode', b).addEventListener('change', () => setNut($('#ne_auto', b).checked));
+  $('#ne_act', b).addEventListener('change', () => setNut($('#ne_auto', b).checked));
   setNut(n.auto);
   $('#ne_save', b).addEventListener('click', () => {
+    state.goal.mode = $('#ne_mode', b).value;
     state.activity = num($('#ne_act', b).value);
     state.waterTarget = clamp(num($('#ne_water', b).value) || state.waterTarget, 1, 40);
     state.nutrition = { auto:$('#ne_auto', b).checked, kcal:num($('#ne_kcal', b).value), protein:num($('#ne_protein', b).value), carbs:num($('#ne_carbs', b).value), fat:num($('#ne_fat', b).value) };
@@ -1935,34 +2029,6 @@ function bindHabitEvents(){
     save(); renderHome();
   });
 }
-function daysTo(s){ return Math.round((parseISO(s) - parseISO(today())) / 86400000); }
-
-function openGoalEditor(){
-  const g = state.goal;
-  const cur = latestVal('weight') || state.profile.currentKg;
-  const html =
-    '<div class="field"><label>当前目标</label><select class="select" id="ge_mode">' +
-      '<option value="cut"' + (g.mode==='cut'?' selected':'') + '>减脂（热量赤字）</option>' +
-      '<option value="maintain"' + (g.mode==='maintain'?' selected':'') + '>保持</option>' +
-      '<option value="bulk"' + (g.mode==='bulk'?' selected':'') + '>增肌（热量盈余）</option></select></div>' +
-    '<div class="form-grid">' +
-      '<div><label>起点体重 kg</label><input class="input" id="ge_start" type="number" step="0.1" value="' + (g.startKg || cur) + '"></div>' +
-      '<div><label>目标体重 kg</label><input class="input" id="ge_target" type="number" step="0.1" value="' + (g.targetKg || cur) + '"></div>' +
-      '<div class="span2"><label>目标日期（可留空）</label><input class="input" type="date" id="ge_date" value="' + (g.targetDate || '') + '"></div>' +
-    '</div>' +
-    '<div class="d-f"><button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="ge_save">保存</button></div>';
-  const dlg = showDialog('设定目标', html);
-  const b = dlg.box;
-  $('#ge_save', b).addEventListener('click', () => {
-    state.goal.mode = $('#ge_mode', b).value;
-    state.goal.startKg = num($('#ge_start', b).value) || cur;
-    state.goal.targetKg = num($('#ge_target', b).value) || state.goal.startKg;
-    state.goal.targetDate = $('#ge_date', b).value || '';
-    syncNutrition(); save(); closeDialog(); renderGoals(); renderHome();
-  });
-  const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
-}
-
 /* =====================================================
    SVG 图表工具
 ===================================================== */
@@ -2156,11 +2222,10 @@ function renderStats(){
   const tiles2 =
     tileHTML('平均饮水', S.avgWater === null ? '--' : S.avgWater, '杯', '') +
     tileHTML('打卡完成率(7天)', S.habitRate === null ? '--' : S.habitRate + '%', '', '') +
-    tileHTML('当前BMI', bmi() === null ? '--' : bmi(), '', '') +
-    tileHTML('距目标', (state.goal.targetKg ? (Math.abs(latestVal('weight')||state.profile.currentKg - state.goal.targetKg)).toFixed(1) : '--'), 'kg', '');
+    tileHTML('当前BMI', bmi() === null ? '--' : bmi(), '', '');
 
   // 图表容器
-  const c1 = chartWrap('体重趋势', '近120条记录 · 虚线为目标体重', 'st_weight', '');
+  const c1 = chartWrap('体重趋势', '近120条记录', 'st_weight', '');
   const c2 = chartWrap('每日热量 vs 目标', '近30天', 'st_cal', '');
   const c3 = chartWrap('宏量营养素摄入', '近14天 · kcal', 'st_macro', legendHTML([{label:'蛋白',color:CX.c1},{label:'碳水',color:CX.c2},{label:'脂肪',color:CX.c3}]));
   const c4 = chartWrap('每周训练容量', '近12周 · Σ重量×次数', 'st_vol', '');
@@ -2183,7 +2248,6 @@ function renderStats(){
   const wPts = wRecs.slice(Math.max(0, wRecs.length - 120)).map(r => ({ x:r.date, y:r.weight }));
   $('#st_weight').innerHTML = lineChartSVG({
     points: wPts, color: CX.brand, area: true,
-    ref: { y: state.goal.targetKg || null, label: state.goal.targetKg ? '目标 ' + state.goal.targetKg + 'kg' : null },
     fmtTick: v => v.toFixed(1), fmtVal: v => v.toFixed(1) + ' kg', fmtX: dateSlash,
   });
 
@@ -2278,7 +2342,7 @@ function runFTest(){
   T('water', () => { state.water[today()] = (state.water[today()] || 0) + 1; if(waterFor(today()) < 1) throw new Error('water-fail'); });
   T('sleep', () => { state.sleep[today()] = { bed:'23:00', wake:'07:30', mins:510, quality:5 }; if(!sleepFor(today())) throw new Error('sleep-fail'); });
   T('habit', () => { const h = state.habits[0]; h.done[today()] = true; if(habitStreak(h, today()) < 1) throw new Error('streak-fail'); });
-  T('goalSave', () => { openGoalEditor(); const b = curDialog.box; $('#ge_mode', b).value = 'bulk'; $('#ge_target', b).value = 75; $('#ge_save', b).click(); if(state.goal.mode !== 'bulk') throw new Error('goal-not-saved'); });
+  T('aimMode', () => { const tdee = bmrOf(state.profile) * state.activity; openNutritionEditor(); const b = curDialog.box; $('#ne_mode', b).value = 'bulk'; $('#ne_save', b).click(); if(state.goal.mode !== 'bulk') throw new Error('aim-not-saved'); if(state.nutrition.kcal !== Math.round(tdee + GOAL_ADJ.bulk)) throw new Error('aim-calc-wrong'); });
   T('mealDialog', () => { dietDate = today(); renderDiet(); addMealDialog(today(), 'dinner'); const b = curDialog.box; $('#mi_name', b).value = '测试餐'; $('#mi_kcal', b).value = 100; $('#mi_p', b).value = 10; $('#mi_c', b).value = 10; $('#mi_f', b).value = 5; $('#mi_g', b).value = 200; $('#mi_save', b).click(); if(dayTotals(today()).kcal < 10) throw new Error('meal-dialog-not-saved'); });
   T('workoutCore', () => { const before = state.workouts.length; state.workouts.push({ id:uid(), date:today(), name:'测试', items:[{ id:uid(), exId:state.exercises[0].id, exName:state.exercises[0].name, muscle:state.exercises[0].muscle, sets:[{reps:8, weight:60},{reps:8, weight:60}] }] }); const w = state.workouts[state.workouts.length-1]; if(wkVolume(w) !== 960) throw new Error('vol-wrong'); const pr = isPR(state.exercises[0].id, today(), [{reps:8, weight:200}]); if(!pr.wPR) throw new Error('pr-false'); if(state.workouts.length <= before) throw new Error('not-added'); });
   T('workoutDlg', () => {
@@ -2405,9 +2469,35 @@ async function startMain(offlineBoot){
     document.body.appendChild(pre);
     return;
   }
-  if(qs.has('selftest')){ runSelfTest(); return; }
-  if(qs.has('ftest')){ demoData(); runFTest(); return; }
-  if(qs.has('shot')){ demoData(); if(NAV.some(n => n.id === qs.get('shot'))) go(qs.get('shot')); return; }
+  const shotView = qs.get('shot');
+  const isDevUrl = qs.has('selftest') || qs.has('ftest') || shotView !== null;
+  const dropQs = () => history.replaceState(null, '', location.pathname);   /* 剥查询串：钩子只生效一次 */
+  /* v4.4 统一门卫：?selftest 同样会覆盖并推送演示数据（v4.3 只挡了 ?ftest/?shot，selftest 先于
+   * 确认块直接执行 = 漏网）；先校验 ?shot 目标视图再动数据（旧版先 demoData 后校验，
+   * 拼错的视图名照样清空账户）；确认/取消后都剥掉查询串——&devok 常驻 URL 会让每次刷新静默重置。 */
+  if(isDevUrl && !qs.has('devok') && !confirm('这是调试链接：将用演示数据覆盖当前账户的全部数据，并自动同步到服务器（真实数据会丢失）。\n\n【确定】继续调试\n【取消】按真实数据正常进入')){
+    dropQs();
+    if(offlineBoot){ srv.online = false; toast('服务器离线：正显示本机缓存，恢复后自动补同步', true); }
+    if(!USERS.onboarded){ showOnboard(); }
+    go('home');
+    return;
+  }
+  if(isDevUrl){
+    if(qs.has('ftest')){ demoData(); runFTest(); }
+    else if(qs.has('selftest')){ runSelfTest(); }   /* runSelfTest 内部会先载入演示数据 */
+    else if(!shotView || !NAV.some(n => n.id === shotView)){
+      toast('未知的调试视图 ?shot=' + (shotView || '') + '（可选：' + NAV.map(n => n.id).join('/') + '）——未改动任何数据', true);
+      dropQs();
+      if(offlineBoot){ srv.online = false; toast('服务器离线：正显示本机缓存，恢复后自动补同步', true); }
+      if(!USERS.onboarded){ showOnboard(); }
+      go('home');
+      return;
+    } else {
+      demoData(); go(shotView);
+    }
+    dropQs();
+    return;
+  }
   if(offlineBoot){ srv.online = false; toast('服务器离线：正显示本机缓存，恢复后自动补同步', true); }
   if(!USERS.onboarded){ showOnboard(); }
   go('home');

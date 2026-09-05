@@ -38,11 +38,12 @@ function userRev(db, uid) {
 
 /* ---------- 注册建档:一条 users 行 + 个人库初值(系统库拷贝) ---------- */
 function createUser(db, uid, info) {
-  db.prepare(`INSERT INTO users(id, seq, name, avatar, color, activity, water_target,
+  /* v4.3:去掉 seq——v4 起单账户单成员,该列从未被读写,已从新库 schema 移除(老库残留列走 DEFAULT) */
+  db.prepare(`INSERT INTO users(id, name, avatar, color, activity, water_target,
               profile_json, goal_json, nutrition_json, rev, theme, onboarded,
               foods_json, exercises_json)
-              VALUES (?,?,?,NULL,NULL,NULL,NULL,NULL,NULL,NULL,0,'light',0,?,?)`)
-    .run(uid, 0, nz(info && info.name),
+              VALUES (?,?,NULL,NULL,NULL,NULL,NULL,NULL,NULL,0,'light',0,?,?)`)
+    .run(uid, nz(info && info.name),
       jz((info && info.library && info.library.foods) || []),
       jz((info && info.library && info.library.exercises) || []));
 }
@@ -67,26 +68,30 @@ function replaceUser(db, uid, data, expectedRev) {
   const shared = data.shared || {};
   const nextRev = cur + 1;
   /* 全表清空-重灌在本用户范围内进行;关闭外键避免删除顺序问题(事务内完成,失败即回滚) */
+  /* v4.3：FK 恢复改放 finally——旧写法 BEGIN IMMEDIATE 本身抛错(写锁被占/IO 故障)时
+   * 逃过 catch,共享连接的外键约束永久留在 OFF 状态,管理员删账户的级联清理随之失效。 */
   db.exec('PRAGMA foreign_keys = OFF;');
-  db.exec('BEGIN IMMEDIATE');
   try {
-    deleteUserData(db, uid);
-    db.prepare(`UPDATE users SET name = ?, avatar = ?, color = ?, activity = ?, water_target = ?,
-                profile_json = ?, goal_json = ?, nutrition_json = ?, theme = ?, onboarded = ?,
-                foods_json = ?, exercises_json = ?, rev = ? WHERE id = ?`)
-      .run(nz(u.name), nz(u.avatar), nz(u.color), nz(u.activity), nz(u.waterTarget),
-        jz(u.profile), jz(u.goal), jz(u.nutrition),
-        nz(data.theme) || 'light', data.onboarded ? 1 : 0,
-        jz(shared.foods || []), jz(shared.exercises || []),
-        nextRev, uid);
-    insertUserData(db, uid, u);
-    db.exec('COMMIT');
-  } catch (e) {
-    try { db.exec('ROLLBACK'); } catch (e2) { /* 回滚失败不掩盖原始错误 */ }
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      deleteUserData(db, uid);
+      db.prepare(`UPDATE users SET name = ?, avatar = ?, color = ?, activity = ?, water_target = ?,
+                  profile_json = ?, goal_json = ?, nutrition_json = ?, theme = ?, onboarded = ?,
+                  foods_json = ?, exercises_json = ?, rev = ? WHERE id = ?`)
+        .run(nz(u.name), nz(u.avatar), nz(u.color), nz(u.activity), nz(u.waterTarget),
+          jz(u.profile), jz(u.goal), jz(u.nutrition),
+          nz(data.theme) || 'light', data.onboarded ? 1 : 0,
+          jz(shared.foods || []), jz(shared.exercises || []),
+          nextRev, uid);
+      insertUserData(db, uid, u);
+      db.exec('COMMIT');
+    } catch (e) {
+      try { db.exec('ROLLBACK'); } catch (e2) { /* 回滚失败不掩盖原始错误 */ }
+      throw e;
+    }
+  } finally {
     db.exec('PRAGMA foreign_keys = ON;');
-    throw e;
   }
-  db.exec('PRAGMA foreign_keys = ON;');
   return { ok: true, rev: nextRev };
 }
 

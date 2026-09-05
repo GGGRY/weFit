@@ -224,6 +224,13 @@ async function main() {
   /* 系统库更新不追溯已注册用户 */
   r = await B.req('GET', '/api/state');
   ok('T15h 已注册用户个人库不受系统库更新影响', !r.json.data.shared.foods.some(f => f.name === '管理员新菜'));
+  /* v4.3 回归：合法 JSON 但非对象 body → 400（旧版 readJson 让请求永无响应、连接挂死） */
+  r = await anon.req('POST', '/api/login', 'null');
+  ok('T15i body=null→400 不挂死', r.status === 400 && r.json.error === 'invalid_json_body');
+  /* v4.3 回归：系统库超限 → 显式 400（旧版静默截断到 5000 还回 200，admin 端丢草稿） */
+  const hugeFoods = Array.from({ length: 5001 }, (_, i) => ({ name: 'f' + i }));
+  r = await A.req('PUT', '/api/system/library', { foods: hugeFoods, exercises: [] });
+  ok('T15j 系统库超5000→400 library_too_large', r.status === 400 && r.json.error === 'library_too_large');
 
   /* ============ 登出 ============ */
   r = await A.req('POST', '/api/logout', {});

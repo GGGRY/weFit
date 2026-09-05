@@ -12,21 +12,17 @@ const { seedLibrary } = require('./seed');
 const DEFAULT_DB = path.join(__dirname, 'data', 'jjhealth.db');
 
 /* 关系表设计：
- * - app：单行全局状态 + rev（乐观并发版本号）
+ * - app：单行全局配置（v4.3 起仅存 system_json；旧版 theme/onboarded/active_user_id/rev
+ *   遗留列与全局 foods/exercises 表已停止建新库——存量库不 DROP，避免破坏性迁移）
  * - users：成员注册表；profile/goal/nutrition 是形状固定的小配置对象，JSON 列保真
  * - 会增长的集合（饮食/训练/计划/身体/睡眠/饮水/习惯）全部拆为真正的关系表
  * - 有数组语义处一律带 seq，保证顺序往返一致；日期/星期/习惯 id 等映射键天然唯一 */
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS app (
-  id INTEGER PRIMARY KEY CHECK (id = 1),
-  theme TEXT NOT NULL DEFAULT 'light',
-  onboarded INTEGER NOT NULL DEFAULT 0,
-  active_user_id TEXT,
-  rev INTEGER NOT NULL DEFAULT 0
+  id INTEGER PRIMARY KEY CHECK (id = 1)
 );
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
-  seq INTEGER NOT NULL DEFAULT 0,
   name TEXT,
   avatar TEXT,
   color TEXT,
@@ -36,17 +32,8 @@ CREATE TABLE IF NOT EXISTS users (
   goal_json TEXT,
   nutrition_json TEXT
 );
-CREATE TABLE IF NOT EXISTS foods (
-  id TEXT PRIMARY KEY,
-  seq INTEGER NOT NULL DEFAULT 0,
-  name TEXT,
-  kcal REAL, p REAL, c REAL, f REAL
-);
-CREATE TABLE IF NOT EXISTS exercises (
-  id TEXT PRIMARY KEY,
-  seq INTEGER NOT NULL DEFAULT 0,
-  name TEXT, muscle TEXT
-);
+/* v4.3：旧全局 foods/exercises 表停止建表（v4 起系统库在 app.system_json、个人库在
+ * users 的 JSON 列；存量库中的同名遗留空表保持不删，见文件头注释） */
 /* 日期被"打开过"的标记（餐次可能 4 槽全空，也要能原样还原） */
 CREATE TABLE IF NOT EXISTS meal_days (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

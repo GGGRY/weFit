@@ -18,7 +18,7 @@ const os = require('node:os');
 const dbm = require('./db');
 const mapper = require('./mapper');
 const auth = require('./auth');
-const { copyLibrary } = require('./seed');
+const { copyLibrary, FOOD_NUM_KEYS } = require('./seed');
 
 const DEFAULT_PORT = Number(process.env.PORT || 8123);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -29,6 +29,7 @@ const STATIC_FILES = {
   '/': { file: 'index.html', type: 'text/html; charset=utf-8' },
   '/index.html': { file: 'index.html', type: 'text/html; charset=utf-8' },
   '/css/style.css': { file: 'css/style.css', type: 'text/css; charset=utf-8' },
+  '/js/seed-data.js': { file: 'js/seed-data.js', type: 'text/javascript; charset=utf-8' },
   '/js/app.js': { file: 'js/app.js', type: 'text/javascript; charset=utf-8' },
   /* 管理后台(v4.1)：页面本身公开，数据面全部走 /api/admin/* 的 admin 守卫 */
   '/admin': { file: 'admin.html', type: 'text/html; charset=utf-8' },
@@ -76,8 +77,16 @@ async function readJson(req, res) {
     sendJson(res, 400, { error: 'read_failed' });
     return null;
   }
-  try { return JSON.parse(raw); }
+  let parsed;
+  try { parsed = JSON.parse(raw); }
   catch (e) { sendJson(res, 400, { error: 'invalid_json' }); return null; }
+  /* v4.3：合法 JSON 但非对象（null / false / 0 / "str"）此前会让各调用点
+   * `if(!body) return;` 直接返回而从不响应 → 连接挂死。统一在此拒绝。 */
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    sendJson(res, 400, { error: 'invalid_json_body', hint: 'body 必须是 JSON 对象' });
+    return null;
+  }
+  return parsed;
 }
 
 function serveStatic(res, key) {
@@ -101,11 +110,15 @@ function readSystemLibrary(db) {
   return { foods: [], exercises: [] };
 }
 
-const FOOD_NUM_KEYS = ['kcal', 'p', 'c', 'f'];
+const LIB_MAX_ENTRIES = 5000;
 function sanitizeLibrary(body) {
   if (!body || !Array.isArray(body.foods) || !Array.isArray(body.exercises)) return null;
+  /* v4.3：旧版 slice(0,5000) 静默丢弃超限条目、admin 端收 200 还丢了草稿；改为显式报错 */
+  if (body.foods.length > LIB_MAX_ENTRIES || body.exercises.length > LIB_MAX_ENTRIES) {
+    return { error: 'library_too_large', max: LIB_MAX_ENTRIES };
+  }
   const foods = [];
-  for (const f of body.foods.slice(0, 5000)) {
+  for (const f of body.foods) {
     if (!f || typeof f.name !== 'string' || !f.name.trim()) return null;
     const o = { id: typeof f.id === 'string' && f.id ? f.id : auth.genId(), name: f.name.trim().slice(0, 80) };
     const per = {};
@@ -116,7 +129,7 @@ function sanitizeLibrary(body) {
     foods.push(o);
   }
   const exercises = [];
-  for (const e of body.exercises.slice(0, 5000)) {
+  for (const e of body.exercises) {
     if (!e || typeof e.name !== 'string' || !e.name.trim()) return null;
     const o = { id: typeof e.id === 'string' && e.id ? e.id : auth.genId(), name: e.name.trim().slice(0, 80) };
     if (typeof e.muscle === 'string' && e.muscle.trim()) o.muscle = e.muscle.trim().slice(0, 20);
@@ -139,14 +152,22 @@ async function handleRegister(db, req, res) {
   }
   const uid = auth.genId();
   const lib = copyLibrary(readSystemLibrary(db));
+  const pwdHash = await auth.hashPassword(password);   /* v4.3：CPU 密集哈希在开写事务之前完成，不持锁跑 scrypt */
   let isFirst;
   try {
     db.exec('BEGIN IMMEDIATE');
     /* 首账户判定放进写事务内：BEGIN IMMEDIATE 串行化写者，杜绝并发首注册双 admin */
     isFirst = !db.prepare('SELECT 1 FROM accounts LIMIT 1').get();
+    /* v4.4:事务内重查用户名——上方的预检与写事务之间隔着几十 ms 的 scrypt 异步哈希,
+     * 并发同名注册此前只靠 accounts UNIQUE 主键兜底(走异常路径也能 409,但显式重查
+     * 让败者在事务内干净收场,语义清晰) */
+    if (db.prepare('SELECT 1 FROM accounts WHERE username = ?').get(username)) {
+      db.exec('ROLLBACK');
+      sendJson(res, 409, { error: 'username_taken' }); return;
+    }
     mapper.createUser(db, uid, { name, library: lib });
     db.prepare('INSERT INTO accounts(username, user_id, pwd, role, created_at) VALUES (?,?,?,?,?)')
-      .run(username, uid, auth.hashPassword(password), isFirst ? 'admin' : 'user', Date.now());
+      .run(username, uid, pwdHash, isFirst ? 'admin' : 'user', Date.now());
     db.exec('COMMIT');
   } catch (e) {
     try { db.exec('ROLLBACK'); } catch (e2) { /* ignore */ }
@@ -163,7 +184,7 @@ async function handleLogin(db, req, res) {
   const username = String(body.username || '').trim();
   const password = String(body.password || '');
   const acc = db.prepare('SELECT pwd, role FROM accounts WHERE username = ?').get(username);
-  if (!acc || !auth.verifyPassword(password, acc.pwd)) {
+  if (!acc || !(await auth.verifyPassword(password, acc.pwd))) {   /* v4.3：异步 scrypt，不阻塞事件循环 */
     sendJson(res, 401, { error: 'bad_credentials' }); return;
   }
   const token = auth.createSession(db, username);
@@ -209,9 +230,15 @@ async function handleState(db, req, res, sessionUser, pathname) {
 }
 
 /* ---------- 管理后台 API（v4.1：仅 admin；撤权即时生效——role 每请求现查） ---------- */
+/* v4.3：角色守卫收敛——特权路由一律过 requireAdmin，杜绝逐处手抄两行检查的遗漏风险 */
+function requireAdmin(res, sessionUser) {
+  if (sessionUser.role === 'admin') return true;
+  sendJson(res, 403, { error: 'admin_only' });
+  return false;
+}
 async function handleAdmin(db, req, res, sessionUser, pathname) {
   if (!pathname.startsWith('/api/admin/')) return false;
-  if (sessionUser.role !== 'admin') { sendJson(res, 403, { error: 'admin_only' }); return; }
+  if (!requireAdmin(res, sessionUser)) return;
 
   const adminCount = () => db.prepare("SELECT COUNT(*) AS n FROM accounts WHERE role = 'admin'").get().n;
   const findAccount = username => db.prepare('SELECT a.username, a.role, a.user_id FROM accounts a WHERE a.username = ?').get(username);
@@ -255,7 +282,7 @@ async function handleAdmin(db, req, res, sessionUser, pathname) {
     if (password.length < 6 || password.length > 128) {
       sendJson(res, 400, { error: 'invalid_password', message: '密码需为 6-128 位' }); return;
     }
-    db.prepare('UPDATE accounts SET pwd = ? WHERE username = ?').run(auth.hashPassword(password), username);
+    db.prepare('UPDATE accounts SET pwd = ? WHERE username = ?').run(await auth.hashPassword(password), username);
     db.prepare('DELETE FROM sessions WHERE username = ?').run(username);  /* 强制该账户全部会话下线 */
     sendJson(res, 200, { ok: true, kicked: true, self: username === sessionUser.username });
     return;
@@ -293,10 +320,12 @@ async function handleSystemLibrary(db, req, res, sessionUser, pathname) {
     return;
   }
   if (req.method === 'PUT' && pathname === '/api/system/library') {
-    if (sessionUser.role !== 'admin') { sendJson(res, 403, { error: 'admin_only' }); return; }
+    if (!requireAdmin(res, sessionUser)) return;
     const body = await readJson(req, res);
     if (!body) return;
     const lib = sanitizeLibrary(body);
+    /* v4.3：超限不再静默 slice 截断（admin 以为全量保存、草稿还被丢弃），显式 400 */
+    if (lib && lib.error === 'library_too_large') { sendJson(res, 400, { error: lib.error, message: '食物与动作各限 ' + lib.max + ' 条，请精简后再保存' }); return; }
     if (!lib) { sendJson(res, 400, { error: 'invalid_library', hint: '需 {foods:[{name,per100}], exercises:[{name,muscle}]}' }); return; }
     db.prepare('UPDATE app SET system_json = ? WHERE id = 1').run(JSON.stringify(lib));
     sendJson(res, 200, { ok: true });
