@@ -30,6 +30,8 @@ const STATIC_FILES = {
   '/index.html': { file: 'index.html', type: 'text/html; charset=utf-8' },
   '/css/style.css': { file: 'css/style.css', type: 'text/css; charset=utf-8' },
   '/js/seed-data.js': { file: 'js/seed-data.js', type: 'text/javascript; charset=utf-8' },
+  /* 睡眠形状契约（v4.7）：与 server/mapper.js 共用同一份实现，故放在 public/js 下先行加载 */
+  '/js/sleep-shape.js': { file: 'js/sleep-shape.js', type: 'text/javascript; charset=utf-8' },
   '/js/app.js': { file: 'js/app.js', type: 'text/javascript; charset=utf-8' },
   /* 管理后台(v4.1)：页面本身公开，数据面全部走 /api/admin/* 的 admin 守卫 */
   '/admin': { file: 'admin.html', type: 'text/html; charset=utf-8' },
@@ -203,6 +205,13 @@ async function handleState(db, req, res, sessionUser, pathname) {
     if (!body) return;
     if (!mapper.isValidUserState(body.data)) {
       sendJson(res, 400, { error: 'invalid_state', hint: 'data 需包含本人 users 与 shared:{foods,exercises}' });
+      return;
+    }
+    /* 数量级护栏（如单日睡眠段数上限）：命中就 400 说清是哪一天，不静默截断。
+     * 形状脏值不在这里拒——mapper 的 normalizeSleepDay 按「接受即升级」归一化 */
+    const bad = mapper.validateUserData(body.data, sessionUser.userId);
+    if (bad) {
+      sendJson(res, 400, { error: bad.error, hint: '单日睡眠最多 ' + bad.max + ' 段（日期 ' + bad.date + '）' });
       return;
     }
     /* 只取本人那一份：树里其他用户的键一律忽略（A 永远写不到 B） */

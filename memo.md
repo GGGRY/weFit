@@ -1,6 +1,6 @@
 # 健康管理 · 项目备忘录
 
-> 更新：2026-09-06（**v4.4：同步回线收敛 + 调试钩子门卫补全 + 审查发现修复**）｜ 2026-09-05（**v4.3：代码审查修复——同步防覆盖补强 + 服务端/后台加固**；同日 v4.1：独立管理后台 /admin · v4：账户鉴权 + 数据隔离 + 双层资源库；同日 v4.2：移除体重"主目标"功能（进度环/目标虚线/引导选择），热量倾向并入「每日目标」编辑；同日 v3.2：睡眠饮水记录并入概览页，导航页移除）｜ v3.1：概览/目标页信息架构整理 + 移动端适配 ｜ v3（2026-09-04）：前端 + 后端 + SQLite 架构，解决跨设备同步 ｜ 旧单文件版存档于 `legacy/index.html`
+> 更新：2026-09-06（**v4.6：睡眠记录多段化——一天可多条（夜间/午睡/其他休息），达标与统计按全天总时长口径**；同日 v4.5：睡眠/饮水补记拆为各自独立历史弹窗 + 饮水目标可设 0；同日 v4.4：同步回线收敛 + 调试钩子门卫补全 + 审查发现修复）｜ 2026-09-05（**v4.3：代码审查修复——同步防覆盖补强 + 服务端/后台加固**；同日 v4.1：独立管理后台 /admin · v4：账户鉴权 + 数据隔离 + 双层资源库；同日 v4.2：移除体重"主目标"功能（进度环/目标虚线/引导选择），热量倾向并入「每日目标」编辑；同日 v3.2：睡眠饮水记录并入概览页，导航页移除）｜ v3.1：概览/目标页信息架构整理 + 移动端适配 ｜ v3（2026-09-04）：前端 + 后端 + SQLite 架构，解决跨设备同步 ｜ 旧单文件版存档于 `legacy/index.html`
 
 ## 一、项目定位
 
@@ -46,9 +46,13 @@
 - 任选指标近 60 条趋势折线；历史表格 + 查看全部
 - 记录体重自动同步「当前体重」（供 BMR 计算）
 
-### 5. 睡眠与饮水 💧😴（v3.2：并入概览页，原导航页已移除）
-- 概览页「今日饮水 / 今日睡眠」两卡就地记录当天：睡眠记入睡/起床（自动算时长、跨零点正确）、质量 1-5 星；饮水每日目标杯数 ±1 快捷 + 进度条
-- 卡右上角 🕘「补记」→ 历史弹窗：daynav 翻任意日期查看/补记/修改/删除（原独立页能力完整保留，入口收进概览）
+### 5. 睡眠与饮水 💧😴（v3.2：并入概览页，原导航页已移除；v4.6：睡眠多段化）
+- **睡眠多段（v4.6）**：一天可记多段，每段 `{t, bed, wake, mins, quality}`；类型固定三档——夜间睡眠😴/午睡😌/其他休息🛋️（`SLEEP_TYPES`）。卡头 = 全天合计小时 + 达标（≥7h 总时长口径）；逐段一行（图标 + **时长大字** + 质量只显当前档位一个表情 + 类型/起止小字 + ✏️），修改/删除走弹窗 `sleepSessionEditor(d, idx, after)`，卡底「＋ 记录一段」追加；**当日无段时不内嵌快速表单**，只显一句空态提示 + 同一个「＋ 记录一段」按钮——新增/修改一律走弹窗（类型 chips 与时长预览在弹窗内）。v4.7 修正：遇到三档之外的 `t`（导入/旧备份）卡面如实显 ❓+原始值而不是冒充成「夜间睡眠」，编辑保存也不会悄悄改写它；弹窗内时长预览超过 12h 且非夜间档时提醒“超过 12 小时，检查是否填反”
+- **统计口径 = 全天各段总时长**：卡面达标、统计页「平均睡眠」、近14天柱状图（目标虚线 7h）均按日总和；段顺序 = 录入顺序，不自动排序
+- **形状契约 = `public/js/sleep-shape.js`（v4.7，唯一来源）**：类型枚举、`sleepDur`、`normalizeSleepDay` 集中在这一份——浏览器先于 app.js 加载它，服务端 `mapper.js` 直接 require（同 seed-data.js 的双向取用约定，禁止再在任一侧另抄）。四条裁决两侧完全一致：① 旧“一天一条”对象 → 一段 night（接受即升级，兼容旧版离线客户端补推）；② 字段类型不符（bed 是对象、mins 是字符串…）丢键——顺带堵死“脏值绑进 SQLite 把 PUT 打成 500”；③ 清洗后空段（`{}`/`null`/标量元素）整段丢；④ 空数组（含被洗空的）该日删键。超出这四条的唯一例外：单日段数超 `SLEEP_MAX_SEGS`(32) → 服务端显式 400（不静默截断）
+- **旧数据自动迁移**：前端 `ensureUserIntact`（缓存树/服务器树同一咽喉、幂等）与服务端写库共用上面的 `normalizeSleepDay`；存量库首启由 `db.js` 一次性 `sleep_records → sleep_sessions`（v4.7 修正：必须 `JOIN users`——孤儿旧行会让整句 INSERT 报 FOREIGN KEY 错、升级后服务根本起不来，旧写法的 `INSERT OR IGNORE` 对违反外键不生效）
+- 饮水每日目标杯数 ±1 快捷 + 进度条（目标 0 = 不追踪，隐藏今日卡）
+- 卡右上角 🕘「补记」→ **各自独立**的历史弹窗（v4.5 拆分）：daynav 翻任意日期查看/补记/修改/删除；弹窗内改动同步刷新概览页
 - 睡眠归属语义不变：记录键 = 「起床那天」
 - 两张趋势图仍在统计页（v3.1 迁入）
 
@@ -91,7 +95,7 @@
 - 响应式：手机底部 Tab / 桌面左侧分组边栏；弹窗手机端底部升起
 - **移动端适配（v3.1 修复）**：`.tile` 自带 `min-width:130px` 是多列网格溢出根因，网格列一律 `minmax(0,1fr)` + 子项 `min-width:0`；每日目标五 tile 自适应收窄；概览打卡区为**一行一条习惯 + 当天圆钮**（无多日网格/横向滚动，≤560px 圆钮缩至 27px）
 - 深/浅色主题（v4 起每账户独立）；手写 SVG 图表；首次引导；Toast；危险操作二次确认
-- 开发调试钩子：`?selftest` 全视图渲染、`?ftest` 13 项功能自测、`?shot=视图名`、`?probe` 数据摘要（**三个会覆盖当前账户为演示数据**的钩子 `?selftest`/`?ftest`/`?shot` 共用同一确认门卫，v4.4 起确认/取消后自动从地址栏剥除钩子——旧版 `&devok` 常驻 URL 会在每次刷新时静默重置真实账户；`?shot` 先校验视图名再动数据，拼错名不毁数据；自动化场景仍可 URL 追加 `&devok` 跳过确认）
+- 开发调试钩子：`?selftest` 全视图渲染、`?ftest` 16 项功能自测、`?shot=视图名`、`?probe` 数据摘要（**三个会覆盖当前账户为演示数据**的钩子 `?selftest`/`?ftest`/`?shot` 共用同一确认门卫，v4.4 起确认/取消后自动从地址栏剥除钩子——旧版 `&devok` 常驻 URL 会在每次刷新时静默重置真实账户；`?shot` 先校验视图名再动数据，拼错名不毁数据；自动化场景仍可 URL 追加 `&devok` 跳过确认）
 
 ## 三、代码结构速览
 
@@ -104,6 +108,7 @@ JJ_HealthManagement/
 │  ├─ admin.html                #   管理后台（v4.1 自包含单文件；/admin 路由）
 │  ├─ css/style.css             #   设计令牌 + 组件样式（含登录门/后台样式）
 │  ├─ js/seed-data.js           #   食物/动作库种子唯一数据源（前端加载；服务端 require，v4.3）
+│  ├─ js/sleep-shape.js         #   睡眠形状契约唯一数据源（类型/时长/归一化；前端加载；服务端 mapper require，v4.7）
 │  └─ js/app.js                 #   全部业务 JS + 同步层 + 登录门/双层库 UI
 ├─ server/                      # 后端（零 npm 依赖）
 │  ├─ server.js                 #   node:http：鉴权中间件 + 静态托管 + 登录/注册 + 本人数树读写 + 系统库 + /api/admin/*
@@ -111,15 +116,18 @@ JJ_HealthManagement/
 │  ├─ seed.js                   #   系统库种子构建（数据源 = public/js/seed-data.js）+ 个人库初始拷贝
 │  ├─ db.js                     #   node:sqlite 建表 + 幂等列迁移（新库 16 张表，每用户 rev）
 │  ├─ mapper.js                 #   单人数树 ⇄ 关系表；不变量：PUT→GET 深度相等（只触碰本人子树）
-│  ├─ test/roundtrip.test.js    #   57 项断言：鉴权 + 双账户隔离 + 系统库权限 + 形状保真 + 规模压测 + v4.3 回归
+│  ├─ test/roundtrip.test.js    #   69 项断言：鉴权 + 双账户隔离 + 系统库权限 + 形状保真（含 v4.6 睡眠多段/旧形状归一化、v4.7 脏形状升级与段数上限 400、静态映射）+ 规模压测 + v4.3 回归
 │  ├─ test/admin.test.js        #   39 项断言：后台 API（角色/重置密码/删号 + 护栏）
+│  ├─ test/migrate.test.js      #   11 项断言：存量库一次性迁移 sleep_records → sleep_sessions（孤儿行不崩、不复活、旧表留底，v4.7）
+│  ├─ test/sleep-shape.test.js   #   19 项断言：睡眠形状契约纯函数（两侧共用同一份，错了两边一起错）
 │  └─ data/jjhealth.db          #   SQLite 数据库（.gitignore 已排除）
 ├─ legacy/index.html            # 旧单文件版（离线可用，回退参考）
 └─ memo.md
 ```
 
 - **前端核心约定**不变：业务代码只读写 `state`（当前成员工作副本），`save()` = 写回成员 + localStorage + queuePush()；同步层函数集中在 `load()` 之后（fetchState / doPush / queuePush / handleConflict / refreshSyncStatus）
-- **页面归属**：打卡渲染与绑定 `habitCardHTML()` + `bindHabitEvents()` 由概览 `renderHome()` 调用（当天清单，仅点选）；习惯管理 `habitSettingsCardHTML()` + `bindHabitSettings()` 挂目标页 `renderGoals()`，新增/修改走弹窗 `openHabitAdder()`/`openHabitEditor()`，删除经 `confirm()` 确认后整卡刷新；`openNutritionEditor()` 是"每日目标"统一编辑弹窗（营养+活动量+饮水）；睡眠/饮水趋势图函数 `renderSleepChart/renderWaterChart` 挂在 `renderStats()`，容器 id `st_sleep`/`st_water`；今日饮水/今日睡眠卡 = `lifeTodayHTML()` + `bindLifeToday()`（`lifeWaterCard/lifeSleepCard/bindLifeCard` 以 ctx `home`/`dlg` 双上下文复用——概览今日卡与历史弹窗 `openLifeHistory()/renderLifeDlg()` 共用一套渲染与绑定，睡眠修改走 `sleepQuick(d, sl, after)`）
+- **叠层弹窗（v4.7）**：`showDialog` 维护 `dialogStack`，`curDialog` 恒为栈顶，也只有栈顶响应 Esc——旧写法按一次 Esc 会把内外两层一起关掉（v4.6 睡眠段编辑器就是从概览卡/历史弹窗里再开一层），且内层关闭后外层虽开着但 `curDialog` 已被置 null（导入结尾与各测试取 `curDialog.box` 会踩空）
+- **页面归属**：打卡渲染与绑定 `habitCardHTML()` + `bindHabitEvents()` 由概览 `renderHome()` 调用（当天清单，仅点选）；习惯管理 `habitSettingsCardHTML()` + `bindHabitSettings()` 挂目标页 `renderGoals()`，新增/修改走弹窗 `openHabitAdder()`/`openHabitEditor()`，删除经 `confirm()` 确认后整卡刷新；`openNutritionEditor()` 是"每日目标"统一编辑弹窗（营养+活动量+饮水）；睡眠/饮水趋势图函数 `renderSleepChart/renderWaterChart` 挂在 `renderStats()`，容器 id `st_sleep`/`st_water`；今日饮水/今日睡眠卡 = `lifeTodayHTML()` + `bindLifeToday()`（`lifeWaterCard/lifeSleepCard/bindWaterCard/bindSleepCard` 以 ctx `home`/`dlg` 双上下文复用——概览今日卡与**各自**历史弹窗 `openWaterHistory()/openSleepHistory()` 共用一套渲染与绑定；睡眠逐段新增/修改/删除走 `sleepSessionEditor(d, idx, after)`，v4.6 多段化后 `sleepQuick` 退役）
 - **数据接口（v4 / v4.1）**：公开 = `POST /api/register`、`POST /api/login`、`GET /api/health`、静态页（含 `/admin`）；登录后可用 = `GET/PUT /api/state`（**本人数树**，`{rev?, data}`——rev 过期 409、缺省盲写；服务端只取 `data.users[本人uid]` 那一份，其余键忽略，缺本人键则 400 拒绝防误清空）、`GET /api/me`、`POST /api/logout`、`GET /api/system/library`（**PUT 仅 admin**）；**后台 API（仅 admin，v4.1）** = `GET /api/admin/users`（列表+数据概况）、`PUT /api/admin/role`（设/撤管理员，防"最后一个管理员"）、`PUT /api/admin/password`（重置并强制该账户下线）、`DELETE /api/admin/users`（删账户级联清数据，不可删自己）
 - **API 仍是"整树 state"风格**（v4 粒度收窄为单账户）：细粒度 CRUD 端点留待未来按需追加，mapper 后的关系表结构已支持
 
@@ -142,13 +150,13 @@ JJ_HealthManagement/
 | `workout_items` | (user_id, workout_id, seq) | 训练动作项：item_id, ex_id, ex_name, muscle |
 | `workout_sets` | (user_id, workout_id, item_seq, seq) | 逐组 reps×weight；用 `item_seq` 引用所属动作项而非 item_id（主键列不能 NULL，旧数据可能缺 id） |
 | `body_records` | (user_id, seq) | 身体 7 项：weight/chest/waist/hip/arm/thigh/bf；主键用 seq 因旧版导入可能同日多条；索引 `idx_body_date(user_id, date)` |
-| `sleep_records` | (user_id, date) | bed, wake, mins, quality(1-5) |
+| `sleep_sessions` | (user_id, date, seq) | **v4.6 多段**：t(night/nap/rest), bed, wake, mins, quality(1-5)；seq = 录入顺序；旧 `sleep_records`(user_id,date) 停建不读，存量库首启经 `app.sleep_multi` 标志一次性迁移为 seq=0 的 night 段（旧表留底不删，防删光后重启复活） |
 | `water_records` | (user_id, date) | cups |
 | `habits` | (user_id, habit_id) | 习惯定义：seq, name, icon, color |
 | `habit_done` | (user_id, habit_id, date) | 打卡记录（一行 = 一次打卡） |
 
 - **连接参数**：`journal_mode = DELETE`（不留常驻 -wal 边文件，OneDrive 同步友好）、`synchronous = NORMAL`、`foreign_keys = ON`
-- **往返不变量**（mapper.js）：单人数树 PUT→GET 深度相等——JSON 列与关系表拆分/重组必须保形状，且写路径只触碰本人子树，`test/roundtrip.test.js` 57 项断言守此约定（含双账户隔离与系统库权限）
+- **往返不变量**（mapper.js）：单人数树 PUT→GET 深度相等——JSON 列与关系表拆分/重组必须保形状，且写路径只触碰本人子树，`test/roundtrip.test.js` 69 项断言守此约定（含双账户隔离与系统库权限）。**已登记的例外（均 T18l/T18m 显式锁定）**：睡眠形状的“接受即升级”——旧“一天一条”对象归一为 night 段数组；脏元素/脏字段/空数组按 `sleep-shape.js` 四条裁决丢弃（服务端无行可存，留键会两边形状长期抖动，所以前端 `ensureUserIntact` 必须同样删键）；超 `SLEEP_MAX_SEGS` 不属例外而是显式 400
 
 ## 四、已知边界与技术债
 
@@ -158,6 +166,8 @@ JJ_HealthManagement/
 4. ~~存储键 `jjhealth_v2`~~ **v4 已解决**：`jjhealth_v3:<用户名>` 按账户分键；旧键不再读写（残留可手动清）
 5. 服务器需保持运行：电脑重启后 Windows 双击 `start.bat`，Linux/macOS 运行 `./start.sh`；手机记录依赖电脑在线（彻底脱离电脑 → 云端部署，见五.1）
 6. 图表 hover 用原生 title；饮水"杯"无 ml 换算；主题不跟随系统（沿袭旧版）
+7. 睡眠多段形状前后端成对（v4.6）：若只回滚前端不恢复库，旧代码会把段数组读成空字段记录并重建旧表写入退化行——但 `sleep_sessions` 里的新数据不会被旧代码删除（其删除清单无此表），重新升级即恢复。整体回滚仍建议直接恢复 `jjhealth.db` 备份
+8. **升级窗口旧标签页会压平他人新段（v4.7 审查登记，未改代码）**：v4.5 的标签页在 v4.6 服务升级后继续用，它保存的是“一天一条”整块，服务端会按“接受即升级”归一为一段 night——该日其他段（午睡等）被静默平掉。服务端做不了防覆盖（无法区分“旧客户端正常保存”与“新客户端删到只剩一段”），**处理方式 = 升级步骤约定**：升级后让所有人刷新页面（或自动下线）再记录；若已经发生，从上一份导出备份里找回该日其他段补录
 
 ## 五、后续开发计划建议
 
@@ -187,6 +197,6 @@ manifest + service worker，手机"添加到主屏幕"像独立 App（app.js 内
 - **管理后台**：浏览器访问 `http://<服务器>:8123/admin`，仅管理员账户可登录；普通用户即使在登录页输对了密码也会看到"无管理权限"提示
 - **v4 升级说明（一次性）**：旧成员数据不再展示（既定"从零开始"）；想留底请在升级前用旧版运行导出备份，或直接保留 `jjhealth.db` 文件副本
 - **换电脑**：整个文件夹拷走（OneDrive 同步即等价），`server/data/jjhealth.db` 就是全部数据（含账户与会话）
-- **跑测试**：`cd server && node test/roundtrip.test.js && node test/admin.test.js`（57 + 39 项断言）；浏览器 `?ftest` 13 项功能自测（会覆盖为演示数据，需确认或 `&devok`）
+- **跑测试**：`cd server && npm test`（四个文件：roundtrip 69 + admin 39 + migrate 11 + sleep-shape 19 项断言；也可 `node test/xxx.test.js` 单跑）；浏览器 `?ftest` 16 项功能自测（会覆盖为演示数据，需确认或 `&devok`）
 - **清零重来**：⚙️设置 → 🗑清空（仅本账户，服务器同步清本人子树，不可恢复，先导出留底）；**全库重来**：停服务后删除 `server/data/jjhealth.db`
 - **忘记密码**：找任一管理员在后台「用户管理 → 重置密码」处理（该账户会被强制下线）；若所有管理员都失联：停服务删库重来（最后手段）

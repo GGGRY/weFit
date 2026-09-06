@@ -19,6 +19,8 @@ process.env.DB_PATH = TMP_DB;
 const { start } = require('../server');
 
 const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixture.json'), 'utf8'));
+/* 睡眠形状契约仍唯一来源于前端目录（服务端 mapper 也 require 它），测试不另拄上限 */
+const { SLEEP_MAX_SEGS } = require('../../public/js/sleep-shape.js');
 
 /* ---------- 深度相等比较(数组讲顺序,对象讲键集合,失败报路径) ---------- */
 function deepEq(a, b, p) {
@@ -152,6 +154,7 @@ async function main() {
   r = await A.req('GET', '/api/state');
   const expA = normalizeExpected(stateA, uidA);
   ok('T8b GET→与 PUT 深度一致(边界形状)', r.status === 200 && r.json.rev === 1 && deepEq(expA, r.json.data), LAST_FAIL || JSON.stringify(r.json).slice(0, 200));
+  /* T8b 的 sleep 段缺 wake/quality（2026-09-02）与同日多段（09-01/09-03）验证了多段数组的键缺失+seq 保真 */
 
   r = await A.req('PUT', '/api/state', { rev: 0, data: stateA });
   ok('T9a 过期rev→409', r.status === 409 && r.json.error === 'rev_conflict' && r.json.rev === 1, JSON.stringify(r.json));
@@ -248,6 +251,13 @@ async function main() {
   ok('T17b style.css→text/css', r.status === 200 && r.headers.get('content-type').includes('text/css'));
   r = await anon.req('GET', '/js/app.js');
   ok('T17c app.js→js', r.status === 200 && r.headers.get('content-type').includes('javascript'));
+  /* v4.7：睡眠形状契约文件靠 STATIC_FILES 显式映射托管。漏了这条映射不会让任何服务端测试变红，
+   * 但浏览器里 normalizeSleepDay 未定义、整个睡眠 UI 直接崩，故在此钉住 */
+  r = await anon.req('GET', '/js/sleep-shape.js');
+  ok('T17f sleep-shape.js→js', r.status === 200 && r.headers.get('content-type').includes('javascript'));
+  r = await anon.req('GET', '/');
+  ok('T17g index.html 在 app.js 前加载 sleep-shape.js',
+    r.text.includes('js/sleep-shape.js') && r.text.indexOf('js/sleep-shape.js') < r.text.indexOf('js/app.js'));
   r = await anon.req('GET', '/server.js');
   ok('T17d 目录外路径→404', r.status === 404);
   r = await B.req('GET', '/api/nope');
@@ -256,6 +266,56 @@ async function main() {
   /* ============ 规模压测(重新登录 A;单人数树) ============ */
   r = await A.req('POST', '/api/login', { username: 'alice', password: 'secret123' });
   ok('T18a 重新登录', r.status === 200);
+
+  /* v4.6 睡眠多段化：旧版离线客户端补推的"一天一条"对象形状 → 服务端归一化为一段夜间。
+   * 这是刻意的形状升级（旧树 PUT→GET 不再深度相等），新形状往返由 T8b 与压测保证 */
+  const legacy = { theme: 'light', onboarded: true, shared: { foods: [], exercises: [] },
+    users: { [uidA]: { id: uidA, name: '陈', sleep: { '2026-09-05': { bed: '23:00', wake: '07:00', mins: 480, quality: 4 } } } }, active: uidA };
+  r = await A.req('PUT', '/api/state', { data: legacy });   /* 盲写（body 形状 {rev?, data}），避免与后续 rev 记账纠缠 */
+  ok('T18l1 旧形状睡眠补推→接受', r.status === 200, JSON.stringify(r.json).slice(0, 120));
+  r = await A.req('GET', '/api/state');
+  const expLegacy = normalizeExpected(legacy, uidA);
+  expLegacy.users[uidA].sleep['2026-09-05'] = [{ t: 'night', bed: '23:00', wake: '07:00', mins: 480, quality: 4 }];
+  ok('T18l2 旧形状归一化为 night 段数组', deepEq(expLegacy, r.json.data), LAST_FAIL || JSON.stringify(r.json.data).slice(0, 200));
+
+  /* v4.7 审查回归：脏睡眠形状必须被归一化到规范形状，而不是把 PUT 打成 500、
+   * 或“存一半写一半”让 PUT≠GET（旧版：[null] 直接 TypeError；{t:{}} 绑不进 SQLite；
+   * ["x"] 存成 [{}]；空数组存不进去但 GET 丢键） */
+  const junk = { theme: 'light', onboarded: true, shared: { foods: [], exercises: [] },
+    users: { [uidA]: { id: uidA, name: '陈', sleep: {
+      '2026-01-01': [null, { t: 'nap', bed: '13:00', wake: '13:30', mins: 30, quality: 4 }],     // 脏元素丢，同其余段下标前移
+      '2026-01-02': [{ t: { a: 1 }, bed: '23:00', wake: { h: 1 }, mins: '480', quality: 3 }],   // 类型不符的字段丢键
+      '2026-01-03': 'x',                                                                          // 标量整天丢
+      '2026-01-04': [],                                                                           // 空数组 = 无记录，不留幽灵键
+      '2026-01-05': {},                                                                           // 旧形状全空 = 同上
+      '2026-01-06': [{ t: 'meditation', mins: 20 }],                                             // 未知类型原样保真
+    } } }, active: uidA };
+  r = await A.req('PUT', '/api/state', { data: junk });
+  ok('T18m1 脏睡眠形状→200 不 500', r.status === 200, JSON.stringify(r.json).slice(0, 120));
+  r = await A.req('GET', '/api/state');
+  const gotSleep = (r.json.data.users[uidA] || {}).sleep || {};
+  ok('T18m2 脏元素丢弃后其余段保序保真', JSON.stringify(gotSleep['2026-01-01']) ===
+    JSON.stringify([{ t: 'nap', bed: '13:00', wake: '13:30', mins: 30, quality: 4 }]), JSON.stringify(gotSleep['2026-01-01']));
+  ok('T18m3 类型不符字段丢键', JSON.stringify(gotSleep['2026-01-02']) ===
+    JSON.stringify([{ bed: '23:00', quality: 3 }]), JSON.stringify(gotSleep['2026-01-02']));
+  ok('T18m4 标量/空数组/空对象三类都不留键',
+    !('2026-01-03' in gotSleep) && !('2026-01-04' in gotSleep) && !('2026-01-05' in gotSleep),
+    JSON.stringify(Object.keys(gotSleep)));
+  ok('T18m5 未知类型不篡改不丢弃', JSON.stringify(gotSleep['2026-01-06']) ===
+    JSON.stringify([{ t: 'meditation', mins: 20 }]), JSON.stringify(gotSleep['2026-01-06']));
+
+  /* 单日段数上限：显式 400（不静默截断），且整笔写入作废 */
+  const over = JSON.parse(JSON.stringify(junk));
+  over.users[uidA].sleep = { '2026-02-01': Array.from({ length: SLEEP_MAX_SEGS + 1 }, (_, i) => ({ t: 'rest', mins: i + 1 })) };
+  r = await A.req('PUT', '/api/state', { data: over });
+  ok('T18n1 单日超 ' + SLEEP_MAX_SEGS + ' 段→400', r.status === 400 && r.json.error === 'sleep_too_many_segments', JSON.stringify(r.json).slice(0, 120));
+  r = await A.req('GET', '/api/state');
+  ok('T18n2 被拒后原数据一字未改', deepEq(gotSleep, r.json.data.users[uidA].sleep), LAST_FAIL);
+  const atLimit = JSON.parse(JSON.stringify(junk));
+  atLimit.users[uidA].sleep = { '2026-02-01': Array.from({ length: SLEEP_MAX_SEGS }, (_, i) => ({ t: 'rest', mins: i + 1 })) };
+  r = await A.req('PUT', '/api/state', { data: atLimit });
+  ok('T18n3 正好在上限内→接受', r.status === 200, JSON.stringify(r.json).slice(0, 120));
+
   const curRev = (await A.req('GET', '/api/state')).json.rev;
   const u = {
     id: uidA, name: '大数据', avatar: '🦁', color: 'orange',
@@ -276,7 +336,8 @@ async function main() {
         { id: 'mc' + i, name: '鸡胸', per100: { kcal: 118, p: 22, c: 0.6, f: 3 }, g: 150 }],
       dinner: [], snack: [],
     };
-    u.sleep[d] = { bed: '23:0' + (i % 10), wake: '07:00', mins: 480, quality: 1 + (i % 5) };
+    u.sleep[d] = [{ t: 'night', bed: '23:0' + (i % 10), wake: '07:00', mins: 480, quality: 1 + (i % 5) }];
+    if (i % 2 === 0) u.sleep[d].push({ t: 'nap', bed: '13:00', wake: '13:30', mins: 30, quality: 4 });   /* 多段日的 seq 保序 */
     u.water[d] = i % 9;
     u.habits[0].done[d] = true;
   }

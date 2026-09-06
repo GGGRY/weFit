@@ -28,7 +28,7 @@
 
 ## 目录
 
-- `public/` 前端三文件（无构建）
+- `public/` 前端（无构建：`index.html` + `admin.html` + `css/style.css` + `js/seed-data.js` + `js/sleep-shape.js` + `js/app.js`）
 - `server/` 后端 + `data/jjhealth.db`（SQLite，全部数据都在这里）
 - `legacy/index.html` 旧单文件版（回退参考）
 - `memo.md` 项目备忘录（架构、决策、技术债）
@@ -36,9 +36,14 @@
 ## 测试
 
 ```bash
-cd server && node test/roundtrip.test.js   # 鉴权 + 双账户隔离 + 往返保真（57 项）
-             node test/admin.test.js        # 管理后台 API：角色/重置密码/删号护栏（39 项）
+cd server && npm test                        # 一次跑完下面四个文件
+     node test/roundtrip.test.js   # 鉴权 + 双账户隔离 + 往返保真（69 项）
+     node test/admin.test.js       # 管理后台 API：角色/重置密码/删号护栏（39 项）
+     node test/migrate.test.js     # 存量库首启一次性迁移：旧睡眠表 → 多段表（11 项）
+     node test/sleep-shape.test.js # 睡眠形状契约纯函数（前后端共用同一份，19 项）
 ```
+
+> 睡眠的形状规则（旧“一天一条”升级、脏值清洗、段数上限）只写在 `public/js/sleep-shape.js` 一处：浏览器先于 app.js 加载它，`server/mapper.js` 直接 require（同 seed-data.js）。改规则只改这一份，两侧自动同步。
 
 浏览器调试钩子：`?ftest`（功能自测）、`?selftest`（全视图渲染）、`?shot=视图名`、`?probe`（数据摘要）。
 

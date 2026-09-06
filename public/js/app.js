@@ -140,6 +140,15 @@ function ensureUserIntact(u){
   if(u.meals === undefined) u.meals = {};
   if(u.sleep === undefined) u.sleep = {};
   if(u.water === undefined) u.water = {};
+  /* v4.6 睡眠多段化 + v4.7 形状清洗：缓存树与服务器树都经 adoptRaw→ensureUserIntact 这一个
+   * 咽喉，无需存储版本号（幂等，规范形状原样通过）。裁决规则唯一来源 = js/sleep-shape.js 的
+   * normalizeSleepDay，服务端写库走同一份函数——两侧必须一致，否则本机留着服务器不存的
+   * 脏日期（空数组、[null]、标量），每次同步形状抖动，脏值还会在渲染时把整页抛崩。 */
+  if(!u.sleep || typeof u.sleep !== 'object' || Array.isArray(u.sleep)) u.sleep = {};
+  Object.keys(u.sleep).forEach(d => {
+    const segs = normalizeSleepDay(u.sleep[d]);
+    if(segs) u.sleep[d] = segs; else delete u.sleep[d];
+  });
   if(u.habits === undefined || !u.habits.length) u.habits = defaultHabits();
   if(!u.color) u.color = 'green';
   if(!u.avatar) u.avatar = '🙂';
@@ -609,8 +618,13 @@ function bodyVal(metric, date){
 function latestVal(metric){ return bodyVal(metric, today()); }
 function bmi(){ const w = latestVal('weight'); if(!w || !state.profile.height) return null; return round(w / Math.pow(state.profile.height/100, 2), 1); }
 
-/* ---------- 睡眠饮水辅助 ---------- */
-function sleepFor(date){ return state.sleep[date] || null; }
+/* ---------- 睡眠饮水辅助（v4.6 睡眠多段：一天 = 段数组 [{t,bed,wake,mins,quality}]） ----------
+ * 类型枚举 / 时长计算 / 形状归一化都在 js/sleep-shape.js（服务端 mapper 共用同一份）：
+ * SLEEP_TYPES、SLEEP_GOAL_MINS、sleepType(未知返回 null)、sleepDur、normalizeSleepDay */
+/* 读侧再兜一层：ensureUserIntact 已清洗过，但 state 也可能被导入/调试钩子直接塞进脏元素，
+ * 一个 null 段就够让 renderHome 抛错、概览整页空白 */
+function sleepSessions(date){ const v = state.sleep[date]; return Array.isArray(v) ? v.filter(s => s && typeof s === 'object') : []; }
+function sleepTotalMins(date){ return sleepSessions(date).reduce((n, s) => n + (num(s.mins) || 0), 0); }
 function waterFor(date){ return state.water[date] || 0; }
 
 /* ---------- 习惯辅助 ---------- */
@@ -715,11 +729,16 @@ function seedRichMember(u, t, foods, ex){
     }
     cursor = addDays(cursor, 1);
   }
-  // 睡眠 30 天 + 饮水 14 天 + 习惯
+  // 睡眠 30 天（多段：夜间为主，~40% 天数午后一段午睡、~10% 傍晚一段休息）+ 饮水 14 天 + 习惯
   for(let i = 29; i >= 0; i--){
     const d = addDays(t, -i);
-    const mins = Math.round(390 + Math.random()*110);
-    u.sleep[d] = { bed:'23:'+String(Math.floor(Math.random()*3)).padStart(2,'0'), wake:'07:'+String(Math.floor(Math.random()*5)).padStart(2,'0'), mins, quality: Math.random()<0.6 ? 4 : (Math.random()<0.5?3:5) };
+    const bed = '23:'+String(Math.floor(Math.random()*3)).padStart(2,'0'), wake = '07:'+String(Math.floor(Math.random()*5)).padStart(2,'0');
+    const segs = [{ t:'night', bed, wake, mins: sleepDur(bed, wake, 'night'), quality: Math.random()<0.6 ? 4 : (Math.random()<0.5?3:5) }];
+    if(Math.random() < 0.4){ const nb = '12:'+ (i%2 ? '30' : '45'), nw = '13:'+ (i%2 ? '20' : '35');
+      segs.push({ t:'nap', bed:nb, wake:nw, mins: sleepDur(nb, nw, 'nap'), quality: 3 + (i % 3) }); }
+    if(Math.random() < 0.1){ const rb = '18:00', rw = '18:30';
+      segs.push({ t:'rest', bed:rb, wake:rw, mins: sleepDur(rb, rw, 'rest'), quality: 4 }); }
+    u.sleep[d] = segs;
   }
   for(let i = 13; i >= 0; i--){ u.water[addDays(t, -i)] = Math.round(4 + Math.random()*6); }
   u.habits.forEach((h, hi) => {
@@ -753,8 +772,9 @@ function toast(msg, isErr){
   setTimeout(()=> el.remove(), 2600);
 }
 
-/* ---------- 弹窗 ---------- */
+/* ---------- 弹窗（dialogStack 支持叠层：只有栈顶响应 Esc / 接收 closeDialog） ---------- */
 let curDialog = null;
+const dialogStack = [];
 function showDialog(title, html, opts){
   opts = opts || {};
   const ov = document.createElement('div'); ov.className = 'overlay';
@@ -764,13 +784,26 @@ function showDialog(title, html, opts){
   const box = d.querySelector('.d-b');
   box.insertAdjacentHTML('beforeend', html);
   ov.appendChild(d);
-  const close = () => { ov.remove(); curDialog = null; document.removeEventListener('keydown', esk); };
-  const esk = e => { if(e.key === 'Escape') close(); };
+  /* 支持叠层弹窗（v4.6 起睡眠段编辑器就是从概览卡/历史弹窗里再开一层）：
+   * 旧写法每个弹窗都往 document 挂一个 Esc 监听、关闭时把 curDialog 直接置空——
+   * 按一次 Esc 会把内外两层一起关掉，且内层关了以后外层虽然还开着、curDialog 却是 null
+   * （导入结尾的 if(curDialog) closeDialog() 与各测试取 curDialog.box 都会踩空）。
+   * 现在维护一个栈：只有栈顶响应 Esc，curDialog 恒等于栈顶。 */
+  const entry = { box, el: d };
+  function close(){
+    ov.remove();
+    const i = dialogStack.indexOf(entry); if(i >= 0) dialogStack.splice(i, 1);
+    curDialog = dialogStack.length ? dialogStack[dialogStack.length - 1] : null;
+    document.removeEventListener('keydown', esk);
+  }
+  entry.close = close;                        // closeDialog() 走 curDialog.close，故挂在 entry 上
+  function esk(e){ if(e.key === 'Escape' && dialogStack[dialogStack.length - 1] === entry) close(); }
   document.addEventListener('keydown', esk);
   ov.addEventListener('mousedown', e => { if(e.target === ov) close(); });
   d.querySelector('.d-x').addEventListener('click', close);
   document.body.appendChild(ov);
-  curDialog = { close, box };
+  dialogStack.push(entry);
+  curDialog = entry;
   if(opts.onOpen) opts.onOpen(box, close);
   return curDialog;
 }
@@ -1744,7 +1777,9 @@ function chartCard(containerId, title, sub, controls){
 
 /* =====================================================
    今日睡眠 / 今日饮水（原「睡眠饮水」页并入概览页）
-   记录仍以日期为键（state.sleep/state.water），睡眠归属"起床那天"。
+   记录以日期为键（state.water[date]=杯数；state.sleep[date]=睡眠段数组），
+   睡眠归属"起床那天"。v4.6 多段化：一天可记多段（夜间/午睡/其他休息），
+   每段 {t,bed,wake,mins,quality}，达标与统计按全天总时长口径。
    概览页两张"今日"卡直接记录当天；卡右上角 🕘 打开**各自**的历史弹窗
    （v4.5:睡眠与饮水分开补记、互不混排），弹窗内可翻任意日期查看 / 补记 / 修改 / 删除。
 ===================================================== */
@@ -1771,28 +1806,28 @@ function lifeWaterCard(d, ctx){    // ctx:'home'=概览今日卡（标题/🕘�
 
 function lifeSleepCard(d, ctx){
   const isHome = ctx === 'home';
-  const sl = sleepFor(d);
+  const list = sleepSessions(d);
+  const total = sleepTotalMins(d);
   const head = '<span>' + (isHome ? '😴 今日睡眠' : '😴 睡眠') + '</span>' +
-    (isHome && !sl ? '<span class="hint">起床后记录昨夜睡眠</span>' : '') +
+    (list.length ? '<span class="hint">合计 ' + round(total/60,1) + ' 小时 · ' + (total >= SLEEP_GOAL_MINS ? '达标' : '偏少') + '</span>' : '') +
     '<span class="grow"></span>' +
     (isHome ? '<button class="btn sm ghost" data-slehis title="补记/修改历史睡眠记录">🕘 补记</button>' : '');
-  if(!sl) return '<div class="card" style="margin-bottom:0"><h3>' + head + '</h3>' +
-    '<div class="form-grid">' +
-      '<div><label>入睡</label><input class="input" type="time" id="sl_bed" value="23:30"></div>' +
-      '<div><label>起床</label><input class="input" type="time" id="sl_wake" value="07:00"></div>' +
-    '</div>' +
-    '<div class="row mt" style="align-items:center;justify-content:space-between">' +
-      '<div class="tiny muted">质量：</div><div class="stars" id="sl_stars">' + QUALITY.map(q => '<button class="slq on" data-q="' + q.n + '">' + q.ic + '</button>').join('') + '</div>' +
-    '</div>' +
-    '<div class="row mt" style="justify-content:space-between;align-items:center"><span class="tiny muted">预计睡眠 <b id="sl_prev">--</b></span>' +
-    '<button class="btn primary sm" id="sl_save">保存</button></div>' +
-  '</div>';
+  // 无当日快速表单：空态只留一句提示，新增一律走「记录一段」弹窗（v4.6 用户要求收敛）
   return '<div class="card" style="margin-bottom:0"><h3>' + head + '</h3>' +
-    '<div class="lrow"><div class="thumb">😴</div><div class="grow"><div class="b">' + esc(sl.bed || '--:--') + ' → ' + esc(sl.wake || '--:--') + '</div>' +
-    '<div class="sub">时长 ' + round(sl.mins/60,1) + ' 小时 · ' + (sl.mins>=420?'达标':'偏少') + '</div></div>' +
-    '<div class="stars">' + QUALITY.map(q => '<button class="' + (sl.quality>=q.n?'on':'') + '" disabled>' + q.ic + '</button>').join('') + '</div>' +
-    '<button class="iconbtn2" data-sleedit title="修改">✏️</button></div>' +
-    '<div class="row mt" style="justify-content:flex-end"><button class="btn danger ghost sm" data-sledel>删除</button></div>' +
+    (list.length ? list.map((s, i) => {
+      const tp = sleepType(s.t), qm = QUALITY.find(q => q.n === num(s.quality));
+      // 未知类型如实显形（❓ + 原始 t），不冒充「夜间睡眠」——旧写法会让人看错档，
+      // 并在编辑保存时把原值悄悄改成 night
+      const ic = tp ? tp.ic : '❓';
+      const label = tp ? tp.label : '未知类型 ' + esc(String(s.t === undefined || s.t === null || s.t === '' ? '(空)' : s.t));
+      // 重点展示时长；质量只显当前档位一个表情（无评分不显）；具体时段小字
+      return '<div class="lrow"><div class="thumb">' + ic + '</div>' +
+        '<div class="grow"><div class="b" style="font-size:17px">' + round((num(s.mins) || 0)/60,1) + ' 小时' +
+        (qm ? '<span style="font-size:16px;margin-left:8px">' + qm.ic + '</span>' : '') + '</div>' +
+        '<div class="sub">' + label + ' · ' + esc(s.bed || '--:--') + ' → ' + esc(s.wake || '--:--') + '</div></div>' +
+        '<button class="iconbtn2" data-sleedit data-i="' + i + '" title="修改/删除">✏️</button></div>';
+    }).join('') : '<div class="tiny muted" style="text-align:center;padding:8px 0">还没有睡眠记录</div>') +
+    '<div class="row mt" style="justify-content:flex-end"><button class="btn sm ghost" data-sleadd>＋ 记录一段</button></div>' +
   '</div>';
 }
 
@@ -1828,7 +1863,7 @@ function bindDaynav(b, onStep){   // onStep('today' | ±1)：更新所属弹窗�
 /* ---------- 饮水历史弹窗（单卡，与睡眠分开补记） ---------- */
 function openWaterHistory(){
   const dlg = showDialog('💧 饮水 · 历史记录', '', {size:'lg'});
-  renderWaterHistory(dlg.box, dlg.close);   // 传 captured close：叠层弹窗关闭后 curDialog 已空，不能再用全局 closeDialog
+  renderWaterHistory(dlg.box, dlg.close);   // 传 captured close：弹窗内部重绘时不能误关当时正好在最上面的其他层
 }
 function renderWaterHistory(b, close){
   const d = waterHisDate;
@@ -1847,7 +1882,7 @@ function openSleepHistory(){
 }
 function renderSleepHistory(b, close){
   const d = sleepHisDate;
-  b.innerHTML = hisDaynav(d, '睡眠以「起床那天」归属 · 翻日期即可查看或补记') +
+  b.innerHTML = hisDaynav(d, '睡眠以「起床那天」归属 · ＋记录一段可补午睡/小憩') +
     lifeSleepCard(d, 'dlg') +
     '<div class="d-f"><button class="btn ghost" data-cancel>关闭</button></div>';
   bindDaynav(b, step => { sleepHisDate = step === 'today' ? today() : addDays(sleepHisDate, step); renderSleepHistory(b, close); });
@@ -1861,54 +1896,87 @@ function bindWaterCard(root, d, after){
   const wm = $('[data-wmin]', root); if(wm) wm.addEventListener('click', () => { if(waterFor(d) > 0){ state.water[d] = waterFor(d) - 1; save(); after(); } });
 }
 
-/* 绑定 root 内的睡眠卡（无记录=快速记录表单；有记录=修改/删除） */
+/* 绑定 root 内的睡眠卡（有无记录都只有「＋ 记录一段」与逐段 ✏️，表单统一在弹窗里） */
 function bindSleepCard(root, d, after){
-  const sl = sleepFor(d);
-  if(!sl){
-    const starsBox = $('#sl_stars', root);
-    if(starsBox){
-      let q = 3;
-      function paint(){ $$('.slq', starsBox).forEach(b2 => b2.classList.toggle('on', num(b2.dataset.q) <= q)); }
-      paint();
-      $$('.slq', starsBox).forEach(b2 => b2.addEventListener('click', () => { q = num(b2.dataset.q); paint(); }));
-      function calcDur(){ const bed = $('#sl_bed', root).value, wake = $('#sl_wake', root).value; if(!bed || !wake){ $('#sl_prev', root).textContent = '--'; return null; }
-        const [bh,bm] = bed.split(':').map(Number), [wh,wm] = wake.split(':').map(Number);
-        let mins = (wh*60+wm) - (bh*60+bm); if(mins < 0) mins += 1440; if(mins === 0) mins = 1440;
-        $('#sl_prev', root).textContent = round(mins/60,1) + ' 小时'; return mins; }
-      $('#sl_bed', root).addEventListener('change', calcDur); $('#sl_wake', root).addEventListener('change', calcDur); calcDur();
-      $('#sl_save', root).addEventListener('click', () => {
-        const bed = $('#sl_bed', root).value, wake = $('#sl_wake', root).value;
-        if(!bed || !wake){ toast('请填写入睡与起床时间', true); return; }
-        state.sleep[d] = { bed, wake, mins: calcDur() || 0, quality: q };
-        save(); after(); toast('已记录睡眠');
-      });
-    }
-  } else {
-    const ed = $('[data-sleedit]', root); if(ed) ed.addEventListener('click', () => sleepQuick(d, sl, after));
-    const de = $('[data-sledel]', root); if(de) de.addEventListener('click', () => { delete state.sleep[d]; save(); after(); toast('已删除'); });
-  }
+  const add = $('[data-sleadd]', root); if(add) add.addEventListener('click', () => sleepSessionEditor(d, null, after));
+  $$('[data-sleedit]', root).forEach(b2 =>
+    b2.addEventListener('click', () => sleepSessionEditor(d, b2.dataset.i === undefined ? null : num(b2.dataset.i), after)));
+}
+/* 按下标写回一段（editing=null 追加）。**重新取**当日段数组，不用开弹窗时的快照——期间
+ * 概览卡/历史弹窗的另一处操作、或后台同步采纳（retrySync/handleConflict 的 materialize）
+ * 都可能改写 state.sleep[d]，拿旧快照整份覆盖会丢掉期间新增的段。段数变了说明下标已失效，
+ * 返回 false 让调用方提示重试，而不是写出越界空洞（JSON 化后变 null，服务端会 500）。 */
+function putSleepSeg(d, editing, newSeg){
+  const arr = sleepSessions(d).slice();
+  if(editing === null) arr.push(newSeg);
+  else if(editing < arr.length) arr[editing] = newSeg;
+  else return false;
+  state.sleep[d] = arr;
+  return true;
+}
+function dropSleepSeg(d, editing){
+  const arr = sleepSessions(d).slice();
+  if(editing !== null && editing < arr.length) arr.splice(editing, 1);
+  const segs = normalizeSleepDay(arr);   // 最后一段删完 → 空数组不留键（形状契约规则 4）
+  if(segs) state.sleep[d] = segs; else delete state.sleep[d];
 }
 
-function sleepQuick(d, sl, after){   // 修改已有睡眠记录（概览今日卡 / 历史弹窗共用）
+/* 睡眠段编辑弹窗（概览今日卡 / 历史弹窗共用）：idx=null 新增，否则按下标修改（含删除该段）。
+ * 新增默认类型：当日已有夜间段则建议「午睡」；新增态换类型重置默认时段，编辑态保留已填时间。
+ * 编辑态原样承接已存的 t（未知类型不预选任何档、保存也不改写）。 */
+function sleepSessionEditor(d, idx, after){
   after = after || (() => renderHome());
+  const editing = typeof idx === 'number' ? idx : null;
+  const list = sleepSessions(d);                       // 只用于回填表单与推断默认类型
+  const seg = editing !== null ? list[editing] : null;
+  let tk = seg ? (typeof seg.t === 'string' && seg.t ? seg.t : null)
+               : (list.some(s => s.t === 'night') ? 'nap' : 'night');
+  const def = (sleepType(tk) || sleepType('night')).def;
   const html =
+    '<div class="row" style="gap:6px;margin-bottom:10px">' + SLEEP_TYPES.map(t =>
+      '<button class="btn sm" id="sq_tp_' + t.k + '">' + t.ic + ' ' + t.label + '</button>').join('') + '</div>' +
     '<div class="form-grid">' +
-      '<div><label>入睡</label><input class="input" type="time" id="sq_bed" value="' + esc(sl.bed||'') + '"></div>' +
-      '<div><label>起床</label><input class="input" type="time" id="sq_wake" value="' + esc(sl.wake||'') + '"></div>' +
+      '<div><label>入睡</label><input class="input" type="time" id="sq_bed" value="' + esc((seg && seg.bed) || def[0]) + '"></div>' +
+      '<div><label>起床</label><input class="input" type="time" id="sq_wake" value="' + esc((seg && seg.wake) || def[1]) + '"></div>' +
     '</div>' +
     '<div class="row mt" style="align-items:center"><span class="tiny muted" style="margin-right:8px">质量：</span><div class="stars" id="sq_stars">' + QUALITY.map(q => '<button class="sqst on" data-q="' + q.n + '">' + q.ic + '</button>').join('') + '</div></div>' +
-    '<div class="d-f"><button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="sq_save">保存</button></div>';
-  const dlg = showDialog('修改睡眠', html);
+    '<div class="row mt" style="align-items:center"><span class="tiny muted">时长 <b id="sq_prev">--</b></span></div>' +
+    '<div class="d-f"><button class="btn ghost" data-cancel>取消</button>' +
+      (editing !== null ? '<button class="btn danger ghost" id="sq_del">删除该段</button>' : '') +
+      '<button class="btn primary" id="sq_save">保存</button></div>';
+  const dlg = showDialog(editing === null ? '记录睡眠' : '修改睡眠', html);
   const b = dlg.box;
-  let q = sl.quality;
+  let q = (seg && num(seg.quality)) || 3;
   const sb = $('#sq_stars', b);
   function paint(){ $$('.sqst', sb).forEach(x => x.classList.toggle('on', num(x.dataset.q) <= q)); }
   paint();
   $$('.sqst', sb).forEach(x => x.addEventListener('click', () => { q = num(x.dataset.q); paint(); }));
-  function dur(){ const bed = $('#sq_bed', b).value, wake = $('#sq_wake', b).value; if(!bed||!wake) return 0; let m = (wake.split(':')[0]*60 + wake.split(':')[1]*1) - (bed.split(':')[0]*60 + bed.split(':')[1]*1); if(m<0)m+=1440; return m===0?1440:m; }
+  /* 时长实时预览：非夜间档算出超过 12 小时基本就是时段填反/跨夜手滑，当场提醒比事后看图强 */
+  function prev(){ const m = sleepDur($('#sq_bed', b).value, $('#sq_wake', b).value, tk);
+    $('#sq_prev', b).textContent = m === null ? '--'
+      : round(m/60,1) + ' 小时' + (tk !== 'night' && m > 720 ? '（超过 12 小时，检查是否填反）' : ''); }
+  function paintTp(){ SLEEP_TYPES.forEach(t => $('#sq_tp_' + t.k, b).classList.toggle('primary', t.k === tk)); }
+  paintTp();
+  SLEEP_TYPES.forEach(t => $('#sq_tp_' + t.k, b).addEventListener('click', () => {
+    tk = t.k; paintTp(); prev();
+    if(editing === null){ $('#sq_bed', b).value = t.def[0]; $('#sq_wake', b).value = t.def[1]; prev(); }
+  }));
+  $('#sq_bed', b).addEventListener('change', prev); $('#sq_wake', b).addEventListener('change', prev); prev();
   $('#sq_save', b).addEventListener('click', () => {
-    state.sleep[d] = { bed: $('#sq_bed', b).value, wake: $('#sq_wake', b).value, mins: dur(), quality: q };
-    save(); closeDialog(); after(); toast('已更新');
+    const bed = $('#sq_bed', b).value, wake = $('#sq_wake', b).value;
+    if(!bed || !wake){ toast('请填写入睡与起床时间', true); return; }
+    if(!tk){ toast('请选择睡眠类型', true); return; }
+    const mins = sleepDur(bed, wake, tk);
+    const newSeg = { t: tk, bed, wake };
+    if(mins) newSeg.mins = mins;        // 0 或算不出 → 不写键（"键可缺省"约定；显式 mins:0 只是垃圾数据）
+    newSeg.quality = q;
+    if(!putSleepSeg(d, editing, newSeg)){ toast('这段时间的记录刚被改动，请关闭重开', true); return; }
+    save(); closeDialog(); after(); toast(editing === null ? '已记录' : '已更新');
+  });
+  const del = $('#sq_del', b);
+  if(del) del.addEventListener('click', () => {
+    dropSleepSeg(d, editing);
+    save(); closeDialog(); after(); toast('已删除');
   });
   const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
 }
@@ -1916,8 +1984,8 @@ function sleepQuick(d, sl, after){   // 修改已有睡眠记录（概览今日�
 function renderSleepChart(){
   const el = $('#st_sleep'); if(!el) return;
   const ds = lastNDates(14);
-  const pts = ds.map(x => ({ x, y: (state.sleep[x] ? state.sleep[x].mins : 0) }));
-  el.innerHTML = barChartSVG({ points: pts, color: 'var(--cat2)', target: 420, targetLabel:'7h', unit:'分钟', fmtY: v => (v/60).toFixed(1) + 'h' });
+  const pts = ds.map(x => ({ x, y: sleepTotalMins(x) }));   // 全天各段总时长
+  el.innerHTML = barChartSVG({ points: pts, color: 'var(--cat2)', target: SLEEP_GOAL_MINS, targetLabel:'7h', unit:'分钟', fmtY: v => (v/60).toFixed(1) + 'h' });
 }
 function renderWaterChart(){
   const el = $('#st_water'); if(!el) return;
@@ -2271,7 +2339,7 @@ function statSummary(){
     const kc = dayTotals(x).kcal;
     if(kc > 0){ kcalSum += kc; kcalCnt++; }
     if(waterFor(x) > 0){ waterSum += waterFor(x); waterCnt++; }
-    const sl = sleepFor(x); if(sl){ sleepSum += sl.mins; sleepCnt++; }
+    const mins = sleepTotalMins(x); if(mins > 0){ sleepSum += mins; sleepCnt++; }   // 全天各段总时长
   });
   const wk30 = state.workouts.filter(w => w.date >= d30[0] && w.date <= today()).length;
   const wNow = latestVal('weight');
@@ -2418,7 +2486,17 @@ function runFTest(){
   T('mealAdd', () => { const b4 = dayTotals(today()).kcal; addMealItem(today(), 'lunch', mealItem(state.foods[1], 150)); if(dayTotals(today()).kcal <= b4) throw new Error('kcal-not-increased'); });
   T('upsertBody', () => { const b4 = state.body.length; upsertBody({ date: today(), weight: 70.5, waist: 86 }); const lb = bodyLatest(); if(!lb || lb.weight !== 70.5) throw new Error('latest-wrong'); });
   T('water', () => { state.water[today()] = (state.water[today()] || 0) + 1; if(waterFor(today()) < 1) throw new Error('water-fail'); });
-  T('sleep', () => { state.sleep[today()] = { bed:'23:00', wake:'07:30', mins:510, quality:5 }; if(!sleepFor(today())) throw new Error('sleep-fail'); });
+  T('sleep', () => { state.sleep[today()] = [{ t:'night', bed:'23:00', wake:'07:30', mins:510, quality:5 }, { t:'nap', bed:'13:00', wake:'13:30', mins:30, quality:4 }];
+    if(sleepTotalMins(today()) !== 540 || sleepSessions(today()).length !== 2) throw new Error('sleep-fail'); });
+  T('sleepLegacyShape', () => { const u = { sleep: { '2020-01-01': { bed:'23:00', wake:'07:00', mins:480, quality:4 } } };
+    ensureUserIntact(u);   // v4.6 迁移：旧"一天一条"对象 → 一段夜间睡眠
+    if(!Array.isArray(u.sleep['2020-01-01']) || u.sleep['2020-01-01'][0].t !== 'night' || u.sleep['2020-01-01'][0].mins !== 480) throw new Error('legacy-migrate-fail'); });
+  T('sleepJunkShape', () => { const u = { sleep: { '2020-01-01': [null, {t:'nap', mins:30}], '2020-01-02': [], '2020-01-03': 'x', '2020-01-04': {}, '2020-01-05': [{t:'meditation', mins:'30'}] } };
+    ensureUserIntact(u);   // v4.7：脏元素/空数组/标量/空对象都得洗掉，与服务端 mapper 同一套规则（sleep-shape.js）
+    if(JSON.stringify(u.sleep) !== JSON.stringify({ '2020-01-01': [{t:'nap', mins:30}], '2020-01-05': [{t:'meditation'}] })) throw new Error('junk-clean-fail ' + JSON.stringify(u.sleep)); });
+  T('sleepDurSameMinute', () => { if(sleepDur('13:00','13:00','nap') !== 0) throw new Error('nap-not-zero');
+    if(sleepDur('23:00','23:00','night') !== 1440) throw new Error('night-not-full');
+    if(sleepDur('23:00','07:00','night') !== 480) throw new Error('cross-midnight-wrong'); });
   T('habit', () => { const h = state.habits[0]; h.done[today()] = true; if(habitStreak(h, today()) < 1) throw new Error('streak-fail'); });
   T('aimMode', () => { const tdee = bmrOf(state.profile) * state.activity; openNutritionEditor(); const b = curDialog.box; $('#ne_mode', b).value = 'bulk'; $('#ne_save', b).click(); if(state.goal.mode !== 'bulk') throw new Error('aim-not-saved'); if(state.nutrition.kcal !== Math.round(tdee + GOAL_ADJ.bulk)) throw new Error('aim-calc-wrong'); });
   T('mealDialog', () => { dietDate = today(); renderDiet(); addMealDialog(today(), 'dinner'); const b = curDialog.box; $('#mi_name', b).value = '测试餐'; $('#mi_kcal', b).value = 100; $('#mi_p', b).value = 10; $('#mi_c', b).value = 10; $('#mi_f', b).value = 5; $('#mi_g', b).value = 200; $('#mi_save', b).click(); if(dayTotals(today()).kcal < 10) throw new Error('meal-dialog-not-saved'); });

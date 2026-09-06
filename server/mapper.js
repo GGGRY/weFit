@@ -8,12 +8,18 @@
    "多人同时写互相覆盖"的根因,写路径只允许触碰自己那一份。
    ===================================================== */
 
+/* 睡眠形状契约与前端共用同一份实现（v4.7）：normalizeSleepDay 负责旧"一天一条"对象
+ * 升级、脏元素/脏字段丢弃，见 public/js/sleep-shape.js 文件头 */
+const { normalizeSleepDay, SLEEP_MAX_SEGS } = require('../public/js/sleep-shape.js');
+
 const SLOTS = ['breakfast', 'lunch', 'dinner', 'snack'];
 const BODY_KEYS = ['weight', 'chest', 'waist', 'hip', 'arm', 'thigh', 'bf'];
 
 /* 带 user_id 外键的子表(删自己子树用;顺序无关,写事务内完成) */
+/* v4.6：睡眠子表改 sleep_sessions（多段）；旧 sleep_records 不再读写也不在删除清单里，
+ * 迁移后原样留底；删账户仍靠 FK CASCADE 级联清理 */
 const USER_DATA_TABLES = [
-  'habit_done', 'habits', 'water_records', 'sleep_records', 'body_records',
+  'habit_done', 'habits', 'water_records', 'sleep_sessions', 'body_records',
   'workout_sets', 'workout_items', 'workouts', 'plan_items', 'plan_defs',
   'meals', 'meal_days',
 ];
@@ -29,6 +35,25 @@ function isValidUserState(s) {
     && s.users && typeof s.users === 'object' && !Array.isArray(s.users)
     && s.shared && typeof s.shared === 'object'
     && Array.isArray(s.shared.foods) && Array.isArray(s.shared.exercises);
+}
+
+/* 写入前的硬约束（数量级护栏）：返回错误码对象或 null。
+ * 形状本身不在这里拒绝——normalizeSleepDay 按"接受即升级"归一化；
+ * 只有"一天几千段"这种灌库量级才显式 400（与系统库 LIB_MAX_ENTRIES 同一取向：
+ * v4.3 审过一轮"静默截断会让客户端以为全存进去了"，所以宁可报错不静默丢）。
+ * 只查本人那一份：树里其他用户的键服务端根本不写，不该让别人的脏数据堵死我的同步。 */
+function validateUserData(data, uid) {
+  const u = (data && data.users && data.users[uid]) || {};
+  const sleep = u.sleep;
+  if (sleep && typeof sleep === 'object' && !Array.isArray(sleep)) {
+    for (const d of Object.keys(sleep)) {
+      const v = sleep[d];
+      if (Array.isArray(v) && v.length > SLEEP_MAX_SEGS) {
+        return { error: 'sleep_too_many_segments', date: d, max: SLEEP_MAX_SEGS };
+      }
+    }
+  }
+  return null;
 }
 
 function userRev(db, uid) {
@@ -150,16 +175,21 @@ function insertUserData(db, uid, u) {
   const bIns = db.prepare(`INSERT INTO body_records(user_id, seq, date, weight, chest, waist,
                            hip, arm, thigh, bf) VALUES (?,?,?,?,?,?,?,?,?,?)`);
   const body = Array.isArray(u.body) ? u.body : [];
-  body.forEach((r, i) => {
+  body.forEach((r0, i) => {
+    const r = (r0 && typeof r0 === 'object') ? r0 : {};   // 脏元素（null/标量）降级成空行，不抛 TypeError
     const vals = BODY_KEYS.map(k => nz(r[k]));
     bIns.run(uid, i, nz(r.date) || '', ...vals);
   });
 
-  const sIns = db.prepare('INSERT INTO sleep_records(user_id, date, bed, wake, mins, quality) VALUES (?,?,?,?,?,?)');
+  /* 睡眠：一天多段。形状裁决收在 sleep-shape.normalizeSleepDay（前端同一份）——
+   * 旧"一天一条"对象 → 一段 night（接受即升级，兼容旧版离线客户端补推）；
+   * [null] / 标量 / 全空段 / 空数组 → 相应丢弃，脏值不会再把 INSERT 打成 500。
+   * seq = 清洗后的下标，保证 GET 回来的数组与 PUT 的规范形状逐元素对齐。 */
+  const sIns = db.prepare('INSERT INTO sleep_sessions(user_id, date, seq, t, bed, wake, mins, quality) VALUES (?,?,?,?,?,?,?,?)');
   const sleep = u.sleep || {};
   Object.keys(sleep).forEach(date => {
-    const v = sleep[date] || {};
-    sIns.run(uid, date, nz(v.bed), nz(v.wake), nz(v.mins), nz(v.quality));
+    const segs = normalizeSleepDay(sleep[date]) || [];
+    segs.forEach((s, i) => sIns.run(uid, date, i, nz(s.t), nz(s.bed), nz(s.wake), nz(s.mins), nz(s.quality)));
   });
 
   const wtrIns = db.prepare('INSERT INTO water_records(user_id, date, cups) VALUES (?,?,?)');
@@ -170,10 +200,11 @@ function insertUserData(db, uid, u) {
   const hIns = db.prepare('INSERT INTO habits(user_id, habit_id, seq, name, icon, color) VALUES (?,?,?,?,?,?)');
   const hdIns = db.prepare('INSERT INTO habit_done(user_id, habit_id, date) VALUES (?,?,?)');
   const habits = Array.isArray(u.habits) ? u.habits : [];
-  habits.forEach((h, i) => {
+  habits.forEach((h0, i) => {
+    const h = (h0 && typeof h0 === 'object') ? h0 : {};   // 同上：脏元素不抛错
     const hid = nz(h.id) || ('h_seq_' + i);
     hIns.run(uid, hid, i, nz(h.name), nz(h.icon), nz(h.color));
-    const done = h.done || {};
+    const done = (h.done && typeof h.done === 'object') ? h.done : {};
     Object.keys(done).forEach(d => { if (done[d]) hdIns.run(uid, hid, d); });
   });
 }
@@ -265,12 +296,13 @@ function readUserData(db, uid) {
     return o;
   });
 
-  /* 睡眠 / 饮水 */
+  /* 睡眠（多段数组，date+seq 保序） / 饮水 */
   const sleep = {};
-  for (const r of db.prepare('SELECT * FROM sleep_records WHERE user_id = ? ORDER BY date').all(uid)) {
-    const v = {};
-    put(v, 'bed', r.bed); put(v, 'wake', r.wake); put(v, 'mins', r.mins); put(v, 'quality', r.quality);
-    sleep[r.date] = v;
+  for (const r of db.prepare('SELECT * FROM sleep_sessions WHERE user_id = ? ORDER BY date, seq').all(uid)) {
+    const s = {};
+    put(s, 't', r.t); put(s, 'bed', r.bed); put(s, 'wake', r.wake); put(s, 'mins', r.mins); put(s, 'quality', r.quality);
+    if (!sleep[r.date]) sleep[r.date] = [];
+    sleep[r.date].push(s);
   }
   const water = {};
   for (const r of db.prepare('SELECT date, cups FROM water_records WHERE user_id = ? ORDER BY date').all(uid)) {
@@ -291,4 +323,4 @@ function readUserData(db, uid) {
   return { meals, plans, workouts, body, habits, sleep, water };
 }
 
-module.exports = { isValidUserState, userRev, createUser, replaceUser, composeUser };
+module.exports = { isValidUserState, validateUserData, userRev, createUser, replaceUser, composeUser };
