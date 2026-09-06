@@ -94,8 +94,7 @@ CREATE TABLE IF NOT EXISTS body_records (
   weight REAL, chest REAL, waist REAL, hip REAL, arm REAL, thigh REAL, bf REAL,
   PRIMARY KEY (user_id, seq)
 );
-/* v4.6 睡眠多段化：一天可有多段（夜间/午睡/其他休息），seq 保录入顺序。
- * 旧表 sleep_records（一天一条）停建新库不建，存量库首启经 migrate() 一次性迁移 */
+/* 睡眠多段：一天可有多段（夜间/午睡/其他休息），seq 保录入顺序 */
 CREATE TABLE IF NOT EXISTS sleep_sessions (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   date TEXT NOT NULL, seq INTEGER NOT NULL,
@@ -163,20 +162,6 @@ function migrate(db) {
     ok = !!(j && Array.isArray(j.foods) && Array.isArray(j.exercises));
   } catch (e) { /* 空/坏 JSON → 重播种 */ }
   if (!ok) db.prepare('UPDATE app SET system_json = ? WHERE id = 1').run(JSON.stringify(seedLibrary()));
-  /* v4.6 睡眠多段化一次性迁移：旧 sleep_records 每行 → sleep_sessions 一段「夜间睡眠」(seq=0)。
-   * app.sleep_multi 标志跑过即置 1——若靠"新表为空"判断，用户删光睡眠后重启会把旧行复活。
-   * 必须 JOIN users（v4.7 测试发现）：sleep_records 里可能存在 user_id 已不在 users 的孤儿行
-   * （旧版本删人、手工改库、半截恢复），而 SQLite 的 FOREIGN KEY 违反不走 ON CONFLICT 子句——
-   * 光靠 INSERT OR IGNORE 滤不掉，整个语句直接报错，结果是升级后服务根本起不来。 */
-  addColumn(db, 'app', 'sleep_multi', 'INTEGER NOT NULL DEFAULT 0');
-  const mrow = db.prepare('SELECT sleep_multi FROM app WHERE id = 1').get();
-  if (!mrow || mrow.sleep_multi === 0) {
-    const hasOld = !!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sleep_records'").get();
-    if (hasOld) db.prepare(`INSERT OR IGNORE INTO sleep_sessions(user_id, date, seq, t, bed, wake, mins, quality)
-      SELECT s.user_id, s.date, 0, 'night', s.bed, s.wake, s.mins, s.quality
-      FROM sleep_records s JOIN users u ON u.id = s.user_id`).run();
-    db.prepare('UPDATE app SET sleep_multi = 1 WHERE id = 1').run();
-  }
 }
 
 function open(dbPath) {

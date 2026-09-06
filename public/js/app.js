@@ -140,7 +140,7 @@ function ensureUserIntact(u){
   if(u.meals === undefined) u.meals = {};
   if(u.sleep === undefined) u.sleep = {};
   if(u.water === undefined) u.water = {};
-  /* v4.6 睡眠多段化 + v4.7 形状清洗：缓存树与服务器树都经 adoptRaw→ensureUserIntact 这一个
+  /* 睡眠多段化 + 形状清洗：缓存树与服务器树都经 adoptRaw→ensureUserIntact 这一个
    * 咽喉，无需存储版本号（幂等，规范形状原样通过）。裁决规则唯一来源 = js/sleep-shape.js 的
    * normalizeSleepDay，服务端写库走同一份函数——两侧必须一致，否则本机留着服务器不存的
    * 脏日期（空数组、[null]、标量），每次同步形状抖动，脏值还会在渲染时把整页抛崩。 */
@@ -161,17 +161,6 @@ function adoptRaw(raw){
     USERS.shared.exercises = (USERS.shared.exercises && USERS.shared.exercises.length) ? USERS.shared.exercises : seedExArr();
     Object.keys(USERS.users).forEach(id => ensureUserIntact(USERS.users[id]));
     if(!USERS.users[USERS.active]) USERS.active = Object.keys(USERS.users)[0] || null;
-    return true;
-  }
-  if(raw && raw.profile){
-    // —— 旧版单用户自动迁移：把老数据归入成员「我」，食物/动作库转共享库 ——
-    USERS = { theme: raw.theme || 'light', onboarded: !!raw.onboarded, shared: freshShared(), users:{}, active:null };
-    const u = newUser('我', '🙂', 'green');
-    DATA_FIELDS.forEach(k => { if(raw[k] !== undefined) u[k] = raw[k]; });
-    if(raw.foods && raw.foods.length) USERS.shared.foods = raw.foods;
-    if(raw.exercises && raw.exercises.length) USERS.shared.exercises = raw.exercises;
-    ensureUserIntact(u);
-    USERS.users[u.id] = u; USERS.active = u.id;
     return true;
   }
   return false;
@@ -2481,16 +2470,13 @@ function runSelfTest(){
 }
 function runFTest(){
   const L = [];
-  const _preState = JSON.stringify(USERS);   /* adoptRoundtrip 用例会内存态改写为旧版单人，测试后须恢复，避免污染共享服务器数据 */
+  const _preState = JSON.stringify(USERS);   /* adoptRoundtrip 用例会改写内存态，测试后须恢复，避免污染共享服务器数据 */
   function T(name, fn){ try { fn(); L.push(name + ':ok'); } catch(e){ L.push(name + ':ERR ' + e.message); } }
   T('mealAdd', () => { const b4 = dayTotals(today()).kcal; addMealItem(today(), 'lunch', mealItem(state.foods[1], 150)); if(dayTotals(today()).kcal <= b4) throw new Error('kcal-not-increased'); });
   T('upsertBody', () => { const b4 = state.body.length; upsertBody({ date: today(), weight: 70.5, waist: 86 }); const lb = bodyLatest(); if(!lb || lb.weight !== 70.5) throw new Error('latest-wrong'); });
   T('water', () => { state.water[today()] = (state.water[today()] || 0) + 1; if(waterFor(today()) < 1) throw new Error('water-fail'); });
   T('sleep', () => { state.sleep[today()] = [{ t:'night', bed:'23:00', wake:'07:30', mins:510, quality:5 }, { t:'nap', bed:'13:00', wake:'13:30', mins:30, quality:4 }];
     if(sleepTotalMins(today()) !== 540 || sleepSessions(today()).length !== 2) throw new Error('sleep-fail'); });
-  T('sleepLegacyShape', () => { const u = { sleep: { '2020-01-01': { bed:'23:00', wake:'07:00', mins:480, quality:4 } } };
-    ensureUserIntact(u);   // v4.6 迁移：旧"一天一条"对象 → 一段夜间睡眠
-    if(!Array.isArray(u.sleep['2020-01-01']) || u.sleep['2020-01-01'][0].t !== 'night' || u.sleep['2020-01-01'][0].mins !== 480) throw new Error('legacy-migrate-fail'); });
   T('sleepJunkShape', () => { const u = { sleep: { '2020-01-01': [null, {t:'nap', mins:30}], '2020-01-02': [], '2020-01-03': 'x', '2020-01-04': {}, '2020-01-05': [{t:'meditation', mins:'30'}] } };
     ensureUserIntact(u);   // v4.7：脏元素/空数组/标量/空对象都得洗掉，与服务端 mapper 同一套规则（sleep-shape.js）
     if(JSON.stringify(u.sleep) !== JSON.stringify({ '2020-01-01': [{t:'nap', mins:30}], '2020-01-05': [{t:'meditation'}] })) throw new Error('junk-clean-fail ' + JSON.stringify(u.sleep)); });
@@ -2527,14 +2513,9 @@ function runFTest(){
     if(!adoptRaw(snap)) throw new Error('v4-adopt-fail');
     normalizeSelfTree(); materialize();
     if(userCount() !== 1) throw new Error('count-should-be-1');
-    const leg = { profile:{gender:'male',birthYear:1988,height:180,currentKg:90}, theme:'dark', onboarded:true, foods:[], exercises:[], body:[{date:today(), weight:90}] };
-    if(!adoptRaw(leg)) throw new Error('legacy-adopt-fail');
-    normalizeSelfTree(); materialize();
-    if(userCount() !== 1) throw new Error('legacy-user-fail');
-    if(activeUser().profile.currentKg !== 90) throw new Error('legacy-kg-fail');
     if(!USERS.shared.foods.length) throw new Error('shared-seed-missing');
   });
-  /* 恢复测试前状态并落盘推送，防止 adoptRoundtrip 的旧版单人态污染服务器 */
+  /* 恢复测试前状态并落盘推送，防止 adoptRoundtrip 的内存态改动污染服务器 */
   if(adoptRaw(JSON.parse(_preState))){ materialize(); save(); }
   const box = document.createElement('pre');
   box.id = 'selftest';

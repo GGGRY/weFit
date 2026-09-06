@@ -267,17 +267,6 @@ async function main() {
   r = await A.req('POST', '/api/login', { username: 'alice', password: 'secret123' });
   ok('T18a 重新登录', r.status === 200);
 
-  /* v4.6 睡眠多段化：旧版离线客户端补推的"一天一条"对象形状 → 服务端归一化为一段夜间。
-   * 这是刻意的形状升级（旧树 PUT→GET 不再深度相等），新形状往返由 T8b 与压测保证 */
-  const legacy = { theme: 'light', onboarded: true, shared: { foods: [], exercises: [] },
-    users: { [uidA]: { id: uidA, name: '陈', sleep: { '2026-09-05': { bed: '23:00', wake: '07:00', mins: 480, quality: 4 } } } }, active: uidA };
-  r = await A.req('PUT', '/api/state', { data: legacy });   /* 盲写（body 形状 {rev?, data}），避免与后续 rev 记账纠缠 */
-  ok('T18l1 旧形状睡眠补推→接受', r.status === 200, JSON.stringify(r.json).slice(0, 120));
-  r = await A.req('GET', '/api/state');
-  const expLegacy = normalizeExpected(legacy, uidA);
-  expLegacy.users[uidA].sleep['2026-09-05'] = [{ t: 'night', bed: '23:00', wake: '07:00', mins: 480, quality: 4 }];
-  ok('T18l2 旧形状归一化为 night 段数组', deepEq(expLegacy, r.json.data), LAST_FAIL || JSON.stringify(r.json.data).slice(0, 200));
-
   /* v4.7 审查回归：脏睡眠形状必须被归一化到规范形状，而不是把 PUT 打成 500、
    * 或“存一半写一半”让 PUT≠GET（旧版：[null] 直接 TypeError；{t:{}} 绑不进 SQLite；
    * ["x"] 存成 [{}]；空数组存不进去但 GET 丢键） */
@@ -287,7 +276,7 @@ async function main() {
       '2026-01-02': [{ t: { a: 1 }, bed: '23:00', wake: { h: 1 }, mins: '480', quality: 3 }],   // 类型不符的字段丢键
       '2026-01-03': 'x',                                                                          // 标量整天丢
       '2026-01-04': [],                                                                           // 空数组 = 无记录，不留幽灵键
-      '2026-01-05': {},                                                                           // 旧形状全空 = 同上
+      '2026-01-05': {},                                                                           // 空对象 = 同上
       '2026-01-06': [{ t: 'meditation', mins: 20 }],                                             // 未知类型原样保真
     } } }, active: uidA };
   r = await A.req('PUT', '/api/state', { data: junk });

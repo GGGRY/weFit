@@ -208,7 +208,7 @@ async function handleState(db, req, res, sessionUser, pathname) {
       return;
     }
     /* 数量级护栏（如单日睡眠段数上限）：命中就 400 说清是哪一天，不静默截断。
-     * 形状脏值不在这里拒——mapper 的 normalizeSleepDay 按「接受即升级」归一化 */
+     * 形状脏值不在这里拒——mapper 的 normalizeSleepDay 清洗脏值 */
     const bad = mapper.validateUserData(body.data, sessionUser.userId);
     if (bad) {
       sendJson(res, 400, { error: bad.error, hint: '单日睡眠最多 ' + bad.max + ' 段（日期 ' + bad.date + '）' });

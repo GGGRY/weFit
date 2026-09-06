@@ -1,0 +1,181 @@
+# 健康管理 · 项目备忘录
+
+> 当前版本 **v4.7** · 最后更新 2026-09-06 · 版本变更历史见 [CHANGELOG.md](CHANGELOG.md) · 后续开发计划见 [PLANS.md](PLANS.md)
+
+## 一、项目定位
+
+个人健康管理网页，主线「记录 → 回顾」：饮食、训练、体重围度、睡眠、饮水、目标、统计看板。
+
+**技术形态**：零依赖全栈
+- **前端** `public/`：`index.html` + `admin.html` + `css/style.css` + `js/seed-data.js` + `js/sleep-shape.js` + `js/app.js`，无构建工具，样式/脚本/图标全内联，零外部依赖
+- **后端** `server/`：Node 内置 `node:http` + `node:sqlite` + `node:crypto`，**npm 依赖为零**，`node server.js` 即起
+- **鉴权**：scrypt 密码哈希 + SQLite 持久会话（30 天）+ HttpOnly Cookie；除登录/注册/健康检查/静态页外全部 API 走鉴权中间件
+- **数据库** `server/data/jjhealth.db`：会增长的集合拆为 16 张关系表（餐次/训练/身体/睡眠/饮水/习惯/账户/会话…）；profile/goal/nutrition 与个人食物/动作库等形状固定对象用 JSON 列整存保真
+- **同步模型**：同一服务器 + **登录同一账户** = 读写同一份本人数据，天然同步；**不同账户彼此隔离**；浏览器 localStorage 降级为按账户分键的离线缓存，服务器为准数据源
+- **启动**：Windows 双击 `start.bat`，Linux/macOS 运行 `./start.sh`（或 `cd server && node server.js`），端口 8123
+- **手机访问**：与电脑同 Wi-Fi 时打开 `http://<电脑IP>:8123`（启动窗口会打印可用地址）
+
+## 二、已实现功能清单
+
+### 1. 概览首页 🏠（`renderHome()`，聚合"今天的事"）
+
+页面自上而下拼装，顺序与 `renderHome()` 一致：
+
+- **问候行**：按时刻问候（夜深了/早上好/中午好/下午好/晚上好）+ 昵称 + 今天日期（含周几）
+- **四 tile**：今日热量（已摄入 / 目标 kcal）｜体重（最近一条 ≤ 今天的记录，无则 --）｜训练（✓ 已完成 / 待完成 / 休息日）｜打卡（今日已完成 / 习惯总数）
+- **今日饮食卡**：无记录时空态 + 「去记录」跳饮食页；有记录时显示"已摄入 vs 目标"（"还差 xx% / 已超 xx%"紧跟标签文字、超标变色）+ 进度条 + 热量数值，并追加**蛋白/碳水/脂肪三 chip**（各显 已摄入/目标 g）
+- **今日计划卡**：有安排时列计划名 + 逐动作（序号/动作名/肌群/组×次/重量或自重）+ 右上「记录本次训练」一键开练（自动带入当日周计划）；无安排时显示"今天没有安排训练"空态
+- **今日饮水卡**：
+  - 饮水：−/＋ 步进 + 大字号杯数 + `/目标 杯` + 进度条 + 达标文案（"再喝 X 杯达标 / 达标，继续保持 🎉"）；饮水目标为 0（不追踪）时**隐藏本卡**
+  - 右上角 🕘「补记」→ 独立的历史弹窗（`openWaterHistory()`），翻日期查看/补记/修改/删除，弹窗内改动同步刷新本页
+- **今日睡眠卡**
+  - 睡眠：有记录时卡头显示「合计 X 小时 · 达标/偏少」（≥7h，按全天各段总时长）；逐段一行（图标 + 时长大字 + 质量表情 + 类型 · 入睡→起床 + ✏️）；卡底「＋ 记录一段」走弹窗；无记录时只显空态提示
+  - 右上角 🕘「补记」→ 独立的历史弹窗（`openSleepHistory()`），翻日期查看/补记/修改/删除，弹窗内改动同步刷新本页
+- **每日打卡卡**：一行一条习惯（图标 + 名称 + 🔥连续 N 天 / 今天还没打卡 + 当天 ✓ 圆钮），点圆钮切换当天完成并即时刷新；无习惯时空态 + 「去『目标』页添加」
+
+- 首页不展示：体重 7 天差值小字、"今日概览"卡（睡眠/BMI）、"主目标"卡（体重目标功能已整体移除）；习惯的新增/修改/删除收归「目标」页「每日打卡」管理卡（概览卡只打卡，不内联添加表单/删除按钮、不展示多日历史网格）
+
+### 2. 饮食 🍽️
+- 早/午/晚/加餐四餐次记录，可前后翻页回看任意日期补记
+- 营养模型：食物按 **每100g 营养 × 实际克数** 自动换算（热量/蛋白/碳水/脂肪）
+- 添加弹窗：从食物库带入 → 改克数 → 实时预览合计；可勾选「同时存入食物库」；支持编辑/删除
+- 每日汇总对比目标，超标进度条变色提醒
+- 食物库（双层）：**我的库**可增删；**系统库**由管理员维护、只读，可一键「＋我的库」挑入
+
+### 3. 训练 🏋️
+- **周计划**：周一~周日各安排一个计划（名称 + 动作×组×次×重量，自重留空）
+- **训练日志**：逐动作逐组记 次数×重量；可从周计划一键导入再改；可编辑/删除历史
+- **PR 检测**：保存时对比历史，刷新最大重量 🏆 / 刷新估算 1RM（Epley 公式）标「PR 刷新」
+- **动作库**（双层：我的库 | 系统库）：18 个种子动作按肌群分组，训练中出现的新动作自动入我的库
+- 每次训练容量统计 Σ(重量×次数)
+
+### 4. 身体数据 📏
+- 7 项指标：体重/胸围/腰围/臀围/臂围/大腿围/体脂率；可按任意日期补记，同日再存自动合并覆盖
+- BMI 圆环；各指标最新值 + 7 天变化
+- 任选指标近 60 条趋势折线；历史表格 + 查看全部
+- 记录体重自动同步「当前体重」（供 BMR 计算）
+
+### 5. 睡眠😴（记录在概览页完成）
+- **睡眠多段**：一天可记多段，每段 `{t, bed, wake, mins, quality}`；类型固定三档——夜间睡眠😴/午睡😌/其他休息🛋️（`SLEEP_TYPES`）。卡头 = 全天合计小时 + 达标（≥7h 总时长口径）；逐段一行（图标 + **时长大字** + 质量只显当前档位一个表情 + 类型/起止小字 + ✏️），修改/删除走弹窗 `sleepSessionEditor(d, idx, after)`；卡底「＋ 记录一段」追加；**当日无段时不内嵌快速表单**，只显一句空态提示 + 同一个「＋ 记录一段」按钮——新增/修改一律走弹窗。遇三档之外的 `t`（如导入的异常数据）卡面如实显 ❓+原始值，编辑保存不悄悄改写；弹窗内时长预览超过 12h 且非夜间档时提醒"超过 12 小时，检查是否填反"
+- **统计口径 = 全天各段总时长**：卡面达标、统计页「平均睡眠」、近14天柱状图（目标虚线 7h）均按日总和；段顺序 = 录入顺序，不自动排序
+- **形状契约 = `public/js/sleep-shape.js`（唯一来源）**：类型枚举、`sleepDur`、`normalizeSleepDay` 集中在一份——浏览器先于 app.js 加载它，服务端 `mapper.js` 直接 require（同 seed-data.js 双向取用约定，禁止另抄）。清洗裁决两侧完全一致：① 字段类型不符（bed 是对象、mins 是字符串…）丢键；② 清洗后空段整段丢；③ 空数组该日删键。唯一例外：单日段数超 `SLEEP_MAX_SEGS`(32) → 服务端显式 400（不静默截断）
+- 卡右上角 🕘「补记」→ **各自独立**的历史弹窗：daynav 翻任意日期查看/补记/修改/删除；弹窗内改动同步刷新概览页
+- 睡眠归属语义：记录键 = 「起床那天」
+- 两张趋势图在统计页
+
+### 6. 目标 🎯（打卡在概览页，目标页负责习惯管理；体重目标功能已移除）
+- **每日目标卡**：只显示目标值不显示当日进度——kcal hero + 蛋白/碳水/脂肪三 tile + 活动量/每日饮水两 tile
+- 「修改目标」弹窗 = 热量倾向 + 活动量 + 饮水目标 + 四大营养素 + 自动计算勾选；**热量倾向**：减脂 −400 / 保持 / 增肌 +300 kcal，存于 `state.goal.mode`；自动档 = BMR×活动系数按倾向增减（增肌档蛋白质按 1.8g/kg），改热量倾向/活动量即时重算
+- 饮水每日目标杯数目标 0 = 不追踪，隐藏今日卡
+- 新账户/演示数据默认「减脂」档（引导弹窗不再询问）
+- **⚙️设置弹窗瘦身为纯"基础资料 + 数据管理"**：热量倾向、活动量、饮水、营养目标设置全部移出设置；设置保存不触碰营养目标（自动模式经 syncNutrition 重算，手动模式保留原值）
+- 体重"主目标"功能已整体移除（引导"主要目标"下拉、🎯主目标卡/完成度环/每周节奏评估、身体页与统计页目标虚线、统计"距目标"tile）
+
+### 7. 统计 📊
+- 7 个汇总卡 + 6 张图（体重趋势/热量对比/营养素供能/每周训练容量 + **睡眠时长、每日饮水量**近 14 天柱状，并排一行；记录在概览页完成）
+
+### 8. 账户体系、管理后台与双层资源库 👥
+- **登录门**：打开页面先 `GET /api/me` 探测会话；未登录显示全屏登录/注册页（不可关闭）；**第一个注册的账户自动成为管理员**
+- **管理后台**：独立页面 `public/admin.html`，访问 `http://<服务器>:8123/admin`——页面公开但只有 admin 登录后可用（非管理员看到"无管理权限"页）
+  - 系统共享库编辑（食物/动作增删 + 保存）
+  - 用户管理：账户列表（昵称/角色/注册时间/数据概况/rev）+ **设为/撤销管理员**（护栏：最后一个管理员不可撤销）+ **重置密码**（被重置账户全部会话强制下线）+ **删除账户**（FK 级联清空全部记录；不可删自己/最后管理员）
+  - 权限即时生效：role 每请求现查；被撤者后台立即 403，但其**用户端账户照常使用**
+- 一账户一档案：一个账户 = 一份成员档案，数据完全隔离；顶栏胶囊 = 「我的档案」（改昵称/头像/颜色 + 退出登录），成员切换/增删已退役；**用户端零管理功能**，admin 的档案弹窗里只有一行「进入后台管理 →」链接
+- **双层库**：系统共享库（管理员在后台 `/admin` 维护，普通用户只读）+ 我的库（注册时整份拷贝系统库；可增删，可从系统库页一键挑入，按名去重）
+- 系统库更新**不追溯**已注册用户已有的个人库（要新条目去系统库页挑）
+- 离线缓存按账户分键（`jjhealth_v3:<用户名>`），同一浏览器多人互不污染
+
+### 9. 数据与同步
+- **权威数据**在 `server/data/jjhealth.db`；每次保存：localStorage 落盘（即时，本人键）+ 600ms 防抖 `PUT /api/state`（异步，**只写本人子树**）
+- **启动顺序**：探测登录态 → 读服务器本人数树（局域网毫秒级）→ 服务器不可达降级读本账户缓存；注册即建档并自动登录
+- **离线**：已登录过的账户照常可记录（缓存键隔离），每 30 秒自动重试，服务器恢复后自动补推（首推前从服务器树捕获本人 uid 并本地重挂）
+- **离线期间关了页面**：本机关闭前若有未推送改动，重开时与服务器比对——服务器没动 → **静默自动补推**；服务器前进了（本账户其他设备写过）→ **弹窗人工裁决**（采用服务器 / 本机覆盖），两个方向都不会静默丢改动。实现：`jjhealth_v3meta:<用户名>` 存 `{rev, dirty, gen}`（编辑代数写入 meta），save 置 dirty 并 gen+1，推送成功且期间无新编辑（gen 未变）才复位
+- **冲突**：**每用户独立 rev**；运行中本账户另一设备先写会触发 409 弹窗由用户裁决（同上两选一）；其他账户的写入永远不会与本账户冲突
+- **同步健壮性**：裁决逻辑收敛为单一 `converge()`（load 启动 / 30s 回线 `retrySync()` / 409 冲突三入口共用，冲突文案单源 `CONFLICT_MSG`）；完全离线启动（含干净缓存）也挂 30s 回线定时器；编辑代数 `gen` 移入共享 meta（替代每页内存 dirtyGen，跨标签页不再互相清脏）；`doPush` 加在途保护（同 rev PUT 不再并发自撞假 409）；400 `invalid_state` 自动 `fetchState` 重挂后重推；裁决「用服务器」采纳失败改由定时器静默重试
+- 鉴权语义：所有 `/api/state`、`/api/system/library` 等未登录一律 401 → 前端清工作区弹登录门；写操作要求 `Content-Type: application/json`；会话 30 天存库，服务器重启不掉线
+- ⚙️设置弹窗顶部显示同步状态行（登录账户 / 版本 rev / 最近同步时间 / 离线提示）
+- 导出/导入 JSON 备份（**只针对本人数据**；导入多人备份时取其中"当前成员"一份重挂为本账户数据）；「清空」只清本账户子树 + 本账户缓存
+- 备份文件在 OneDrive 目录内 = 自动获得异地备份 + OneDrive 版本历史
+
+### 10. 界面与体验
+- 响应式：手机底部 Tab / 桌面左侧分组边栏；弹窗手机端底部升起
+- **移动端适配**：`.tile` 自带 `min-width:130px` 是多列网格溢出根因，网格列一律 `minmax(0,1fr)` + 子项 `min-width:0`；每日目标五 tile 自适应收窄；概览打卡区为**一行一条习惯 + 当天圆钮**（无多日网格/横向滚动，≤560px 圆钮缩至 27px）
+- 深/浅色主题（每账户独立）；手写 SVG 图表；首次引导；Toast；危险操作二次确认
+- 开发调试钩子：`?selftest` 全视图渲染、`?ftest` 15 项功能自测、`?shot=视图名`、`?probe` 数据摘要（**三个会覆盖当前账户为演示数据**的钩子 `?selftest`/`?ftest`/`?shot` 共用同一确认门卫，确认/取消后自动从地址栏剥除钩子；`?shot` 先校验视图名再动数据；自动化场景可 URL 追加 `&devok` 跳过确认）
+
+## 三、代码结构速览
+
+```
+weFit/
+├─ start.bat                    # Windows 双击启动服务器（端口 8123）
+├─ start.sh                     # Linux/macOS 启动服务器（端口 8123）
+├─ public/                      # 前端（无构建，浏览器直载）
+│  ├─ index.html                #   页面骨架
+│  ├─ admin.html                #   管理后台（自包含单文件；/admin 路由）
+│  ├─ css/style.css             #   设计令牌 + 组件样式（含登录门/后台样式）
+│  ├─ js/seed-data.js           #   食物/动作库种子唯一数据源（前端加载；服务端 require）
+│  ├─ js/sleep-shape.js         #   睡眠形状契约唯一数据源（类型/时长/归一化；前端加载；服务端 mapper require）
+│  └─ js/app.js                 #   全部业务 JS + 同步层 + 登录门/双层库 UI
+├─ server/                      # 后端（零 npm 依赖）
+│  ├─ server.js                 #   node:http：鉴权中间件 + 静态托管 + 登录/注册 + 本人数树读写 + 系统库 + /api/admin/*
+│  ├─ auth.js                   #   异步 scrypt 密码哈希 / 会话 token / Cookie 解析（node:crypto）
+│  ├─ seed.js                   #   系统库种子构建（数据源 = public/js/seed-data.js）+ 个人库初始拷贝
+│  ├─ db.js                     #   node:sqlite 建表 + 幂等列迁移（16 张表，每用户 rev）
+│  ├─ mapper.js                 #   单人数树 ⇄ 关系表；不变量：PUT→GET 深度相等（只触碰本人子树）
+│  ├─ test/roundtrip.test.js    #   67 项断言：鉴权 + 双账户隔离 + 系统库权限 + 形状保真（含睡眠多段、脏形状清洗与段数上限 400、静态映射）+ 规模压测 + 回归
+│  ├─ test/admin.test.js        #   39 项断言：后台 API（角色/重置密码/删号 + 护栏）
+│  ├─ test/sleep-shape.test.js  #   16 项断言：睡眠形状契约纯函数（两侧共用同一份）
+│  └─ data/jjhealth.db          #   SQLite 数据库（.gitignore 已排除）
+└─ memo.md
+```
+
+- **前端核心约定**：业务代码只读写 `state`（当前成员工作副本），`save()` = 写回成员 + localStorage + queuePush()；同步层函数集中在 `load()` 之后（fetchState / doPush / queuePush / handleConflict / refreshSyncStatus / converge）
+- **叠层弹窗**：`showDialog` 维护 `dialogStack`，`curDialog` 恒为栈顶，也只有栈顶响应 Esc（睡眠段编辑器是从概览卡/历史弹窗里再开一层）
+- **页面归属**：打卡渲染与绑定 `habitCardHTML()` + `bindHabitEvents()` 由概览 `renderHome()` 调用（当天清单，仅点选）；习惯管理 `habitSettingsCardHTML()` + `bindHabitSettings()` 挂目标页 `renderGoals()`，新增/修改走弹窗 `openHabitAdder()`/`openHabitEditor()`，删除经 `confirm()` 确认后整卡刷新；`openNutritionEditor()` 是"每日目标"统一编辑弹窗（营养+活动量+饮水）；睡眠/饮水趋势图函数 `renderSleepChart/renderWaterChart` 挂在 `renderStats()`，容器 id `st_sleep`/`st_water`；今日饮水/今日睡眠卡 = `lifeTodayHTML()` + `bindLifeToday()`（`lifeWaterCard/lifeSleepCard/bindWaterCard/bindSleepCard` 以 ctx `home`/`dlg` 双上下文复用——概览今日卡与**各自**历史弹窗 `openWaterHistory()/openSleepHistory()` 共用一套渲染与绑定；睡眠逐段新增/修改/删除走 `sleepSessionEditor(d, idx, after)`）
+- **数据接口**：公开 = `POST /api/register`、`POST /api/login`、`GET /api/health`、静态页（含 `/admin`）；登录后可用 = `GET/PUT /api/state`（**本人数树**，`{rev?, data}`——rev 过期 409、缺省盲写；服务端只取 `data.users[本人uid]` 那一份，其余键忽略，缺本人键则 400 拒绝防误清空）、`GET /api/me`、`POST /api/logout`、`GET /api/system/library`（**PUT 仅 admin**）；**后台 API（仅 admin）** = `GET /api/admin/users`（列表+数据概况）、`PUT /api/admin/role`（设/撤管理员，防"最后一个管理员"）、`PUT /api/admin/password`（重置并强制该账户下线）、`DELETE /api/admin/users`（删账户级联清数据，不可删自己）
+- **API 仍是"整树 state"风格**（粒度收窄为单账户）：细粒度 CRUD 端点留待未来按需追加，mapper 后的关系表结构已支持
+
+### 数据库结构（`server/data/jjhealth.db` · 建表与列迁移见 `server/db.js`）
+
+设计原则：会增长的集合拆为真正关系表；profile/goal/nutrition 与个人库等形状固定的小对象用 JSON 列整存保真；有数组语义处一律带 `seq` 保证顺序往返一致；成员数据全部 `REFERENCES users(id) ON DELETE CASCADE`；幂等迁移用 `PRAGMA table_info` 检查后 `ALTER TABLE ADD COLUMN`。
+
+| 表 | 主键 | 说明 |
+|---|---|---|
+| `app` | id（恒为 1，单行） | 全局单行：`system_json`（**系统共享库**，管理员维护） |
+| `users` | id | 成员档案：name, avatar, color, activity, water_target + `profile_json` / `goal_json` / `nutrition_json` + `rev`（每用户乐观并发）/ `theme` / `onboarded` / `foods_json` / `exercises_json`（**个人食物/动作库**） |
+| `accounts` | username | **登录账户**：user_id（绑定档案，CASCADE）/ pwd（`scrypt$盐$哈希`）/ role（首个注册 = `admin`，其余 `user`）/ created_at |
+| `sessions` | token | **会话**：username / created_at / expires_at（30 天，存库 = 服务器重启不掉线） |
+| `meal_days` | (user_id, date) | "日期被打开过"标记——餐次 4 槽全空也要能原样还原 |
+| `meals` | (user_id, date, slot, seq) | 饮食条目：slot=早/午/晚/加餐, item_id, name, kcal, p, c, f, g |
+| `plan_defs` | (user_id, weekday) | 周计划头：plan_id, name |
+| `plan_items` | (user_id, weekday, seq) | 周计划动作：item_id, ex_id, ex_name, muscle, sets, reps, weight |
+| `workouts` | (user_id, workout_id) | 训练日志头：date, name, note（seq 保留列） |
+| `workout_items` | (user_id, workout_id, seq) | 训练动作项：item_id, ex_id, ex_name, muscle |
+| `workout_sets` | (user_id, workout_id, item_seq, seq) | 逐组 reps×weight；用 `item_seq` 引用所属动作项而非 item_id（主键列不能 NULL，item_id 可能缺省） |
+| `body_records` | (user_id, seq) | 身体 7 项：weight/chest/waist/hip/arm/thigh/bf；主键用 seq 因同日可能多条；索引 `idx_body_date(user_id, date)` |
+| `sleep_sessions` | (user_id, date, seq) | **睡眠多段**：t(night/nap/rest), bed, wake, mins, quality(1-5)；seq = 录入顺序 |
+| `water_records` | (user_id, date) | cups |
+| `habits` | (user_id, habit_id) | 习惯定义：seq, name, icon, color |
+| `habit_done` | (user_id, habit_id, date) | 打卡记录（一行 = 一次打卡） |
+
+- **连接参数**：`journal_mode = DELETE`（不留常驻 -wal 边文件，OneDrive 同步友好）、`synchronous = NORMAL`、`foreign_keys = ON`
+- **往返不变量**（mapper.js）：单人数树 PUT→GET 深度相等——JSON 列与关系表拆分/重组必须保形状，且写路径只触碰本人子树，`test/roundtrip.test.js` 67 项断言守此约定（含双账户隔离与系统库权限）。**已登记的例外（T18m 显式锁定）**：脏元素/脏字段/空数组按 `sleep-shape.js` 三条清洗裁决丢弃（服务端无行可存，留键会两边形状长期抖动，所以前端 `ensureUserIntact` 必须同样删键）；超 `SLEEP_MAX_SEGS` 不属例外而是显式 400
+
+## 四、已知边界与技术债
+
+1. **登录安全**：登录失败**无限速/锁定**；Cookie 未加 `Secure`（局域网 http 可接受，**公网部署必须先上 HTTPS**，否则密码与 Cookie 明文过网）；**无本人自助改密/删号**（需找管理员在后台操作）；登录门为前端门，接口层才是真防线（静态页本身公开，属预期）
+2. 本账户多设备各改各的无法自动合并（二选一人工裁决覆盖另一方）；裁决 UX 已覆盖运行中回线与关闭后重开两种场景
+3. 同步粒度为本账户整树（个人数据量下 PUT/GET 实测 <20ms）；数据量增长后可上细粒度端点
+4. 服务器需保持运行：电脑重启后 Windows 双击 `start.bat`，Linux/macOS 运行 `./start.sh`；手机记录依赖电脑在线（彻底脱离电脑 → 云端部署，见 [PLANS.md](PLANS.md) 云端部署）
+5. 图表 hover 用原生 title；饮水"杯"无 ml 换算；主题不跟随系统
+
+## 五、使用备忘
+
+- **启动**：Windows 双击 `start.bat`，Linux/macOS 运行 `./start.sh`（保持窗口开启 = 服务在线）
+- **电脑端**：浏览器打开 `http://localhost:8123` → **注册**（第一个账户 = 管理员）→ 登录即用
+- **手机端**：同一 Wi-Fi 下打开启动窗口显示的 `http://<电脑IP>:8123`，每人注册/登录**自己的账户**，互不干扰；自己多设备用同一账户登录 = 自动同步
+- **管理后台**：浏览器访问 `http://<服务器>:8123/admin`，仅管理员账户可登录；普通用户即使在登录页输对了密码也会看到"无管理权限"提示
+- **换电脑**：整个文件夹拷走（OneDrive 同步即等价），`server/data/jjhealth.db` 就是全部数据（含账户与会话）
+- **跑测试**：`cd server && npm test`（三个文件：roundtrip 67 + admin 39 + sleep-shape 16 项断言；也可 `node test/xxx.test.js` 单跑）；浏览器 `?ftest` 15 项功能自测（会覆盖为演示数据，需确认或 `&devok`）
+- **清零重来**：⚙️设置 → 🗑清空（仅本账户，服务器同步清本人子树，不可恢复，先导出留底）；**全库重来**：停服务后删除 `server/data/jjhealth.db`
+- **忘记密码**：找任一管理员在后台「用户管理 → 重置密码」处理（该账户会被强制下线）；若所有管理员都失联：停服务删库重来（最后手段）

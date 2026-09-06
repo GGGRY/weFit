@@ -8,16 +8,15 @@
    "多人同时写互相覆盖"的根因,写路径只允许触碰自己那一份。
    ===================================================== */
 
-/* 睡眠形状契约与前端共用同一份实现（v4.7）：normalizeSleepDay 负责旧"一天一条"对象
- * 升级、脏元素/脏字段丢弃，见 public/js/sleep-shape.js 文件头 */
+/* 睡眠形状契约与前端共用同一份实现：normalizeSleepDay 负责脏元素/脏字段丢弃，
+ * 见 public/js/sleep-shape.js 文件头 */
 const { normalizeSleepDay, SLEEP_MAX_SEGS } = require('../public/js/sleep-shape.js');
 
 const SLOTS = ['breakfast', 'lunch', 'dinner', 'snack'];
 const BODY_KEYS = ['weight', 'chest', 'waist', 'hip', 'arm', 'thigh', 'bf'];
 
 /* 带 user_id 外键的子表(删自己子树用;顺序无关,写事务内完成) */
-/* v4.6：睡眠子表改 sleep_sessions（多段）；旧 sleep_records 不再读写也不在删除清单里，
- * 迁移后原样留底；删账户仍靠 FK CASCADE 级联清理 */
+/* 睡眠子表 = sleep_sessions（多段）；删账户靠 FK CASCADE 级联清理 */
 const USER_DATA_TABLES = [
   'habit_done', 'habits', 'water_records', 'sleep_sessions', 'body_records',
   'workout_sets', 'workout_items', 'workouts', 'plan_items', 'plan_defs',
@@ -38,7 +37,7 @@ function isValidUserState(s) {
 }
 
 /* 写入前的硬约束（数量级护栏）：返回错误码对象或 null。
- * 形状本身不在这里拒绝——normalizeSleepDay 按"接受即升级"归一化；
+ * 形状本身不在这里拒绝——normalizeSleepDay 清洗脏值；
  * 只有"一天几千段"这种灌库量级才显式 400（与系统库 LIB_MAX_ENTRIES 同一取向：
  * v4.3 审过一轮"静默截断会让客户端以为全存进去了"，所以宁可报错不静默丢）。
  * 只查本人那一份：树里其他用户的键服务端根本不写，不该让别人的脏数据堵死我的同步。 */
@@ -182,7 +181,6 @@ function insertUserData(db, uid, u) {
   });
 
   /* 睡眠：一天多段。形状裁决收在 sleep-shape.normalizeSleepDay（前端同一份）——
-   * 旧"一天一条"对象 → 一段 night（接受即升级，兼容旧版离线客户端补推）；
    * [null] / 标量 / 全空段 / 空数组 → 相应丢弃，脏值不会再把 INSERT 打成 500。
    * seq = 清洗后的下标，保证 GET 回来的数组与 PUT 的规范形状逐元素对齐。 */
   const sIns = db.prepare('INSERT INTO sleep_sessions(user_id, date, seq, t, bed, wake, mins, quality) VALUES (?,?,?,?,?,?,?,?)');

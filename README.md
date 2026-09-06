@@ -14,7 +14,7 @@
 ## 账户与数据隔离
 
 - 打开页面需**注册/登录**，每个账户只看得见、改得动自己的数据；多人同时使用互不影响。
-- **第一个注册的账户自动成为管理员**；同一人的手机 + 电脑登录**同一账户** = 自动同步（服务器为准，浏览器留离线缓存）。
+- 同一人的手机 + 电脑登录**同一账户** = 自动同步（服务器为准，浏览器留离线缓存）。
 - 会话 30 天有效，服务器重启不掉线；退出登录：右上角头像胶囊 → ⎋ 退出登录。
 - 断网照常记录；恢复后自动补推。若离线期间还关了页面、且本账户其他设备有新数据，重开会弹窗让你二选一，不会悄悄丢改动。
 - 食物/动作是**双层库**：人人有自己的"我的库"（可增删），公共"系统库"由管理员在后台维护、对所有人只读，可一键挑进我的库。
@@ -30,20 +30,20 @@
 
 - `public/` 前端（无构建：`index.html` + `admin.html` + `css/style.css` + `js/seed-data.js` + `js/sleep-shape.js` + `js/app.js`）
 - `server/` 后端 + `data/jjhealth.db`（SQLite，全部数据都在这里）
-- `legacy/index.html` 旧单文件版（回退参考）
-- `memo.md` 项目备忘录（架构、决策、技术债）
+- `memo.md` 项目备忘录（架构、功能、技术债、使用备忘）
+- `CHANGELOG.md` 版本变更日志
+- `PLANS.md` 后续开发计划建议
 
 ## 测试
 
 ```bash
-cd server && npm test                        # 一次跑完下面四个文件
-     node test/roundtrip.test.js   # 鉴权 + 双账户隔离 + 往返保真（69 项）
+cd server && npm test                        # 一次跑完下面三个文件
+     node test/roundtrip.test.js   # 鉴权 + 双账户隔离 + 往返保真（67 项）
      node test/admin.test.js       # 管理后台 API：角色/重置密码/删号护栏（39 项）
-     node test/migrate.test.js     # 存量库首启一次性迁移：旧睡眠表 → 多段表（11 项）
-     node test/sleep-shape.test.js # 睡眠形状契约纯函数（前后端共用同一份，19 项）
+     node test/sleep-shape.test.js # 睡眠形状契约纯函数（前后端共用同一份，16 项）
 ```
 
-> 睡眠的形状规则（旧“一天一条”升级、脏值清洗、段数上限）只写在 `public/js/sleep-shape.js` 一处：浏览器先于 app.js 加载它，`server/mapper.js` 直接 require（同 seed-data.js）。改规则只改这一份，两侧自动同步。
+> 睡眠的形状规则（脏值清洗、段数上限）只写在 `public/js/sleep-shape.js` 一处：浏览器先于 app.js 加载它，`server/mapper.js` 直接 require（同 seed-data.js）。改规则只改这一份，两侧自动同步。
 
 浏览器调试钩子：`?ftest`（功能自测）、`?selftest`（全视图渲染）、`?shot=视图名`、`?probe`（数据摘要）。
 
