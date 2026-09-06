@@ -30,4 +30,19 @@ manifest + service worker，手机"添加到主屏幕"像独立 App（app.js 内
 
 ## 7. 添加科学的食物库
 
+## 8. app.js 按页拆分 ES module（彻底重构，暂缓）
+
+背景：agent 改单页样式时整读 app.js（≈2700 行）费 token，现已用 AGENTS.md「锚点定位法」缓解（grep 页面函数 → 分段读）。当锚点法不够用时再做本重构。
+
+触发条件（满足其一再动手）：
+- 函数重命名/挪动频繁，锚点清单维护不住、定位仍常读错块
+- app.js 突破 ~4000 行，或概览页（renderHome + 睡眠饮水卡 + 打卡）继续膨胀
+- 需要按页懒加载提升首屏
+
+方案要点：
+- 零依赖约束下用**原生 ES module**（`<script type="module">`，无构建工具），按现有 `/* ===== */` 分块切文件：`js/pages/home.js`、`diet.js`、`train.js`、`body.js`、`life.js`（睡眠饮水）、`settings.js`、`stats.js`、`profile.js`，公共层留 `js/core/`（store/sync/util/ui 框架如 showDialog/toast）
+- 难点是现在的隐式全局单例 `state`/`save()`：需先收敛成显式导入的模块（如 `core/store.js` export state/save），页面模块只 import 自己用到的，避免循环依赖
+- `index.html` 入口改 module script；admin.html 不受影响
+- 迁移策略：先抽 `core/`，再逐页搬，每搬一页跑一遍手动验证 + `npm test`，不一次性大爆改
+
 ## 
