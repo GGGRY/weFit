@@ -785,6 +785,7 @@ function showDialog(title, html, opts){
     const i = dialogStack.indexOf(entry); if(i >= 0) dialogStack.splice(i, 1);
     curDialog = dialogStack.length ? dialogStack[dialogStack.length - 1] : null;
     document.removeEventListener('keydown', esk);
+    if(opts.onClose) opts.onClose();   /* 关闭后回调:设置页库入口用它刷新按钮上的库计数 */
   }
   entry.close = close;                        // closeDialog() 走 curDialog.close，故挂在 entry 上
   function esk(e){ if(e.key === 'Escape' && dialogStack[dialogStack.length - 1] === entry) close(); }
@@ -1098,7 +1099,6 @@ function renderDiet(){
         '<button class="iconbtn2" data-day="1">›</button>' +
         (d !== today() ? '<button class="btn sm" data-day="today">回到今天</button>' : '') +
       '</div>' +
-      '<button class="btn sm ghost" data-lib="1">📚 食物库(' + state.foods.length + ')</button>' +
     '</div>' +
     '<div style="display:flex;justify-content:space-between;margin:12px 0 6px" class="small"><span class="muted">热量目标</span><b>' + fmtNum(tot.kcal) + ' / ' + fmtNum(T.kcal) + ' kcal</b></div>' +
     '<div class="meter"><i style="width:' + clamp(calPct,0,100) + '%" class="' + (calPct>100?'over':'') + '"></i></div>' +
@@ -1119,7 +1119,6 @@ function renderDiet(){
   $$('[data-addslot]', v).forEach(b => b.addEventListener('click', () => addMealDialog(dietDate, b.dataset.addslot)));
   $$('[data-edit]', v).forEach(b => b.addEventListener('click', () => { const it = findMealItem(dietDate, b.dataset.edit); if(it) addMealDialog(dietDate, slotOfItem(dietDate, it.id), it.id); }));
   $$('[data-del]', v).forEach(b => b.addEventListener('click', () => delMealItem(dietDate, b.dataset.del)));
-  const lb = $('#view [data-lib="1"]'); if(lb) lb.addEventListener('click', openFoodLib);
 }
 function slotColor(id){ return {breakfast:'#eda100', lunch:'#eb6834', dinner:'#4a3aa7', snack:'#1baf7a'}[id] || 'var(--brand)'; }
 function st2kcal(it){ const x = itemMacro(it); return round(x.kcal,0); }
@@ -1203,7 +1202,7 @@ async function fetchSysLib(){
     return SYS_LIB;
   } catch(e){ return null; }
 }
-/* v4.4:系统库在「每次进入食物库弹窗 / 训练动作库页」时拉取一次,之后导入与分页切换都走内存——
+/* v4.4:系统库在「每次打开食物库 / 动作库弹窗」时拉取一次,之后导入与分页切换都走内存——
  * 旧版两处调用点 force=true 把 SYS_LIB 写成只写不读的死缓存,每个导入动作/每次切系统库
  * 都整库重下(上限 5000 条)。管理员的改动发生在另一个页面会话,进入时失效一次已足够新。 */
 function invalidateSysLib(){ SYS_LIB = null; }
@@ -1228,12 +1227,12 @@ function foodRowHTML(f, dataAttr){
   return '<div class="lrow" ' + dataAttr + '><div class="grow"><div class="b">' + esc(f.name) + '</div><div class="sub">' + esc(sub) + '</div></div>';
 }
 
-/* 食物库管理：我的库（可增删）| 系统库（只读 + 挑入我的库） */
-function openFoodLib(){
+/* 食物库管理（设置页 → 💾 数据管理入口）：我的库（可增删）| 系统库（只读 + 挑入我的库） */
+function openFoodLib(onClose){
   invalidateSysLib();   /* v4.4:每次打开弹窗拉一次系统库即可,弹窗内切分页不再重下 */
   const dlg = showDialog('食物库',
     '<div class="row" style="margin-bottom:10px"><div class="seg" id="fl_seg"></div></div>' +
-    '<div id="fl_body"><div class="tiny muted">载入中…</div></div>');
+    '<div id="fl_body"><div class="tiny muted">载入中…</div></div>', { onClose });
   const b = dlg.box;
   let tab = 'mine';
   function paintSeg(){
@@ -1266,7 +1265,7 @@ function openFoodLib(){
     $$('[data-add]', b).forEach(btn => btn.addEventListener('click', () => {
       const fo = mkFood(btn.dataset.add); if(!fo) return;
       addMealItem(dietDate, 'snack', mealItem(fo, 100)); save();
-      closeDialog(); renderDiet(); toast('已记到' + dateCN(dietDate) + '加餐，可去修改克数');
+      closeDialog(); go('diet'); toast('已记到' + dateCN(dietDate) + '加餐，可去修改克数');   /* 入口已从饮食页并入设置页,记完跳回饮食页需走导航刷新高亮 */
     }));
   }
   async function renderSys(){
@@ -1297,13 +1296,11 @@ function segBar(sel, items){
 }
 
 function renderTrain(){
-  invalidateSysLib();   /* v4.4:每次进入训练页使系统库缓存失效,保证跨会话看到管理员最新改动 */
   $('#view').innerHTML =
     '<div class="row" style="align-items:center;justify-content:space-between;margin-bottom:14px">' +
       segBar(trainTab, [
         {id:'plan', label:'🗓 我的计划'},
         {id:'log', label:'📒 运动日志'},
-        {id:'lib', label:'📚 动作库'},
       ]) +
       (trainTab === 'log' ? '<button class="btn primary" id="tr_add">＋ 记录运动</button>' : '') +
       (trainTab === 'plan' ? '<button class="btn primary" id="tr_planadd">＋ 新建计划</button>' : '') +
@@ -1316,9 +1313,8 @@ function renderTrain(){
 }
 function fillTrainTab(){
   const body = $('#tabBody');
-  if(trainTab === 'plan') renderPlans(body);
-  else if(trainTab === 'log') renderWorkoutList(body);
-  else renderExLib(body);
+  if(trainTab === 'log') renderWorkoutList(body);
+  else renderPlans(body);   /* 动作库已移至「设置 → 数据管理」弹窗入口 */
 }
 
 /* ---------- 周训练计划 ---------- */
@@ -1551,7 +1547,12 @@ function openExercisePicker(cb){
   }));
 }
 
-/* ---------- 动作库（我的库 | 系统库） ---------- */
+/* ---------- 动作库（设置页 → 💾 数据管理入口）：我的库（可增删）| 系统库（只读 + 挑入我的库） ---------- */
+function openExLib(onClose){
+  invalidateSysLib();   /* v4.4:每次打开弹窗拉一次系统库即可,弹窗内切分页不再重下 */
+  const dlg = showDialog('动作库', '<div id="xl_host"></div>', { size:'lg', onClose });
+  renderExLib($('#xl_host', dlg.box));
+}
 let exLibTab = 'mine';
 function renderExLib(body){
   body.innerHTML =
@@ -1583,19 +1584,19 @@ function renderExLibMine(body){
     const name = $('#nx_name', body).value.trim();
     if(!name){ toast('请填写动作名', true); return; }
     state.exercises.push({ id:uid(), name, muscle: $('#nx_muscle', body).value });
-    save(); renderExLib($('#tabBody')); toast('已添加');
+    save(); renderExLib($('#xl_host')); toast('已添加');
   });
   $$('[data-delx]', body).forEach(b => b.addEventListener('click', () => {
     const id = b.dataset.delx;
     /* 注意:必须改 USERS.shared.exercises 本体(再重新取引用),只换 state.exercises 指向会同步不生效 */
     USERS.shared.exercises = USERS.shared.exercises.filter(e => e.id !== id);
     state.exercises = USERS.shared.exercises;
-    save(); renderExLib($('#tabBody'));
+    save(); renderExLib($('#xl_host'));
   }));
 }
 async function renderExLibSys(body){
   body.innerHTML = '<div class="tiny muted">载入系统库…</div>';
-  const sys = await fetchSysLib();   /* v4.4:renderTrain 入口已失效缓存,本页首拉一次即可 */
+  const sys = await fetchSysLib();   /* v4.4:openExLib 入口已失效缓存,本页首拉一次即可 */
   if(exLibTab !== 'sys') return;
   if(!sys){ body.innerHTML = '<div class="card"><div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">🔌</div>服务器离线，暂时看不到系统库</div></div>'; return; }
   paintSysLib(body, sys);
@@ -2006,6 +2007,11 @@ function renderSettings(){
     '</div>' +
     habitSettingsCardHTML() +
     '<div class="card"><h3><span>💾 数据管理</span></h3>' +
+      '<div class="row gap8" style="justify-content:center">' +   /* 两按钮等宽外扩、整组居中，避免小屏下偏左堆一角 */
+        '<button class="btn ghost" id="st_foodlib" style="flex:1;max-width:240px">📚 食物库(' + state.foods.length + ')</button>' +
+        '<button class="btn ghost" id="st_exlib" style="flex:1;max-width:240px">📚 动作库(' + state.exercises.length + ')</button>' +
+      '</div>' +
+      '<div class="tiny muted" style="margin:8px 0 12px">在这里管理个人食物库与动作库：「我的库」可增删，也可从管理员维护的系统库挑入；饮食页记录时仍可选用食物库，训练中保存的新动作会自动进入动作库。</div>' +
       '<div class="row gap8">' +
         '<button class="btn ghost" id="st_export">⬇ 导出备份</button>' +
         '<button class="btn ghost" id="st_import">⬆ 导入备份</button>' +
@@ -2020,6 +2026,10 @@ function renderSettings(){
   $('#nut_edit').addEventListener('click', openNutritionEditor);
   bindHabitSettings();
   /* v4.8：原 ⚙️ 设置弹窗的数据工具搬进本页卡片；v4.9 起「载入演示数据」入口移除，清空/导入成功后各自跳回概览 */
+  /* 食物库/动作库管理入口自饮食页与运动页并入本卡；弹窗关闭后重渲染本页刷新按钮上的库计数 */
+  const libClosed = () => { if(curView === 'settings') renderSettings(); };
+  $('#st_foodlib').addEventListener('click', () => openFoodLib(libClosed));
+  $('#st_exlib').addEventListener('click', () => openExLib(libClosed));
   $('#st_export').addEventListener('click', exportData);
   $('#st_import').addEventListener('click', () => {
     if(!confirm('导入会用备份中的数据覆盖本账户当前数据，是否继续？建议先「导出」留底。\n（多人备份文件只取其中"当前成员"那一份；其他成员请各自登录后再导入）')) return;
