@@ -626,7 +626,7 @@ function habitStreak(h, until){
   return n;
 }
 
-/* ---------- 演示数据 ---------- */
+/* ---------- 演示数据（v4.9 起仅供调试钩子 ?selftest/?ftest/?shot 灌数据，用户入口已移除） ---------- */
 function demoData(){
   USERS.onboarded = true;
   const t = today();
@@ -850,7 +850,7 @@ function renderView(){
 function showOnboard(){
   const html =
     '<div class="empty" style="padding:6px 4px 2px"><div class="e-ic">👋</div></div>' +
-    '<p style="margin:2px 0 14px;color:var(--ink-2)">欢迎使用健康管理！简单填几项基础信息，就能开始估算你的每日营养目标（按减脂倾向估算，之后可在「设置」页的每日目标里改热量倾向）。也可以先载入<b>演示数据</b>看看整个工具的效果。</p>' +
+    '<p style="margin:2px 0 14px;color:var(--ink-2)">欢迎使用健康管理！简单填几项基础信息，就能开始估算你的每日营养目标（按减脂倾向估算，之后可在「设置」页的每日目标里改热量倾向）。</p>' +
     '<div class="form-grid">' +
       '<div><label>性别</label><select class="select" id="ob_gender"><option value="male">男</option><option value="female">女</option></select></div>' +
       '<div><label>出生年份</label><input class="input" id="ob_year" type="number" min="1930" max="2020" value="1992"></div>' +
@@ -858,9 +858,8 @@ function showOnboard(){
       '<div><label>当前体重 kg</label><input class="input" id="ob_weight" type="number" min="30" max="300" value="72"></div>' +
       '<div class="span2"><label>日常活动量</label><select class="select" id="ob_act">' + ACTIVITIES.map(a => '<option value="' + a.v + '">' + a.label + '</option>').join('') + '</select></div>' +
     '</div>' +
-    '<div class="d-f" style="position:static;justify-content:space-between;margin-top:18px">' +
-      '<button class="btn" id="ob_demo">🚀 先载入演示数据体验</button>' +
-      '<span class="row gap8"><button class="btn ghost" id="ob_skip">直接开始</button></span>' +
+    '<div class="d-f" style="position:static;justify-content:flex-end;margin-top:18px">' +
+      '<button class="btn primary" id="ob_skip">直接开始</button>' +
     '</div>';
   const dlg = showDialog('开始使用', html, {size:'lg'});
   const b = dlg.box;
@@ -875,7 +874,6 @@ function showOnboard(){
     state.activity = num($('#ob_act', b).value);
     syncNutrition(); save();
   };
-  $('#ob_demo', b).addEventListener('click', () => { collect(); closeDialog(); demoData(); });
   $('#ob_skip', b).addEventListener('click', () => { collect(); USERS.onboarded = true; save(); closeDialog(); go('home'); });
 }
 
@@ -2020,7 +2018,6 @@ function renderSettings(){
       '<div class="row gap8">' +
         '<button class="btn ghost" id="st_export">⬇ 导出备份</button>' +
         '<button class="btn ghost" id="st_import">⬆ 导入备份</button>' +
-        '<button class="btn ghost" id="st_demo">🚀 载入演示数据</button>' +
         '<button class="btn danger ghost" id="st_wipe">🗑 清空数据</button>' +
       '</div>' +
       '<div class="tiny" id="st_sync" style="margin-top:10px;color:var(--ink-3)"></div>' +
@@ -2031,14 +2028,13 @@ function renderSettings(){
   $('#pr_edit').addEventListener('click', openProfileEditor);
   $('#nut_edit').addEventListener('click', openNutritionEditor);
   bindHabitSettings();
-  /* v4.8：原 ⚙️ 设置弹窗的数据工具搬进本页卡片；演示/清空/导入成功后各自跳回概览 */
+  /* v4.8：原 ⚙️ 设置弹窗的数据工具搬进本页卡片；v4.9 起「载入演示数据」入口移除，清空/导入成功后各自跳回概览 */
   $('#st_export').addEventListener('click', exportData);
   $('#st_import').addEventListener('click', () => {
     if(!confirm('导入会用备份中的数据覆盖本账户当前数据，是否继续？建议先「导出」留底。\n（多人备份文件只取其中"当前成员"那一份；其他成员请各自登录后再导入）')) return;
     $('#st_file').click();
   });
   $('#st_file').addEventListener('change', e => { const f = e.target.files[0]; if(f) importData(f); e.target.value = ''; });
-  $('#st_demo').addEventListener('click', () => { if(confirm('载入演示数据会覆盖本账户当前数据，确定？')) demoData(); });
   $('#st_wipe').addEventListener('click', () => { if(confirm('真的要清空本账户全部数据吗？此操作不可恢复（会同步清空服务器上的本人数据，不影响其他账户）。')) wipeAll(); });
   refreshSyncStatus();
 }

@@ -68,7 +68,7 @@
   - **🧍 基础资料卡**：性别/出生年份/身高/体重展示；「修改资料」弹窗 `openProfileEditor()` 修改（保存即 `syncNutrition()` 重算自动目标；「身体」页记录体重自动同步到这里）
   - **🥗 每日目标卡**：只显示目标值不显示当日进度——kcal hero + 蛋白/碳水/脂肪三 tile + 活动量/每日饮水两 tile；「修改目标」弹窗 = 热量倾向 + 活动量 + 饮水目标 + 四大营养素 + 自动计算勾选；**热量倾向**：减脂 −400 / 保持 / 增肌 +300 kcal，存于 `state.goal.mode`；自动档 = BMR×活动系数按倾向增减（增肌档蛋白质按 1.8g/kg），改热量倾向/活动量即时重算；饮水目标设 0 = 不追踪，隐藏概览「今日饮水」卡
   - **📌 每日打卡管理卡**：习惯的新增/修改/删除（打卡本体在概览页的每日打卡卡，两卡各自独立渲染）
-  - **💾 数据管理卡**（原 ⚙️ 设置弹窗的数据工具）：导出/导入备份、载入演示数据、🗑 清空本账户 + 同步状态行 + 多设备说明
+  - **💾 数据管理卡**（原 ⚙️ 设置弹窗的数据工具）：导出/导入备份、🗑 清空本账户 + 同步状态行 + 多设备说明（v4.9 移除「载入演示数据」入口，`demoData()` 仅留给调试钩子）
 - 新账户/演示数据默认「减脂」档（引导弹窗不再询问）；档案保存不触碰营养目标（自动模式经 syncNutrition 重算，手动模式保留原值）
 - 体重"主目标"功能已整体移除（引导"主要目标"下拉、🎯主目标卡/完成度环/每周节奏评估、身体页与统计页目标虚线、统计"距目标"tile）
 
@@ -132,7 +132,7 @@ weFit/
 
 - **前端核心约定**：业务代码只读写 `state`（当前成员工作副本），`save()` = 写回成员 + localStorage + queuePush()；同步层函数集中在 `load()` 之后（fetchState / doPush / queuePush / handleConflict / refreshSyncStatus / converge）
 - **叠层弹窗**：`showDialog` 维护 `dialogStack`，`curDialog` 恒为栈顶，也只有栈顶响应 Esc（睡眠段编辑器是从概览卡/历史弹窗里再开一层）
-- **页面归属**：打卡渲染与绑定 `habitCardHTML()` + `bindHabitEvents()` 由概览 `renderHome()` 调用（当天清单，仅点选）；「设置」页 = `renderSettings()` 组装四卡——🧍基础资料（展示 + 修改弹窗 `openProfileEditor()`）、🥗每日目标（「修改目标」统一编辑弹窗 `openNutritionEditor()`，营养+活动量+饮水）、📌习惯管理 `habitSettingsCardHTML()` + `bindHabitSettings()`（新增/修改走弹窗 `openHabitAdder()`/`openHabitEditor()`，删除经 `confirm()` 确认后整卡刷新）、💾数据管理（导出/导入/演示/清空绑定内联 + `#st_sync` 同步状态行）；睡眠/饮水趋势图函数 `renderSleepChart/renderWaterChart` 挂在 `renderStats()`，容器 id `st_sleep`/`st_water`；今日饮水/今日睡眠卡 = `lifeTodayHTML()` + `bindLifeToday()`（`lifeWaterCard/lifeSleepCard/bindWaterCard/bindSleepCard` 以 ctx `home`/`dlg` 双上下文复用——概览今日卡与**各自**历史弹窗 `openWaterHistory()/openSleepHistory()` 共用一套渲染与绑定；睡眠逐段新增/修改/删除走 `sleepSessionEditor(d, idx, after)`）
+- **页面归属**：打卡渲染与绑定 `habitCardHTML()` + `bindHabitEvents()` 由概览 `renderHome()` 调用（当天清单，仅点选）；「设置」页 = `renderSettings()` 组装四卡——🧍基础资料（展示 + 修改弹窗 `openProfileEditor()`）、🥗每日目标（「修改目标」统一编辑弹窗 `openNutritionEditor()`，营养+活动量+饮水）、📌习惯管理 `habitSettingsCardHTML()` + `bindHabitSettings()`（新增/修改走弹窗 `openHabitAdder()`/`openHabitEditor()`，删除经 `confirm()` 确认后整卡刷新）、💾数据管理（导出/导入/清空绑定内联 + `#st_sync` 同步状态行）；睡眠/饮水趋势图函数 `renderSleepChart/renderWaterChart` 挂在 `renderStats()`，容器 id `st_sleep`/`st_water`；今日饮水/今日睡眠卡 = `lifeTodayHTML()` + `bindLifeToday()`（`lifeWaterCard/lifeSleepCard/bindWaterCard/bindSleepCard` 以 ctx `home`/`dlg` 双上下文复用——概览今日卡与**各自**历史弹窗 `openWaterHistory()/openSleepHistory()` 共用一套渲染与绑定；睡眠逐段新增/修改/删除走 `sleepSessionEditor(d, idx, after)`）
 - **数据接口**：公开 = `POST /api/register`、`POST /api/login`、`GET /api/health`、静态页（含 `/admin`）；登录后可用 = `GET/PUT /api/state`（**本人数树**，`{rev?, data}`——rev 过期 409、缺省盲写；服务端只取 `data.users[本人uid]` 那一份，其余键忽略，缺本人键则 400 拒绝防误清空）、`GET /api/me`、`POST /api/logout`、`GET /api/system/library`（**PUT 仅 admin**）；**后台 API（仅 admin）** = `GET /api/admin/users`（列表+数据概况）、`PUT /api/admin/role`（设/撤管理员，防"最后一个管理员"）、`PUT /api/admin/password`（重置并强制该账户下线）、`DELETE /api/admin/users`（删账户级联清数据，不可删自己）
 - **API 仍是"整树 state"风格**（粒度收窄为单账户）：细粒度 CRUD 端点留待未来按需追加，mapper 后的关系表结构已支持
 
