@@ -4,6 +4,13 @@
 > 添加新功能是询问是否增加版本号，如果回答不用的话，请将此次更新放到未标版号。下次增加版号时，最新的未标版号的修改一并归类到同一版号下。
 > 版本日期沿用 `MEMO.md` 原更新行：2026-09-04 起从单文件版重构为前后端 + SQLite。
 
+## 新增前端渲染无头回归测试 render.test.js（2026-09-06，未标版号）
+
+- **背景**：Cindy 浏览器工具被宿主策略禁止访问本地/私有网段地址，agent 无法打开 `localhost:8123` 验证前端；补一条零依赖的「数据 → 页面 HTML」自动验证通道
+- **实现** `server/test/render.test.js`（15 项断言，已并入 `npm test`）：`node:vm` + 迷你 DOM/fetch/localStorage 桩，按 index.html 顺序加载 seed-data/sleep-shape/app 三段脚本，真实走完 `init → /api/me → /api/state → converge → go('home')` 冷启动链；夹具复用 `fixture.json` 树形
+- **覆盖**：启动冒烟、六页导航渲染、营养换算（per100×g）、饮食行、饮水目标 0 显隐、睡眠多段合计（450+30min→8h 达标）、打卡连续天数；**不覆盖**布局/间距/配色等视觉表现（无渲染引擎，仍靠目测）
+- 未改任何运行代码（public/ 与 server/ 执行路径零变化）；约束边界已在 AGENTS.md 写明：零依赖规则只管运行产物，`server/test/` 验证工具不受限
+
 ## 日期选择器居中（饮食页首卡 + 历史饮水/睡眠补记弹窗）（2026-09-06，未标版号）
 
 - **饮食页首卡**：第一张卡（顶部含日期的汇总卡）的 `daynav`（‹ 日期 › ＋「回到今天」）原外层 `.row` 用 `justify-content:space-between`，但容器内只有 daynav 一个子元素，space-between 使其贴左、看着偏左；改为 `justify-content:center` 让日期选择控件水平居中（`renderDiet`）

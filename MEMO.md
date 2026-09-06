@@ -128,6 +128,7 @@ weFit/
 │  ├─ test/roundtrip.test.js    #   67 项断言：鉴权 + 双账户隔离 + 系统库权限 + 形状保真（含睡眠多段、脏形状清洗与段数上限 400、静态映射）+ 规模压测 + 回归
 │  ├─ test/admin.test.js        #   39 项断言：后台 API（角色/重置密码/删号 + 护栏）
 │  ├─ test/sleep-shape.test.js  #   16 项断言：睡眠形状契约纯函数（两侧共用同一份）
+│  ├─ test/render.test.js       #   15 项断言：前端渲染逻辑无头验证（node:vm + DOM/fetch 桩，零依赖）
 │  └─ data/jjhealth.db          #   SQLite 数据库（.gitignore 已排除）
 └─ MEMO.md
 ```
@@ -179,6 +180,7 @@ weFit/
 - **手机端**：同一 Wi-Fi 下打开启动窗口显示的 `http://<电脑IP>:8123`，每人注册/登录**自己的账户**，互不干扰；自己多设备用同一账户登录 = 自动同步
 - **管理后台**：浏览器访问 `http://<服务器>:8123/admin`，仅管理员账户可登录；普通用户即使在登录页输对了密码也会看到"无管理权限"提示
 - **换电脑**：整个文件夹拷走（OneDrive 同步即等价），`server/data/jjhealth.db` 就是全部数据（含账户与会话）
-- **跑测试**：`cd server && npm test`（三个文件：roundtrip 67 + admin 39 + sleep-shape 16 项断言；也可 `node test/xxx.test.js` 单跑）；浏览器 `?ftest` 15 项功能自测（会覆盖为演示数据，需确认或 `&devok`）
+- **跑测试**：`cd server && npm test`（四个文件：roundtrip 67 + admin 39 + sleep-shape 16 + render 15 项断言；也可 `node test/xxx.test.js` 单跑）；浏览器 `?ftest` 15 项功能自测（会覆盖为演示数据，需确认或 `&devok`）
+- **渲染回归**：`test/render.test.js` 用零依赖 `node:vm` + 迷你 DOM/fetch 桩真实走完 init → /api/me → /api/state → 渲染链，守「数据 → 页面 HTML」这一段（六页冒烟、卡片显隐、多段合计、营养换算）；布局/间距/配色等视觉表现不在其能力内，仍靠目测（Cindy 浏览器工具被策略禁访本地地址，agent 也无法截图本地页）
 - **清零重来**：设置页 → 💾 数据管理 → 🗑 清空数据（仅本账户，服务器同步清本人子树，不可恢复，先导出留底）；**全库重来**：停服务后删除 `server/data/jjhealth.db`
 - **忘记密码**：找任一管理员在后台「用户管理 → 重置密码」处理（该账户会被强制下线）；若所有管理员都失联：停服务删库重来（最后手段）

@@ -37,10 +37,11 @@
 ## 测试
 
 ```bash
-cd server && npm test                        # 一次跑完下面三个文件
+cd server && npm test                        # 一次跑完下面四个文件
      node test/roundtrip.test.js   # 鉴权 + 双账户隔离 + 往返保真（67 项）
      node test/admin.test.js       # 管理后台 API：角色/重置密码/删号护栏（39 项）
      node test/sleep-shape.test.js # 睡眠形状契约纯函数（前后端共用同一份，16 项）
+     node test/render.test.js      # 前端渲染逻辑无头验证：启动冒烟 + 六页导航 + 结构/数据流断言（15 项，零依赖 node:vm 桩；布局/视觉仍需目测）
 ```
 
 > 睡眠的形状规则（脏值清洗、段数上限）只写在 `public/js/sleep-shape.js` 一处：浏览器先于 app.js 加载它，`server/mapper.js` 直接 require（同 seed-data.js）。改规则只改这一份，两侧自动同步。
