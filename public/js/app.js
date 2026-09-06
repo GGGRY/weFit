@@ -1008,11 +1008,9 @@ function renderHome(){
   const wk = weekday(t);
   const nowH = new Date().getHours();
   const greet = nowH < 5 ? '夜深了' : nowH < 11 ? '早上好' : nowH < 14 ? '中午好' : nowH < 18 ? '下午好' : '晚上好';
-  const w = latestVal('weight');
   const calPct = Math.round(eat.kcal / T.kcal * 100);
   const habToday = state.habits.filter(h => h.done[t]).length;
   const plan = planForDate(t);
-  const doneEx = state.workouts.some(x => x.date === t);
 
   let planHTML = '';
   if(plan){
@@ -1030,8 +1028,6 @@ function renderHome(){
     '<div class="muted">' + esc(greet) + '，<b>' + esc(activeUser().name) + '</b> · ' + dateCNW(t) + '</div>' +
     '<div class="row mt">' +
       tileHTML('今日热量', fmtNum(eat.kcal), '/ ' + fmtNum(T.kcal) + ' kcal', '', '') +
-      tileHTML('体重', w ? w.toFixed(1) : '--', 'kg', '', '') +
-      tileHTML('运动', doneEx ? '✓ 已完成' : (plan ? '待完成' : '休息日'), '', '') +
       tileHTML('打卡', habToday + '/' + state.habits.length, '', '', '') +
     '</div>' +
     '<div class="card" style="margin-top:14px"><h3>🍽️ 今日饮食</h3>' +
@@ -1093,7 +1089,7 @@ function renderDiet(){
   }).join('');
 
   const html =
-    '<div class="card"><div class="row" style="justify-content:space-between;align-items:center">' +
+    '<div class="card"><div class="row" style="justify-content:center;align-items:center">' +
       '<div class="daynav"><button class="iconbtn2" data-day="-1">‹</button>' +
         '<div class="lbl">' + dateCN(d) + '<small>' + (d===today() ? '今天' : '周' + DAY_CN[weekday(d)]) + '</small></div>' +
         '<button class="iconbtn2" data-day="1">›</button>' +
@@ -1811,16 +1807,16 @@ function bindLifeToday(v){
   bindSleepCard(v, today(), renderHome);
 }
 
-/* 历史弹窗共用的日期翻页条（‹ 日期 › [+回到今天]，右侧一句提示） */
+/* 历史弹窗共用的日期翻页条（‹ 日期 › [+回到今天] 居中，可选下方一句提示） */
 function hisDaynav(d, hint){
   const isToday = d === today();
-  return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px">' +
+  return '<div style="display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:14px">' +
     '<div class="daynav"><button class="iconbtn2" data-day="-1">‹</button>' +
       '<div class="lbl">' + dateCN(d) + '<small>' + (isToday ? '今天' : '周' + DAY_CN[weekday(d)]) + '</small></div>' +
       '<button class="iconbtn2" data-day="1">›</button>' +
       (isToday ? '' : '<button class="btn sm" data-day="today">回到今天</button>') +
     '</div>' +
-    '<div class="tiny muted">' + hint + '</div>' +
+    (hint ? '<div class="tiny muted">' + hint + '</div>' : '') +
   '</div>';
 }
 function bindDaynav(b, onStep){   // onStep('today' | ±1)：更新所属弹窗的日期游标并重绘
@@ -1834,7 +1830,7 @@ function openWaterHistory(){
 }
 function renderWaterHistory(b, close){
   const d = waterHisDate;
-  b.innerHTML = hisDaynav(d, '翻日期即可查看或补记饮水') +
+  b.innerHTML = hisDaynav(d) +
     lifeWaterCard(d, 'dlg') +
     '<div class="d-f"><button class="btn ghost" data-cancel>关闭</button></div>';
   bindDaynav(b, step => { waterHisDate = step === 'today' ? today() : addDays(waterHisDate, step); renderWaterHistory(b, close); });
@@ -2095,7 +2091,7 @@ function openNutritionEditor(){
   const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
 }
 
-/* ---------- 每日打卡卡（概览页：只负责点圆圈打卡） ---------- */
+/* ---------- 今日打卡卡（概览页：只负责点圆圈打卡） ---------- */
 const HAB_COLORS = [['var(--brand)','绿'],['var(--cat1)','蓝'],['var(--cat2)','橙'],['var(--cat3)','青']];
 function habColorOptions(sel){
   return HAB_COLORS.map(([v,l]) => '<option value="' + v + '"' + (v===sel?' selected':'') + '>' + l + '</option>').join('');
@@ -2112,7 +2108,7 @@ function habitCardHTML(){
   }).join('') : '';
   const body = rows || '<div class="empty" style="padding:14px 4px"><div class="e-ic">📌</div>还没有习惯<br><button class="btn primary sm mt" data-go2="settings">去「设置」页添加</button></div>';
 
-  return '<div class="card"><h3>📌 每日打卡 <span class="hint">点圆圈切换当天完成</span></h3>' + body + '</div>';
+  return '<div class="card"><h3>📌 今日打卡 <span class="hint">点圆圈切换当天完成</span></h3>' + body + '</div>';
 }
 function bindHabitEvents(){
   const v = $('#view');
@@ -2137,7 +2133,7 @@ function habitSettingsCardHTML(){
   }).join('')
     : '<div class="empty" style="padding:14px 4px"><div class="e-ic">📌</div>还没有习惯，点右上角「添加习惯」创建第一个</div>';
   return '<div class="card"><h3><span>📌 每日打卡</span><span class="grow"></span><button class="btn sm" id="hab_add_btn">添加习惯</button></h3>' + rows +
-    '<div class="tiny muted mt">✎ 修改 · 🗑 删除；每天在概览页「每日打卡」点圆圈打卡。</div></div>';
+    '<div class="tiny muted mt">✎ 修改 · 🗑 删除；每天在概览页「今日打卡」点圆圈打卡。</div></div>';
 }
 function bindHabitSettings(){
   const v = $('#view');
