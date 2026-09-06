@@ -1,6 +1,6 @@
 # weFit · 健康管理
 
-个人健康管理网页：饮食 / 运动 / 身体数据 / 睡眠饮水 / 目标 / 统计。
+个人健康管理网页：概览 / 饮食 / 运动 / 身体数据 / 统计 / 设置（每日目标 · 习惯打卡管理 · 基础资料 · 数据备份都在设置页）。
 零 npm 依赖全栈（Node 内置 `http` + `sqlite` + `crypto`），`node server.js` 即起。
 
 ## 快速开始
@@ -30,7 +30,7 @@
 
 - `public/` 前端（无构建：`index.html` + `admin.html` + `css/style.css` + `js/seed-data.js` + `js/sleep-shape.js` + `js/app.js`）
 - `server/` 后端 + `data/jjhealth.db`（SQLite，全部数据都在这里）
-- `memo.md` 项目备忘录（架构、功能、技术债、使用备忘）
+- `MEMO.md` 项目备忘录（架构、功能、技术债、使用备忘）
 - `CHANGELOG.md` 版本变更日志
 - `PLANS.md` 后续开发计划建议
 
@@ -49,4 +49,4 @@ cd server && npm test                        # 一次跑完下面三个文件
 
 > ⚠️ `?selftest`、`?ftest` 与 `?shot` 都会先用**演示数据覆盖当前账户**并自动同步到服务器（真实数据丢失）。三个钩子共用同一确认弹窗（v4.4 起，`?selftest` 之前漏检），【取消】则按真实数据正常进入，且确认/取消后钩子都会从地址栏剥除（避免书签/刷新反复触发）；自动化场景可在 URL 追加 `&devok` 跳过确认。
 
-> v4 升级说明：v3 及以前的旧成员数据不再展示（"从零开始"决策）；需要留底先备份 `server/data/jjhealth.db`。局域网内即开即用；公网部署请先上 HTTPS（详见 memo.md 技术债）。
+> v4 升级说明：v3 及以前的旧成员数据不再展示（"从零开始"决策）；需要留底先备份 `server/data/jjhealth.db`。局域网内即开即用；公网部署请先上 HTTPS（详见 MEMO.md 技术债）。

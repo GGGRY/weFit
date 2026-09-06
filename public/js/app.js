@@ -33,7 +33,7 @@ const ACTIVITIES = [
   {v:1.55, label:'较高（每周运动6-7次）'},
   {v:1.725,label:'很高（体力劳动/每日两练）'},
 ];
-/* 热量倾向对 TDEE 的增减档(v4.2 引入)：计算器 / 目标页说明 / ftest 断言共用此单一来源，
+/* 热量倾向对 TDEE 的增减档(v4.2 引入)：计算器 / 设置页每日目标说明 / ftest 断言共用此单一来源，
  * 杜绝魔法数三处抄写漂移（v4.3 审查修复）。
  * v4.4：展示文案/编辑器选项并入同一表——旧版用符号反推「减脂/增肌」文案、选项另抄一份。 */
 const GOAL_MODE = {
@@ -42,13 +42,14 @@ const GOAL_MODE = {
   bulk:     { adj:300,  label:'增肌', opt:'增肌（热量盈余）' },
 };
 const GOAL_ADJ = { cut: GOAL_MODE.cut.adj, maintain: GOAL_MODE.maintain.adj, bulk: GOAL_MODE.bulk.adj };
+/* v4.8：「目标」页与 ⚙️ 设置合并为「设置」页，排在统计之后 */
 const NAV = [
-  {id:'home',  label:'概览',    ic:'🏠'},
-  {id:'diet',  label:'饮食',    ic:'🍽️'},
-  {id:'train', label:'运动',    ic:'🏋️'},
-  {id:'body',  label:'身体',    ic:'📏'},
-  {id:'goals', label:'目标',ic:'🎯'},
-  {id:'stats', label:'统计',    ic:'📊'},
+  {id:'home',     label:'概览', ic:'🏠'},
+  {id:'diet',     label:'饮食', ic:'🍽️'},
+  {id:'train',    label:'运动', ic:'🏋️'},
+  {id:'body',     label:'身体', ic:'📏'},
+  {id:'stats',    label:'统计', ic:'📊'},
+  {id:'settings', label:'设置', ic:'⚙️'},
 ];
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -803,7 +804,7 @@ let curView = 'home';
 function rebuildNav(){
   const group1 = ['home'];
   const group2 = ['diet','train','body'];
-  const group3 = ['goals','stats'];
+  const group3 = ['stats','settings'];
   const render = ids => ids.map(id => {
     const n = NAV.find(x=>x.id===id);
     return '<div class="navbtn ' + (curView===id?'active':'') + '" data-go="' + id + '"><span class="ic">' + n.ic + '</span>' + esc(n.label) + '</div>';
@@ -812,7 +813,7 @@ function rebuildNav(){
     '<div class="brand"><div class="logo">💪</div><div>健康管理<small>我的健身日记</small></div></div>' +
     '<div class="navgroup">主页</div>' + render(group1) +
     '<div class="navgroup">记录</div>' + render(group2) +
-    '<div class="navgroup">计划 · 分析</div>' + render(group3) +
+    '<div class="navgroup">分析 · 设置</div>' + render(group3) +
     '<div style="flex:1"></div>' +
     '<div class="navbtn" data-themeclick><span class="ic">' + (state.theme==='dark'?'🌙':'☀️') + '</span>外观</div>';
   $('#tabbar').innerHTML = NAV.map(n =>
@@ -826,9 +827,9 @@ function go(v){
   window.scrollTo({top:0, behavior:'smooth'});
 }
 function renderView(){
-  const map = { home:renderHome, diet:renderDiet, train:renderTrain, body:renderBody, goals:renderGoals, stats:renderStats };
+  const map = { home:renderHome, diet:renderDiet, train:renderTrain, body:renderBody, stats:renderStats, settings:renderSettings };
   const topbar = $('#topbar');
-  const titles = { home:'概览', diet:'饮食记录', train:'运动', body:'身体数据', goals:'目标 · 打卡', stats:'数据统计' };
+  const titles = { home:'概览', diet:'饮食记录', train:'运动', body:'身体数据', stats:'数据统计', settings:'设置' };
   const au = activeUser();
   topbar.innerHTML = '<div class="page-head"><h1>' + titles[curView] + '</h1></div>' +
     '<div class="tools">' +
@@ -837,11 +838,9 @@ function renderView(){
         '<span class="upn">' + esc(au.name) + '</span>' +
       '</button>' +
       '<button class="iconbtn" id="themeToggle" title="切换深色/浅色">' + (state.theme==='dark' ? '☀️' : '🌙') + '</button>' +
-      '<button class="iconbtn" id="settingsBtn" title="设置">⚙️</button>' +
     '</div>';
   $('#userBtn').onclick = openProfile;
   $('#themeToggle').onclick = toggleTheme;
-  $('#settingsBtn').onclick = openSettings;
   (map[curView])();
 }
 
@@ -851,7 +850,7 @@ function renderView(){
 function showOnboard(){
   const html =
     '<div class="empty" style="padding:6px 4px 2px"><div class="e-ic">👋</div></div>' +
-    '<p style="margin:2px 0 14px;color:var(--ink-2)">欢迎使用健康管理！简单填几项基础信息，就能开始估算你的每日营养目标（按减脂倾向估算，之后可在「目标」页的每日目标里改热量倾向）。也可以先载入<b>演示数据</b>看看整个工具的效果。</p>' +
+    '<p style="margin:2px 0 14px;color:var(--ink-2)">欢迎使用健康管理！简单填几项基础信息，就能开始估算你的每日营养目标（按减脂倾向估算，之后可在「设置」页的每日目标里改热量倾向）。也可以先载入<b>演示数据</b>看看整个工具的效果。</p>' +
     '<div class="form-grid">' +
       '<div><label>性别</label><select class="select" id="ob_gender"><option value="male">男</option><option value="female">女</option></select></div>' +
       '<div><label>出生年份</label><input class="input" id="ob_year" type="number" min="1930" max="2020" value="1992"></div>' +
@@ -881,38 +880,27 @@ function showOnboard(){
 }
 
 /* =====================================================
-   设置
+   修改基础资料（v4.8：原 ⚙️ 设置弹窗的档案部分，改为「设置」页卡片弹窗）
 ===================================================== */
-function openSettings(){
+function openProfileEditor(){
+  const p = state.profile;
   const html =
-    '<h4 style="margin:2px 0 10px;font-size:13px;color:var(--ink-3)">基础资料</h4>' +
     '<div class="form-grid">' +
-      '<div><label>性别</label><select class="select" id="st_gender"><option value="male">男</option><option value="female">女</option></select></div>' +
-      '<div><label>出生年份</label><input class="input" id="st_year" type="number" min="1930" max="2020" value="' + state.profile.birthYear + '"></div>' +
-      '<div><label>身高 cm</label><input class="input" id="st_height" type="number" min="130" max="230" value="' + state.profile.height + '"></div>' +
-      '<div><label>当前体重 kg</label><input class="input" id="st_weight" type="number" min="30" max="300" value="' + state.profile.currentKg + '"></div>' +
+      '<div><label>性别</label><select class="select" id="pr_gender"><option value="male">男</option><option value="female">女</option></select></div>' +
+      '<div><label>出生年份</label><input class="input" id="pr_year" type="number" min="1930" max="2020" value="' + p.birthYear + '"></div>' +
+      '<div><label>身高 cm</label><input class="input" id="pr_height" type="number" min="130" max="230" value="' + p.height + '"></div>' +
+      '<div><label>当前体重 kg</label><input class="input" id="pr_weight" type="number" min="30" max="300" value="' + p.currentKg + '"></div>' +
     '</div>' +
-    '<div class="tiny" style="margin:10px 0 6px;color:var(--ink-3)">热量倾向、活动量、饮水与营养目标，请在「目标」页的「每日目标」卡片中设置。</div>' +
-    '<div class="d-f"><button class="btn ghost" id="st_demo">🚀 演示数据</button><button class="btn ghost" id="st_export">⬇ 导出</button><button class="btn ghost" id="st_import">⬆ 导入</button><button class="btn danger ghost" id="st_wipe">🗑 清空</button><button class="btn primary" id="st_save">保存</button></div>' +
-    '<div class="tiny" id="st_sync" style="margin-top:10px;color:var(--ink-3)"></div>' +
-    '<div class="tiny" style="margin-top:4px;color:var(--ink-3)">各设备登录同一账户，读写的就是同一份服务器数据，无需手动同步；不同账户彼此隔离。本机存储仅作当前账户的离线缓存。历史备份可在上方「导出/导入」搬运。</div>' +
-    '<input type="file" id="st_file" accept=".json,application/json" style="display:none">';
-  const dlg = showDialog('设置', html, {size:'lg'});
+    '<div class="tiny" style="margin-top:8px;color:var(--ink-3)">基础资料用于估算每日营养目标（自动档）。在「身体」页记录体重后会自动同步到这里；热量倾向、活动量与饮水目标请在「每日目标」卡片中修改。</div>' +
+    '<div class="d-f"><button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="pr_save">保存</button></div>';
+  const dlg = showDialog('修改基础资料', html);
   const b = dlg.box;
-  $('#st_gender', b).value = state.profile.gender;
-  $('#st_save', b).addEventListener('click', () => {
-    state.profile = { gender:$('#st_gender', b).value, birthYear:num($('#st_year', b).value)||1992, height:num($('#st_height', b).value)||175, currentKg:num($('#st_weight', b).value)||state.profile.currentKg };
+  $('#pr_gender', b).value = p.gender;
+  $('#pr_save', b).addEventListener('click', () => {
+    state.profile = { gender:$('#pr_gender', b).value, birthYear:num($('#pr_year', b).value)||1992, height:num($('#pr_height', b).value)||175, currentKg:num($('#pr_weight', b).value)||state.profile.currentKg };
     syncNutrition(); save(); closeDialog(); renderView(); toast('已保存');
   });
-  $('#st_export', b).addEventListener('click', () => exportData());
-  $('#st_import', b).addEventListener('click', () => {
-    if(!confirm('导入会用备份中的数据覆盖本账户当前数据，是否继续？建议先「导出」留底。\n（多人备份文件只取其中"当前成员"那一份；其他成员请各自登录后再导入）')) return;
-    $('#st_file', b).click();
-  });
-  $('#st_file', b).addEventListener('change', e => { const f = e.target.files[0]; if(f) importData(f); e.target.value = ''; });
-  $('#st_demo', b).addEventListener('click', () => { if(confirm('载入演示数据会覆盖本账户当前数据，确定？')) { demoData(); closeDialog(); } });
-  $('#st_wipe', b).addEventListener('click', () => { if(confirm('真的要清空本账户全部数据吗？此操作不可恢复（会同步清空服务器上的本人数据，不影响其他账户）。')) wipeAll(); });
-  refreshSyncStatus();
+  const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
 }
 
 function exportData(){
@@ -1070,8 +1058,8 @@ function renderHome(){
   if(q) q.addEventListener('click', startTodayWorkout);
   const g = $('#view [data-go2="diet"]');
   if(g) g.addEventListener('click', () => go('diet'));
-  const gh = $('#view [data-go2="goals"]');
-  if(gh) gh.addEventListener('click', () => go('goals'));
+  const gh = $('#view [data-go2="settings"]');
+  if(gh) gh.addEventListener('click', () => go('settings'));
 }
 
 /* =====================================================
@@ -1986,11 +1974,28 @@ function renderWaterChart(){
 /* =====================================================
    目标
 ===================================================== */
-function renderGoals(){
+/* =====================================================
+   设置页（v4.8：原「目标 · 打卡」页与 ⚙️ 设置弹窗合并，排在统计之后）
+   卡片顺序：基础资料 → 每日目标 → 每日打卡管理 → 数据管理
+===================================================== */
+function renderSettings(){
+  const p = state.profile;
+  const genderLabel = p.gender === 'male' ? '男' : p.gender === 'female' ? '女' : '—';
+  const pTile = (lab, val, unit) =>
+    '<div class="tile" style="box-shadow:none;background:var(--surface-2);min-width:0;padding:11px 10px"><div class="lab">' + lab + '</div><div class="val" style="font-size:19px">' + val + (unit ? '<span class="unit">' + unit + '</span>' : '') + '</div></div>';
   // 每日目标卡（营养 + 活动量 + 饮水；热量倾向决定自动计算的档位）
   const T = target();
   const actLabel = (ACTIVITIES.find(a => String(a.v) === String(state.activity)) || {}).label || state.activity;
   const html =
+    '<div class="card"><h3><span>🧍 基础资料</span><span class="grow"></span><button class="btn sm" id="pr_edit">修改资料</button></h3>' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">' +
+      pTile('性别', genderLabel) +
+      pTile('出生年份', p.birthYear) +
+      pTile('身高', p.height, 'cm') +
+      pTile('体重', p.currentKg, 'kg') +
+    '</div>' +
+    '<div class="tiny muted mt">性别、出生年份、身高、体重用于估算每日营养目标（自动档）与 BMI；在「身体」页记录体重后会同步到这里。点「修改资料」可修改。</div>' +
+    '</div>' +
     '<div class="card"><h3><span>🥗 每日目标</span><span class="grow"></span><button class="btn sm" id="nut_edit">修改目标</button></h3>' +
     '<div style="margin:2px 0 12px"><span class="hero" style="font-size:34px;color:var(--brand-ink)">' + T.kcal + '<span class="unit">kcal</span></span></div>' +
     '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">' +
@@ -2010,14 +2015,36 @@ function renderGoals(){
       (state.nutrition.auto ? '（自动计算中）' : '（当前为手动设定）') +
       '；饮水目标用于概览页「今日饮水」卡的达标判断，设为 0（不追踪）时概览页不再显示该卡。点「修改目标」可改热量倾向、活动量、饮水与营养素。</div>' +
     '</div>' +
-    habitSettingsCardHTML();
+    habitSettingsCardHTML() +
+    '<div class="card"><h3><span>💾 数据管理</span></h3>' +
+      '<div class="row gap8">' +
+        '<button class="btn ghost" id="st_export">⬇ 导出备份</button>' +
+        '<button class="btn ghost" id="st_import">⬆ 导入备份</button>' +
+        '<button class="btn ghost" id="st_demo">🚀 载入演示数据</button>' +
+        '<button class="btn danger ghost" id="st_wipe">🗑 清空数据</button>' +
+      '</div>' +
+      '<div class="tiny" id="st_sync" style="margin-top:10px;color:var(--ink-3)"></div>' +
+      '<div class="tiny" style="margin-top:4px;color:var(--ink-3)">各设备登录同一账户，读写的就是同一份服务器数据，无需手动同步；不同账户彼此隔离。本机存储仅作当前账户的离线缓存。历史备份可在上方「导出/导入」搬运。</div>' +
+      '<input type="file" id="st_file" accept=".json,application/json" style="display:none">' +
+    '</div>';
   $('#view').innerHTML = html;
+  $('#pr_edit').addEventListener('click', openProfileEditor);
   $('#nut_edit').addEventListener('click', openNutritionEditor);
   bindHabitSettings();
+  /* v4.8：原 ⚙️ 设置弹窗的数据工具搬进本页卡片；演示/清空/导入成功后各自跳回概览 */
+  $('#st_export').addEventListener('click', exportData);
+  $('#st_import').addEventListener('click', () => {
+    if(!confirm('导入会用备份中的数据覆盖本账户当前数据，是否继续？建议先「导出」留底。\n（多人备份文件只取其中"当前成员"那一份；其他成员请各自登录后再导入）')) return;
+    $('#st_file').click();
+  });
+  $('#st_file').addEventListener('change', e => { const f = e.target.files[0]; if(f) importData(f); e.target.value = ''; });
+  $('#st_demo').addEventListener('click', () => { if(confirm('载入演示数据会覆盖本账户当前数据，确定？')) demoData(); });
+  $('#st_wipe').addEventListener('click', () => { if(confirm('真的要清空本账户全部数据吗？此操作不可恢复（会同步清空服务器上的本人数据，不影响其他账户）。')) wipeAll(); });
+  refreshSyncStatus();
 }
 
 
-/* ---------- 每日目标编辑（营养 + 活动量 + 饮水，目标页） ---------- */
+/* ---------- 每日目标编辑（营养 + 活动量 + 饮水，设置页） ---------- */
 function openNutritionEditor(){
   const n = state.nutrition;
   const html =
@@ -2086,7 +2113,7 @@ function habitCardHTML(){
       '<div class="sub">' + (strk > 0 ? '🔥 连续 ' + strk + ' 天' : '今天还没打卡') + '</div></div>' +
       '<button class="hab-dot ' + (done ? 'on' : '') + '" data-hab="' + h.id + '" data-day="' + t + '" style="' + (done ? 'background:' + h.color + ';border-color:' + h.color + '' : '') + '" title="点击打卡">✓</button></div>';
   }).join('') : '';
-  const body = rows || '<div class="empty" style="padding:14px 4px"><div class="e-ic">📌</div>还没有习惯<br><button class="btn primary sm mt" data-go2="goals">去「目标」页添加</button></div>';
+  const body = rows || '<div class="empty" style="padding:14px 4px"><div class="e-ic">📌</div>还没有习惯<br><button class="btn primary sm mt" data-go2="settings">去「设置」页添加</button></div>';
 
   return '<div class="card"><h3>📌 每日打卡 <span class="hint">点圆圈切换当天完成</span></h3>' + body + '</div>';
 }
@@ -2099,7 +2126,7 @@ function bindHabitEvents(){
     save(); renderView();
   }));
 }
-/* ---------- 打卡设置卡（目标页：只管理习惯的添加 / 修改 / 删除，打卡在概览页进行） ---------- */
+/* ---------- 打卡设置卡（设置页：只管理习惯的添加 / 修改 / 删除，打卡在概览页进行） ---------- */
 function habitSettingsCardHTML(){
   const t = today();
   const rows = state.habits.length ? state.habits.map(h => {
@@ -2128,7 +2155,7 @@ function bindHabitSettings(){
   }));
   $('#hab_add_btn', v).addEventListener('click', openHabitAdder);
 }
-/* ---------- 添加新习惯（目标页弹窗） ---------- */
+/* ---------- 添加新习惯（设置页弹窗） ---------- */
 function openHabitAdder(){
   const html =
     '<div class="form-grid">' +
@@ -2146,7 +2173,7 @@ function openHabitAdder(){
   });
   const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
 }
-/* ---------- 修改已有习惯（目标页） ---------- */
+/* ---------- 修改已有习惯（设置页） ---------- */
 function openHabitEditor(h){
   const html =
     '<div class="form-grid">' +
@@ -2444,7 +2471,7 @@ function runSelfTest(){
   const errs = [];
   try {
     demoData();
-    const views = ['home','diet','train','body','goals','stats'];
+    const views = ['home','diet','train','body','stats','settings'];
     views.forEach(v => {
       try { curView = v; rebuildNav(); renderView(); errs.push(v + ':ok'); }
       catch(e){ errs.push(v + ':ERR ' + e.message); }

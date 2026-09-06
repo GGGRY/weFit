@@ -1,6 +1,6 @@
 # 健康管理 · 项目备忘录
 
-> 当前版本 **v4.7** · 最后更新 2026-09-06 · 版本变更历史见 [CHANGELOG.md](CHANGELOG.md) · 后续开发计划见 [PLANS.md](PLANS.md)
+> 当前版本 **v4.8** · 最后更新 2026-09-06 · 版本变更历史见 [CHANGELOG.md](CHANGELOG.md) · 后续开发计划见 [PLANS.md](PLANS.md)
 
 ## 一、项目定位
 
@@ -31,9 +31,9 @@
 - **今日睡眠卡**
   - 睡眠：有记录时卡头显示「合计 X 小时 · 达标/偏少」（≥7h，按全天各段总时长）；逐段一行（图标 + 时长大字 + 质量表情 + 类型 · 入睡→起床 + ✏️）；卡底「＋ 记录一段」走弹窗；无记录时只显空态提示
   - 右上角 🕘「补记」→ 独立的历史弹窗（`openSleepHistory()`），翻日期查看/补记/修改/删除，弹窗内改动同步刷新本页
-- **每日打卡卡**：一行一条习惯（图标 + 名称 + 🔥连续 N 天 / 今天还没打卡 + 当天 ✓ 圆钮），点圆钮切换当天完成并即时刷新；无习惯时空态 + 「去『目标』页添加」
+- **每日打卡卡**：一行一条习惯（图标 + 名称 + 🔥连续 N 天 / 今天还没打卡 + 当天 ✓ 圆钮），点圆钮切换当天完成并即时刷新；无习惯时空态 + 「去『设置』页添加」
 
-- 首页不展示：体重 7 天差值小字、"今日概览"卡（睡眠/BMI）、"主目标"卡（体重目标功能已整体移除）；习惯的新增/修改/删除收归「目标」页「每日打卡」管理卡（概览卡只打卡，不内联添加表单/删除按钮、不展示多日历史网格）
+- 首页不展示：体重 7 天差值小字、"今日概览"卡（睡眠/BMI）、"主目标"卡（体重目标功能已整体移除）；习惯的新增/修改/删除收归「设置」页「每日打卡」管理卡（概览卡只打卡，不内联添加表单/删除按钮、不展示多日历史网格）
 
 ### 2. 饮食 🍽️
 - 早/午/晚/加餐四餐次记录，可前后翻页回看任意日期补记
@@ -63,12 +63,13 @@
 - 睡眠归属语义：记录键 = 「起床那天」
 - 两张趋势图在统计页
 
-### 6. 目标 🎯（打卡在概览页，目标页负责习惯管理；体重目标功能已移除）
-- **每日目标卡**：只显示目标值不显示当日进度——kcal hero + 蛋白/碳水/脂肪三 tile + 活动量/每日饮水两 tile
-- 「修改目标」弹窗 = 热量倾向 + 活动量 + 饮水目标 + 四大营养素 + 自动计算勾选；**热量倾向**：减脂 −400 / 保持 / 增肌 +300 kcal，存于 `state.goal.mode`；自动档 = BMR×活动系数按倾向增减（增肌档蛋白质按 1.8g/kg），改热量倾向/活动量即时重算
-- 饮水每日目标杯数目标 0 = 不追踪，隐藏今日卡
-- 新账户/演示数据默认「减脂」档（引导弹窗不再询问）
-- **⚙️设置弹窗瘦身为纯"基础资料 + 数据管理"**：热量倾向、活动量、饮水、营养目标设置全部移出设置；设置保存不触碰营养目标（自动模式经 syncNutrition 重算，手动模式保留原值）
+### 6. 设置 ⚙️（v4.8：原「目标 · 打卡」页与 ⚙️ 顶栏设置弹窗合并，排在「统计」之后；打卡本体在概览页）
+- 页面自上而下四张卡，由 `renderSettings()` 组装：
+  - **🧍 基础资料卡**：性别/出生年份/身高/体重展示；「修改资料」弹窗 `openProfileEditor()` 修改（保存即 `syncNutrition()` 重算自动目标；「身体」页记录体重自动同步到这里）
+  - **🥗 每日目标卡**：只显示目标值不显示当日进度——kcal hero + 蛋白/碳水/脂肪三 tile + 活动量/每日饮水两 tile；「修改目标」弹窗 = 热量倾向 + 活动量 + 饮水目标 + 四大营养素 + 自动计算勾选；**热量倾向**：减脂 −400 / 保持 / 增肌 +300 kcal，存于 `state.goal.mode`；自动档 = BMR×活动系数按倾向增减（增肌档蛋白质按 1.8g/kg），改热量倾向/活动量即时重算；饮水目标设 0 = 不追踪，隐藏概览「今日饮水」卡
+  - **📌 每日打卡管理卡**：习惯的新增/修改/删除（打卡本体在概览页的每日打卡卡，两卡各自独立渲染）
+  - **💾 数据管理卡**（原 ⚙️ 设置弹窗的数据工具）：导出/导入备份、载入演示数据、🗑 清空本账户 + 同步状态行 + 多设备说明
+- 新账户/演示数据默认「减脂」档（引导弹窗不再询问）；档案保存不触碰营养目标（自动模式经 syncNutrition 重算，手动模式保留原值）
 - 体重"主目标"功能已整体移除（引导"主要目标"下拉、🎯主目标卡/完成度环/每周节奏评估、身体页与统计页目标虚线、统计"距目标"tile）
 
 ### 7. 统计 📊
@@ -93,7 +94,7 @@
 - **冲突**：**每用户独立 rev**；运行中本账户另一设备先写会触发 409 弹窗由用户裁决（同上两选一）；其他账户的写入永远不会与本账户冲突
 - **同步健壮性**：裁决逻辑收敛为单一 `converge()`（load 启动 / 30s 回线 `retrySync()` / 409 冲突三入口共用，冲突文案单源 `CONFLICT_MSG`）；完全离线启动（含干净缓存）也挂 30s 回线定时器；编辑代数 `gen` 移入共享 meta（替代每页内存 dirtyGen，跨标签页不再互相清脏）；`doPush` 加在途保护（同 rev PUT 不再并发自撞假 409）；400 `invalid_state` 自动 `fetchState` 重挂后重推；裁决「用服务器」采纳失败改由定时器静默重试
 - 鉴权语义：所有 `/api/state`、`/api/system/library` 等未登录一律 401 → 前端清工作区弹登录门；写操作要求 `Content-Type: application/json`；会话 30 天存库，服务器重启不掉线
-- ⚙️设置弹窗顶部显示同步状态行（登录账户 / 版本 rev / 最近同步时间 / 离线提示）
+- 设置页「数据管理」卡顶部显示同步状态行（登录账户 / 版本 rev / 最近同步时间 / 离线提示）
 - 导出/导入 JSON 备份（**只针对本人数据**；导入多人备份时取其中"当前成员"一份重挂为本账户数据）；「清空」只清本账户子树 + 本账户缓存
 - 备份文件在 OneDrive 目录内 = 自动获得异地备份 + OneDrive 版本历史
 
@@ -126,12 +127,12 @@ weFit/
 │  ├─ test/admin.test.js        #   39 项断言：后台 API（角色/重置密码/删号 + 护栏）
 │  ├─ test/sleep-shape.test.js  #   16 项断言：睡眠形状契约纯函数（两侧共用同一份）
 │  └─ data/jjhealth.db          #   SQLite 数据库（.gitignore 已排除）
-└─ memo.md
+└─ MEMO.md
 ```
 
 - **前端核心约定**：业务代码只读写 `state`（当前成员工作副本），`save()` = 写回成员 + localStorage + queuePush()；同步层函数集中在 `load()` 之后（fetchState / doPush / queuePush / handleConflict / refreshSyncStatus / converge）
 - **叠层弹窗**：`showDialog` 维护 `dialogStack`，`curDialog` 恒为栈顶，也只有栈顶响应 Esc（睡眠段编辑器是从概览卡/历史弹窗里再开一层）
-- **页面归属**：打卡渲染与绑定 `habitCardHTML()` + `bindHabitEvents()` 由概览 `renderHome()` 调用（当天清单，仅点选）；习惯管理 `habitSettingsCardHTML()` + `bindHabitSettings()` 挂目标页 `renderGoals()`，新增/修改走弹窗 `openHabitAdder()`/`openHabitEditor()`，删除经 `confirm()` 确认后整卡刷新；`openNutritionEditor()` 是"每日目标"统一编辑弹窗（营养+活动量+饮水）；睡眠/饮水趋势图函数 `renderSleepChart/renderWaterChart` 挂在 `renderStats()`，容器 id `st_sleep`/`st_water`；今日饮水/今日睡眠卡 = `lifeTodayHTML()` + `bindLifeToday()`（`lifeWaterCard/lifeSleepCard/bindWaterCard/bindSleepCard` 以 ctx `home`/`dlg` 双上下文复用——概览今日卡与**各自**历史弹窗 `openWaterHistory()/openSleepHistory()` 共用一套渲染与绑定；睡眠逐段新增/修改/删除走 `sleepSessionEditor(d, idx, after)`）
+- **页面归属**：打卡渲染与绑定 `habitCardHTML()` + `bindHabitEvents()` 由概览 `renderHome()` 调用（当天清单，仅点选）；「设置」页 = `renderSettings()` 组装四卡——🧍基础资料（展示 + 修改弹窗 `openProfileEditor()`）、🥗每日目标（「修改目标」统一编辑弹窗 `openNutritionEditor()`，营养+活动量+饮水）、📌习惯管理 `habitSettingsCardHTML()` + `bindHabitSettings()`（新增/修改走弹窗 `openHabitAdder()`/`openHabitEditor()`，删除经 `confirm()` 确认后整卡刷新）、💾数据管理（导出/导入/演示/清空绑定内联 + `#st_sync` 同步状态行）；睡眠/饮水趋势图函数 `renderSleepChart/renderWaterChart` 挂在 `renderStats()`，容器 id `st_sleep`/`st_water`；今日饮水/今日睡眠卡 = `lifeTodayHTML()` + `bindLifeToday()`（`lifeWaterCard/lifeSleepCard/bindWaterCard/bindSleepCard` 以 ctx `home`/`dlg` 双上下文复用——概览今日卡与**各自**历史弹窗 `openWaterHistory()/openSleepHistory()` 共用一套渲染与绑定；睡眠逐段新增/修改/删除走 `sleepSessionEditor(d, idx, after)`）
 - **数据接口**：公开 = `POST /api/register`、`POST /api/login`、`GET /api/health`、静态页（含 `/admin`）；登录后可用 = `GET/PUT /api/state`（**本人数树**，`{rev?, data}`——rev 过期 409、缺省盲写；服务端只取 `data.users[本人uid]` 那一份，其余键忽略，缺本人键则 400 拒绝防误清空）、`GET /api/me`、`POST /api/logout`、`GET /api/system/library`（**PUT 仅 admin**）；**后台 API（仅 admin）** = `GET /api/admin/users`（列表+数据概况）、`PUT /api/admin/role`（设/撤管理员，防"最后一个管理员"）、`PUT /api/admin/password`（重置并强制该账户下线）、`DELETE /api/admin/users`（删账户级联清数据，不可删自己）
 - **API 仍是"整树 state"风格**（粒度收窄为单账户）：细粒度 CRUD 端点留待未来按需追加，mapper 后的关系表结构已支持
 
@@ -177,5 +178,5 @@ weFit/
 - **管理后台**：浏览器访问 `http://<服务器>:8123/admin`，仅管理员账户可登录；普通用户即使在登录页输对了密码也会看到"无管理权限"提示
 - **换电脑**：整个文件夹拷走（OneDrive 同步即等价），`server/data/jjhealth.db` 就是全部数据（含账户与会话）
 - **跑测试**：`cd server && npm test`（三个文件：roundtrip 67 + admin 39 + sleep-shape 16 项断言；也可 `node test/xxx.test.js` 单跑）；浏览器 `?ftest` 15 项功能自测（会覆盖为演示数据，需确认或 `&devok`）
-- **清零重来**：⚙️设置 → 🗑清空（仅本账户，服务器同步清本人子树，不可恢复，先导出留底）；**全库重来**：停服务后删除 `server/data/jjhealth.db`
+- **清零重来**：设置页 → 💾 数据管理 → 🗑 清空数据（仅本账户，服务器同步清本人子树，不可恢复，先导出留底）；**全库重来**：停服务后删除 `server/data/jjhealth.db`
 - **忘记密码**：找任一管理员在后台「用户管理 → 重置密码」处理（该账户会被强制下线）；若所有管理员都失联：停服务删库重来（最后手段）
