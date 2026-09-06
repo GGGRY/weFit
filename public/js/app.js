@@ -45,7 +45,7 @@ const GOAL_ADJ = { cut: GOAL_MODE.cut.adj, maintain: GOAL_MODE.maintain.adj, bul
 const NAV = [
   {id:'home',  label:'概览',    ic:'🏠'},
   {id:'diet',  label:'饮食',    ic:'🍽️'},
-  {id:'train', label:'训练',    ic:'🏋️'},
+  {id:'train', label:'运动',    ic:'🏋️'},
   {id:'body',  label:'身体',    ic:'📏'},
   {id:'goals', label:'目标',ic:'🎯'},
   {id:'stats', label:'统计',    ic:'📊'},
@@ -101,7 +101,7 @@ function seedExArr(){ return SEED_EXERCISES.map((e,i)=>({id:'e'+i, name:e.name, 
 function freshShared(){ return { foods: seedFoodArr(), exercises: seedExArr() }; }
 function defaultHabits(){ return [
   {id:'h_water', name:'饮水达标', icon:'💧', color:'var(--cat1)', done:{}},
-  {id:'h_work',  name:'完成训练', icon:'🏋️', color:'var(--cat2)', done:{}},
+  {id:'h_work',  name:'完成运动', icon:'🏋️', color:'var(--cat2)', done:{}},
   {id:'h_sleep', name:'睡满7小时',icon:'😴', color:'var(--cat3)', done:{}},
   {id:'h_stretch',name:'拉伸放松', icon:'🧘', color:'var(--brand)', done:{}},
 ]; }
@@ -828,7 +828,7 @@ function go(v){
 function renderView(){
   const map = { home:renderHome, diet:renderDiet, train:renderTrain, body:renderBody, goals:renderGoals, stats:renderStats };
   const topbar = $('#topbar');
-  const titles = { home:'概览', diet:'饮食记录', train:'训练', body:'身体数据', goals:'目标 · 打卡', stats:'数据统计' };
+  const titles = { home:'概览', diet:'饮食记录', train:'运动', body:'身体数据', goals:'目标 · 打卡', stats:'数据统计' };
   const au = activeUser();
   topbar.innerHTML = '<div class="page-head"><h1>' + titles[curView] + '</h1></div>' +
     '<div class="tools">' +
@@ -949,7 +949,7 @@ function userMetaHTML(u){
   const wc = (u.workouts || []).length;
   const bd = (u.body || []).filter(b => b.weight !== undefined && b.weight !== null);
   const last = bd.length ? bd[bd.length-1].weight : null;
-  return (last !== null ? '体重 ' + last + 'kg · ' : '暂无体重 · ') + '训练 ' + wc + ' 次 · 身体记录 ' + bd.length + ' 条';
+  return (last !== null ? '体重 ' + last + 'kg · ' : '暂无体重 · ') + '运动 ' + wc + ' 次 · 身体记录 ' + bd.length + ' 条';
 }
 function colorOpts(sel){
   const labels = {green:'绿', blue:'蓝', orange:'橙', violet:'紫', teal:'青', pink:'粉'};
@@ -1033,10 +1033,10 @@ function renderHome(){
       '<div class="lrow"><div class="thumb" style="background:var(--surface-3)">' + (i+1) + '</div><div class="grow"><div class="b">' + esc(it.exName) + '</div><div class="sub">' + esc(it.muscle || '') + '</div></div>' +
       '<div class="tiny" style="white-space:nowrap">' + it.sets + '×' + it.reps + '　' + (it.weight? it.weight + 'kg':'自重') + '</div></div>').join('');
     planHTML =
-      '<div class="card"><h3><span>📋 今日计划 · ' + esc(plan.name || '') + '</span><span class="grow"></span>' +
-      '<button class="btn primary sm" data-quick="train">记录本次训练</button></h3>' + exs + '</div>';
+      '<div class="card"><h3><span>📋 今日运动 · ' + esc(plan.name || '') + '</span><span class="grow"></span>' +
+      '<button class="btn primary sm" data-quick="train">记录本次运动</button></h3>' + exs + '</div>';
   } else {
-    planHTML = '<div class="card"><h3>📋 今日计划</h3><div class="empty"><div class="e-ic">🛋️</div>今天没有安排训练<br><button class="btn sm mt" data-quick="train">去训练页安排计划</button></div></div>';
+    planHTML = '<div class="card"><h3>📋 今日运动</h3><div class="empty"><div class="e-ic">🛋️</div>今天没有安排运动<br><button class="btn sm mt" data-quick="train">去运动页安排计划</button></div></div>';
   }
 
   const html =
@@ -1044,7 +1044,7 @@ function renderHome(){
     '<div class="row mt">' +
       tileHTML('今日热量', fmtNum(eat.kcal), '/ ' + fmtNum(T.kcal) + ' kcal', '', '') +
       tileHTML('体重', w ? w.toFixed(1) : '--', 'kg', '', '') +
-      tileHTML('训练', doneEx ? '✓ 已完成' : (plan ? '待完成' : '休息日'), '', '') +
+      tileHTML('运动', doneEx ? '✓ 已完成' : (plan ? '待完成' : '休息日'), '', '') +
       tileHTML('打卡', habToday + '/' + state.habits.length, '', '', '') +
     '</div>' +
     '<div class="card" style="margin-top:14px"><h3>🍽️ 今日饮食</h3>' +
@@ -1316,10 +1316,10 @@ function renderTrain(){
     '<div class="row" style="align-items:center;justify-content:space-between;margin-bottom:14px">' +
       segBar(trainTab, [
         {id:'plan', label:'🗓 我的计划'},
-        {id:'log', label:'📒 训练日志'},
+        {id:'log', label:'📒 运动日志'},
         {id:'lib', label:'📚 动作库'},
       ]) +
-      (trainTab === 'log' ? '<button class="btn primary" id="tr_add">＋ 记录训练</button>' : '') +
+      (trainTab === 'log' ? '<button class="btn primary" id="tr_add">＋ 记录运动</button>' : '') +
       (trainTab === 'plan' ? '<button class="btn primary" id="tr_planadd">＋ 新建计划</button>' : '') +
     '</div><div id="tabBody"></div>';
   const v = $('#view');
@@ -1346,7 +1346,7 @@ function renderPlans(body){
       '<h3 style="margin-bottom:8px;justify-content:space-between"><span>周' + DAY_CN[dow] + '</span>' +
       (p ? '<button class="iconbtn2" data-planedit="' + dow + '" title="编辑" style="width:28px;height:28px;font-size:13px">✏️</button>' : '') + '</h3>' +
       (p
-        ? '<div style="flex:1">' + items + '</div><div class="tiny muted" style="padding-top:6px;border-top:1px dashed var(--line)">' + esc(p.name||'训练') + ' · 共' + p.items.length + '个动作</div>'
+        ? '<div style="flex:1">' + items + '</div><div class="tiny muted" style="padding-top:6px;border-top:1px dashed var(--line)">' + esc(p.name||'运动') + ' · 共' + p.items.length + '个动作</div>'
         : '<div style="flex:1;display:flex;flex-direction:column;justify-content:center"><div class="tiny muted" style="text-align:center;padding:14px 0">无计划</div></div>' +
           '<button class="btn sm block" data-planedit="' + dow + '">＋ 安排</button>') +
       '</div>';
@@ -1384,9 +1384,9 @@ function openPlanEditor(dow){
     '<input class="input" id="pl_name" placeholder="计划名（如：推日）" value="' + esc(name) + '" style="max-width:200px"></div>' +
     '<div id="pl_rows">' + buildRows() + '</div>' +
     '<button class="btn sm" id="pl_addrow" style="margin-top:4px">＋ 添加动作</button>' +
-    '<div class="tiny muted" style="margin-top:8px">重量可留空表示自重/无重量训练。</div>' +
+    '<div class="tiny muted" style="margin-top:8px">重量可留空表示自重/无重量运动。</div>' +
     '<div class="d-f"><button class="btn ghost" data-cancel>取消</button>' + (editing ? '<button class="btn danger ghost" id="pl_delplan">删除本日计划</button>' : '') + '<button class="btn primary" id="pl_save">保存</button></div>';
-  const dlg = showDialog((editing ? '编辑' : '安排') + ' 周' + DAY_CN[dow] + ' 训练', html);
+  const dlg = showDialog((editing ? '编辑' : '安排') + ' 周' + DAY_CN[dow] + ' 运动', html);
   const b = dlg.box;
   function rereadRows(){ const r = $('#pl_rows', b); if(!r) return; r.innerHTML = buildRows(); bindRows(); }
   function bindRows(){
@@ -1407,7 +1407,7 @@ function openPlanEditor(dow){
       state.plans[dow].name = pname || state.plans[dow].name;
       state.plans[dow].items = valid.map(m => Object.assign({ id:uid() }, m));
     } else {
-      state.plans[dow] = { id:uid(), name: pname || ('周' + DAY_CN[dow] + '训练'), items: valid.map(m => Object.assign({ id:uid() }, m)) };
+      state.plans[dow] = { id:uid(), name: pname || ('周' + DAY_CN[dow] + '运动'), items: valid.map(m => Object.assign({ id:uid() }, m)) };
     }
     save(); closeDialog(); renderTrain(); toast('已保存计划');
   });
@@ -1419,7 +1419,7 @@ function openPlanEditor(dow){
 function renderWorkoutList(body){
   const list = [...state.workouts].sort((a,b) => a.date < b.date ? 1 : -1);
   if(!list.length){
-    body.innerHTML = '<div class="card"><div class="empty"><div class="e-ic">🏋️</div>还没有训练记录<br><span class="tiny">先到「我的计划」安排一周，然后在训练日点「记录训练」</span></div></div>';
+    body.innerHTML = '<div class="card"><div class="empty"><div class="e-ic">🏋️</div>还没有运动记录<br><span class="tiny">先到「我的计划」安排一周，然后在运动日点「记录运动」</span></div></div>';
     return;
   }
   const cards = list.map(w => {
@@ -1435,7 +1435,7 @@ function renderWorkoutList(body){
       '</div>';
     }).join('');
     return '<div class="card" data-wk="' + w.id + '">' +
-      '<h3><span>' + dateCNW(w.date) + '</span><span class="hint">' + esc(w.name||'训练') + '</span><span class="grow"></span>' +
+      '<h3><span>' + dateCNW(w.date) + '</span><span class="hint">' + esc(w.name||'运动') + '</span><span class="grow"></span>' +
       '<span class="hint">容量 ' + Math.round(vol) + ' kg</span>' +
       '<button class="iconbtn2" data-wkedit="' + w.id + '" style="width:30px;height:30px;font-size:13px">✏️</button>' +
       '<button class="iconbtn2" data-wkdel="' + w.id + '" style="width:30px;height:30px;font-size:13px;color:var(--danger)">🗑</button>' +
@@ -1444,7 +1444,7 @@ function renderWorkoutList(body){
   body.innerHTML = cards;
   $$('[data-wkedit]', body).forEach(b => b.addEventListener('click', () => openWorkoutDlg(null, null, b.dataset.wkedit)));
   $$('[data-wkdel]', body).forEach(b => b.addEventListener('click', () => {
-    if(confirm('删除这次训练记录？')){ state.workouts = state.workouts.filter(x => x.id !== b.dataset.wkdel); save(); renderTrain(); toast('已删除'); }
+    if(confirm('删除这次运动记录？')){ state.workouts = state.workouts.filter(x => x.id !== b.dataset.wkdel); save(); renderTrain(); toast('已删除'); }
   }));
 }
 
@@ -1489,7 +1489,7 @@ function openWorkoutDlg(date, planKey, editId){
   const html =
     '<div class="row gap10" style="margin-bottom:10px;align-items:center;flex-wrap:wrap">' +
       '<input class="input" type="date" id="wl_date" value="' + date + '" style="max-width:170px">' +
-      '<input class="input" id="wl_name" placeholder="训练名（可选）" value="' + esc(model.name) + '" style="max-width:200px">' +
+      '<input class="input" id="wl_name" placeholder="运动名（可选）" value="' + esc(model.name) + '" style="max-width:200px">' +
     '</div>' +
     (planOpts ? '<div class="row gap8" style="margin-bottom:10px;align-items:center"><span class="tiny muted">从周计划导入：</span>' +
       '<select class="select" id="wl_plan" style="max-width:200px"><option value="">选择…</option>' + planOpts + '</select></div>' : '') +
@@ -1497,8 +1497,8 @@ function openWorkoutDlg(date, planKey, editId){
     '<div class="row gap8"><button class="btn sm" id="wl_addex">＋ 添加动作</button>' +
     '<button class="btn sm ghost" id="wl_addbody">＋ 自重/徒手动作</button></div>' +
     '<div class="tiny muted" style="margin:6px 0">动作名称可自定义，保存时自动加入动作库。次数留 0 的组会被忽略。</div>' +
-    '<div class="d-f"><button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="wl_save">保存训练</button></div>';
-  const dlg = showDialog(editing ? '修改训练记录' : '记录训练', html, {size:'lg'});
+    '<div class="d-f"><button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="wl_save">保存运动</button></div>';
+  const dlg = showDialog(editing ? '修改运动记录' : '记录运动', html, {size:'lg'});
   const b = dlg.box;
   const rowsBox = $('#wl_rows', b);
   function readRowInto(i){
@@ -1549,7 +1549,7 @@ function openWorkoutDlg(date, planKey, editId){
     } else {
       state.workouts.push({ id:uid(), date:d, name:nm, items: model.items.map(it => ({ id:uid(), exId:it.exId, exName:it.exName, muscle:it.muscle, sets: it.sets.map(s=>({reps:s.reps, weight:s.weight})) })) });
     }
-    save(); closeDialog(); renderTrain(); toast('训练已保存 💪');
+    save(); closeDialog(); renderTrain(); toast('运动已保存 💪');
   });
   const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
 }
@@ -1588,7 +1588,7 @@ function renderExLibMine(body){
       groups[m].map(e => '<div class="lrow" style="border:0;padding:5px 2px"><div class="grow small">' + esc(e.name) + '</div><button class="iconbtn2" data-delx="' + e.id + '" style="width:26px;height:26px;font-size:11px;color:var(--danger)">🗑</button></div>').join('') + '</div>';
   });
   body.innerHTML = '<div class="card" style="margin-bottom:0"><h3>📚 我的动作库</h3><div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">' + h + '</div>' +
-    '<div class="tiny muted" style="margin-top:10px">训练中保存的新动作会自动进入这里；「系统动作库」分页可挑入管理员维护的公共动作。</div>' +
+    '<div class="tiny muted" style="margin-top:10px">运动中保存的新动作会自动进入这里；「系统动作库」分页可挑入管理员维护的公共动作。</div>' +
     '<div class="row gap8 mt" style="align-items:end">' +
       '<div style="flex:1"><label class="tiny muted">新动作名</label><input class="input" id="nx_name" placeholder="如：窄距俯卧撑"></div>' +
       '<div style="width:120px"><label class="tiny muted">肌群</label><select class="select" id="nx_muscle">' + MUSCLES.map(m => '<option>' + m + '</option>').join('') + '</select></div>' +
@@ -2351,7 +2351,7 @@ function renderStats(){
   const T = target();
   const tiles =
     tileHTML('近30天平均摄入', S.avgKcal === null ? '--' : fmtNum(S.avgKcal), 'kcal', '目标 ' + fmtNum(T.kcal), '') +
-    tileHTML('训练次数(30天)', S.wk30, '次', '') +
+    tileHTML('运动次数(30天)', S.wk30, '次', '') +
     tileHTML('体重变化(30天)', wDeltaText(S), '', '') +
     tileHTML('平均睡眠', S.avgSleep === null ? '--' : S.avgSleep, 'h', '');
   const tiles2 =
@@ -2363,7 +2363,7 @@ function renderStats(){
   const c1 = chartWrap('体重趋势', '近120条记录', 'st_weight', '');
   const c2 = chartWrap('每日热量 vs 目标', '近30天', 'st_cal', '');
   const c3 = chartWrap('宏量营养素摄入', '近14天 · kcal', 'st_macro', legendHTML([{label:'蛋白',color:CX.c1},{label:'碳水',color:CX.c2},{label:'脂肪',color:CX.c3}]));
-  const c4 = chartWrap('每周训练容量', '近12周 · Σ重量×次数', 'st_vol', '');
+  const c4 = chartWrap('每周运动容量', '近12周 · Σ重量×次数', 'st_vol', '');
   const c5 = chartWrap('睡眠时长', '近14天 · 虚线为目标 7 小时', 'st_sleep', '');
   const c6 = chartWrap('每日饮水量', state.waterTarget ? '近14天 · 虚线为每日目标' : '近14天', 'st_water', '');
 

@@ -175,7 +175,7 @@ async function loadUsers(box){
     '</tr></thead><tbody>' +
     usersList.map(u => {
       const c = u.counts || {};
-      const meta = '饮食条目 ' + (c.meals || 0) + ' · 身体 ' + (c.body || 0) + ' · 训练 ' + (c.workouts || 0);
+      const meta = '饮食条目 ' + (c.meals || 0) + ' · 身体 ' + (c.body || 0) + ' · 运动 ' + (c.workouts || 0);
       return '<tr data-u="' + esc(u.username) + '">' +
         '<td><b>' + esc(u.username) + '</b>' + (u.username === me.username ? ' <span class="chip slot" style="font-size:10px;padding:1px 7px">当前</span>' : '') + '</td>' +
         '<td>' + esc(u.name || '—') + '</td>' +
