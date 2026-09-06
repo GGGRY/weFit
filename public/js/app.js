@@ -1953,13 +1953,13 @@ function sleepSessionEditor(d, idx, after){
 
 function renderSleepChart(){
   const el = $('#st_sleep'); if(!el) return;
-  const ds = lastNDates(14);
+  const ds = lastNDates(30);
   const pts = ds.map(x => ({ x, y: sleepTotalMins(x) }));   // 全天各段总时长
   el.innerHTML = barChartSVG({ points: pts, color: 'var(--cat2)', target: SLEEP_GOAL_MINS, targetLabel:'7h', unit:'分钟', fmtY: v => (v/60).toFixed(1) + 'h' });
 }
 function renderWaterChart(){
   const el = $('#st_water'); if(!el) return;
-  const ds = lastNDates(14);
+  const ds = lastNDates(30);
   const pts = ds.map(x => ({ x, y: waterFor(x) }));
   el.innerHTML = barChartSVG({ points: pts, color: 'var(--cat1)', target: state.waterTarget, targetLabel: state.waterTarget + '杯', unit:'杯', fmtY: v => v + '' });
 }
@@ -2353,15 +2353,15 @@ function statSummary(){
   const w30 = bodyVal('weight', d30[0]);
   let wDelta = null, wDeltaCls = '';
   if(wNow !== null && w30 !== null){ wDelta = wNow - w30; wDeltaCls = wDelta > 0 ? 'up' : (wDelta < 0 ? 'down' : ''); }
-  // 近7天习惯完成率
-  let done7 = 0, tot7 = 0;
-  lastNDates(7).forEach(d => state.habits.forEach(h => { tot7++; if(h.done[d]) done7++; }));
+  // 近30天习惯完成率
+  let done30 = 0, tot30 = 0;
+  lastNDates(30).forEach(d => state.habits.forEach(h => { tot30++; if(h.done[d]) done30++; }));
   return {
     avgKcal: kcalCnt ? Math.round(kcalSum/kcalCnt) : null,
     wk30, wDelta, wDeltaCls,
     avgSleep: sleepCnt ? Math.round(sleepSum/sleepCnt/60*10)/10 : null,
     avgWater: waterCnt ? Math.round(waterSum/waterCnt*10)/10 : null,
-    habitRate: tot7 ? Math.round(done7/tot7*100) : null,
+    habitRate: tot30 ? Math.round(done30/tot30*100) : null,
   };
 }
 function renderStats(){
@@ -2371,19 +2371,18 @@ function renderStats(){
     tileHTML('近30天平均摄入', S.avgKcal === null ? '--' : fmtNum(S.avgKcal), 'kcal', '目标 ' + fmtNum(T.kcal), '') +
     tileHTML('运动次数(30天)', S.wk30, '次', '') +
     tileHTML('体重变化(30天)', wDeltaText(S), '', '') +
-    tileHTML('平均睡眠', S.avgSleep === null ? '--' : S.avgSleep, 'h', '');
+    tileHTML('平均睡眠(30天)', S.avgSleep === null ? '--' : S.avgSleep, 'h', '');
   const tiles2 =
-    tileHTML('平均饮水', S.avgWater === null ? '--' : S.avgWater, '杯', '') +
-    tileHTML('打卡完成率(7天)', S.habitRate === null ? '--' : S.habitRate + '%', '', '') +
-    tileHTML('当前BMI', bmi() === null ? '--' : bmi(), '', '');
+    tileHTML('平均饮水(30天)', S.avgWater === null ? '--' : S.avgWater, '杯', '') +
+    tileHTML('打卡完成率(30天)', S.habitRate === null ? '--' : S.habitRate + '%', '', '');
 
   // 图表容器
   const c1 = chartWrap('体重趋势', '近120条记录', 'st_weight', '');
   const c2 = chartWrap('每日热量 vs 目标', '近30天', 'st_cal', '');
   const c3 = chartWrap('宏量营养素摄入', '近14天 · kcal', 'st_macro', legendHTML([{label:'蛋白',color:CX.c1},{label:'碳水',color:CX.c2},{label:'脂肪',color:CX.c3}]));
   const c4 = chartWrap('每周运动容量', '近12周 · Σ重量×次数', 'st_vol', '');
-  const c5 = chartWrap('睡眠时长', '近14天 · 虚线为目标 7 小时', 'st_sleep', '<button class="btn sm ghost" data-slehis title="补记/修改历史睡眠记录">🕘 补记</button>');
-  const c6 = chartWrap('每日饮水量', state.waterTarget ? '近14天 · 虚线为每日目标' : '近14天', 'st_water', '<button class="btn sm ghost" data-watshis title="补记/修改历史饮水记录">🕘 补记</button>');
+  const c5 = chartWrap('睡眠时长', '近30天 · 虚线为目标 7 小时', 'st_sleep', '<button class="btn sm ghost" data-slehis title="补记/修改历史睡眠记录">🕘 补记</button>');
+  const c6 = chartWrap('每日饮水量', state.waterTarget ? '近30天 · 虚线为每日目标' : '近30天', 'st_water', '<button class="btn sm ghost" data-watshis title="补记/修改历史饮水记录">🕘 补记</button>');
 
   const html =
     '<div class="row">' + tiles + '</div>' +
