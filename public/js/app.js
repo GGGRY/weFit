@@ -1048,6 +1048,8 @@ function renderHome(){
   if(q) q.addEventListener('click', startTodayWorkout);
   const g = $('#view [data-go2="diet"]');
   if(g) g.addEventListener('click', () => go('diet'));
+  const gh = $('#view [data-go2="goals"]');
+  if(gh) gh.addEventListener('click', () => go('goals'));
 }
 
 /* =====================================================
@@ -1923,9 +1925,11 @@ function renderGoals(){
         return '，再按热量倾向「' + g.label + '」' + (g.adj > 0 ? '+' : '−') + Math.abs(g.adj) + ' kcal'; })() +
       (state.nutrition.auto ? '（自动计算中）' : '（当前为手动设定）') +
       '；饮水目标用于概览页「今日饮水」卡的达标判断。点「修改目标」可改热量倾向、活动量、饮水与营养素。</div>' +
-    '</div>';
+    '</div>' +
+    habitSettingsCardHTML();
   $('#view').innerHTML = html;
   $('#nut_edit').addEventListener('click', openNutritionEditor);
+  bindHabitSettings();
 }
 
 
@@ -1975,59 +1979,103 @@ function openNutritionEditor(){
     state.activity = num($('#ne_act', b).value);
     state.waterTarget = clamp(num($('#ne_water', b).value) || state.waterTarget, 1, 40);
     state.nutrition = { auto:$('#ne_auto', b).checked, kcal:num($('#ne_kcal', b).value), protein:num($('#ne_protein', b).value), carbs:num($('#ne_carbs', b).value), fat:num($('#ne_fat', b).value) };
-    syncNutrition(); save(); closeDialog(); renderGoals(); renderHome(); toast('已保存');
+    syncNutrition(); save(); closeDialog(); renderView(); toast('已保存');
   });
   const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
 }
 
-/* ---------- 每日打卡卡（展示在概览页） ---------- */
+/* ---------- 每日打卡卡（概览页：只负责点圆圈打卡） ---------- */
+const HAB_COLORS = [['var(--brand)','绿'],['var(--cat1)','蓝'],['var(--cat2)','橙'],['var(--cat3)','青']];
+function habColorOptions(sel){
+  return HAB_COLORS.map(([v,l]) => '<option value="' + v + '"' + (v===sel?' selected':'') + '>' + l + '</option>').join('');
+}
 function habitCardHTML(){
   const t = today();
-  const ds = lastNDates(7);
-  const colHead = ds.map(d => '<span>' + (d===t ? '今' : (parseISO(d).getDate() + '')) + '</span>').join('');
-  const nameRows = state.habits.map(h => {
+  const rows = state.habits.length ? state.habits.map(h => {
+    const done = !!h.done[t];
     const strk = habitStreak(h, t);
-    return '<div class="hab-n"><span style="font-size:17px">' + h.icon + '</span><span class="nm">' + esc(h.name) + '</span>' +
-      (strk > 0 ? '<span class="tiny muted" title="连续天数">🔥' + strk + '</span>' : '') +
-      '<button class="iconbtn2" data-delhab="' + h.id + '" style="width:24px;height:24px;font-size:11px;color:var(--danger);flex:0 0 auto">🗑</button></div>';
-  }).join('');
-  const dayRows = state.habits.map(h => {
-    const cells = ds.map(d => {
-      const done = !!h.done[d];
-      const future = d > t;
-      return '<div class="hab-cell"><button class="hab-dot ' + (done?'on':'') + (future?' future':'') + '" data-hab="' + h.id + '" data-day="' + d + '" style="' + (done?'background:' + h.color + ';border-color:' + h.color + '':'') + '" title="' + (future?'':'点击打卡') + '">✓</button></div>';
-    }).join('');
-    return '<div class="hab-r">' + cells + '</div>';
-  }).join('');
+    return '<div class="lrow"><span class="thumb" style="background:' + h.color + ';font-size:16px">' + esc(h.icon) + '</span>' +
+      '<div class="grow"><div class="b">' + esc(h.name) + '</div>' +
+      '<div class="sub">' + (strk > 0 ? '🔥 连续 ' + strk + ' 天' : '今天还没打卡') + '</div></div>' +
+      '<button class="hab-dot ' + (done ? 'on' : '') + '" data-hab="' + h.id + '" data-day="' + t + '" style="' + (done ? 'background:' + h.color + ';border-color:' + h.color + '' : '') + '" title="点击打卡">✓</button></div>';
+  }).join('') : '';
+  const body = rows || '<div class="empty" style="padding:14px 4px"><div class="e-ic">📌</div>还没有习惯<br><button class="btn primary sm mt" data-go2="goals">去「目标」页添加</button></div>';
 
-  return '<div class="card"><h3>📌 每日打卡 <span class="hint">点圆圈切换当天完成</span></h3>' +
-    '<div class="hab-flex">' +
-      '<div class="hab-names"><div class="hab-h">&nbsp;</div>' + nameRows + '</div>' +
-      '<div class="hab-days"><div class="hab-days-in"><div class="hab-h">' + colHead + '</div>' + dayRows + '</div></div>' +
-    '</div>' +
-    '<div class="row mt" style="align-items:end;gap:8px">' +
-      '<div style="flex:1"><label class="tiny muted">新习惯</label><input class="input" id="nhab_name" placeholder="如：不吃零食"></div>' +
-      '<div style="width:64px"><label class="tiny muted">图标</label><input class="input" id="nhab_icon" maxlength="2" value="✅"></div>' +
-      '<div style="width:110px"><label class="tiny muted">颜色</label><select class="select" id="nhab_color"><option value="var(--brand)">绿</option><option value="var(--cat1)">蓝</option><option value="var(--cat2)">橙</option><option value="var(--cat3)">青</option></select></div>' +
-      '<button class="btn primary" id="nhab_add">添加</button></div></div>';
+  return '<div class="card"><h3>📌 每日打卡 <span class="hint">点圆圈切换当天完成</span></h3>' + body + '</div>';
 }
 function bindHabitEvents(){
   const v = $('#view');
   $$('[data-hab]', v).forEach(btn => btn.addEventListener('click', () => {
-    if(btn.classList.contains('future')) return;
     const h = state.habits.find(x => x.id === btn.dataset.hab);
     const d = btn.dataset.day;
     if(h.done[d]) delete h.done[d]; else h.done[d] = true;
-    save(); renderHome();
+    save(); renderView();
   }));
+}
+/* ---------- 打卡设置卡（目标页：只管理习惯的添加 / 修改 / 删除，打卡在概览页进行） ---------- */
+function habitSettingsCardHTML(){
+  const t = today();
+  const rows = state.habits.length ? state.habits.map(h => {
+    const doneCnt = Object.keys(h.done || {}).filter(d => h.done[d]).length;
+    const strk = habitStreak(h, t);
+    return '<div class="lrow"><div class="thumb" style="background:' + h.color + ';font-size:16px">' + esc(h.icon) + '</div>' +
+      '<div class="grow"><div class="b">' + esc(h.name) + '</div>' +
+      '<div class="sub">累计 ' + doneCnt + ' 天' + (strk > 0 ? ' · 连续 ' + strk + ' 天' : '') + '</div></div>' +
+      '<button class="iconbtn2" data-edithab="' + h.id + '" style="width:26px;height:26px;font-size:12px;color:var(--ink-3);flex:0 0 auto" title="修改习惯">✎</button>' +
+      '<button class="iconbtn2" data-delhab="' + h.id + '" style="width:26px;height:26px;font-size:12px;color:var(--danger);flex:0 0 auto" title="删除习惯">🗑</button></div>';
+  }).join('')
+    : '<div class="empty" style="padding:14px 4px"><div class="e-ic">📌</div>还没有习惯，点右上角「添加习惯」创建第一个</div>';
+  return '<div class="card"><h3><span>📌 每日打卡</span><span class="grow"></span><button class="btn sm" id="hab_add_btn">添加习惯</button></h3>' + rows +
+    '<div class="tiny muted mt">✎ 修改 · 🗑 删除；每天在概览页「每日打卡」点圆圈打卡。</div></div>';
+}
+function bindHabitSettings(){
+  const v = $('#view');
   $$('[data-delhab]', v).forEach(btn => btn.addEventListener('click', () => {
-    state.habits = state.habits.filter(h => h.id !== btn.dataset.delhab); save(); renderHome();
+    const h = state.habits.find(x => x.id === btn.dataset.delhab);
+    if(!h) return;
+    if(!confirm('删除习惯「' + h.name + '」？该习惯的全部打卡记录会一并删除（服务器同步清除），不可恢复。')) return;
+    state.habits = state.habits.filter(x => x.id !== h.id); save(); renderView(); toast('已删除');
   }));
-  $('#nhab_add', v).addEventListener('click', () => {
-    const name = $('#nhab_name', v).value.trim(); if(!name){ toast('请填写习惯名', true); return; }
-    state.habits.push({ id:uid(), name, icon: $('#nhab_icon', v).value || '✅', color: $('#nhab_color', v).value, done:{} });
-    save(); renderHome();
+  $$('[data-edithab]', v).forEach(btn => btn.addEventListener('click', () => {
+    const h = state.habits.find(x => x.id === btn.dataset.edithab); if(h) openHabitEditor(h);
+  }));
+  $('#hab_add_btn', v).addEventListener('click', openHabitAdder);
+}
+/* ---------- 添加新习惯（目标页弹窗） ---------- */
+function openHabitAdder(){
+  const html =
+    '<div class="form-grid">' +
+      '<div class="span2"><label>习惯名</label><input class="input" id="ha_name" maxlength="20" placeholder="如：不吃零食"></div>' +
+      '<div><label>图标</label><input class="input" id="ha_icon" maxlength="2" value="✅"></div>' +
+      '<div><label>颜色</label><select class="select" id="ha_color">' + habColorOptions('var(--brand)') + '</select></div>' +
+    '</div>' +
+    '<div class="d-f"><button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="ha_save">添加</button></div>';
+  const dlg = showDialog('添加习惯', html);
+  const b = dlg.box;
+  $('#ha_save', b).addEventListener('click', () => {
+    const name = $('#ha_name', b).value.trim(); if(!name){ toast('请填写习惯名', true); return; }
+    state.habits.push({ id:uid(), name, icon: $('#ha_icon', b).value || '✅', color: $('#ha_color', b).value, done:{} });
+    save(); closeDialog(); renderView(); toast('已添加');
   });
+  const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
+}
+/* ---------- 修改已有习惯（目标页） ---------- */
+function openHabitEditor(h){
+  const html =
+    '<div class="form-grid">' +
+      '<div class="span2"><label>习惯名</label><input class="input" id="he_name" maxlength="20" value="' + esc(h.name) + '"></div>' +
+      '<div><label>图标</label><input class="input" id="he_icon" maxlength="2" value="' + esc(h.icon) + '"></div>' +
+      '<div><label>颜色</label><select class="select" id="he_color">' + habColorOptions(h.color) + '</select></div>' +
+    '</div>' +
+    '<div class="d-f"><button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="he_save">保存</button></div>';
+  const dlg = showDialog('修改习惯', html);
+  const b = dlg.box;
+  $('#he_save', b).addEventListener('click', () => {
+    const name = $('#he_name', b).value.trim(); if(!name){ toast('请填写习惯名', true); return; }
+    h.name = name; h.icon = $('#he_icon', b).value || '✅'; h.color = $('#he_color', b).value;
+    save(); closeDialog(); renderView(); toast('已保存');
+  });
+  const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
 }
 /* =====================================================
    SVG 图表工具

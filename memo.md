@@ -22,7 +22,7 @@
 - **今日饮水 + 今日睡眠两卡（v3.2 自「睡眠饮水」页迁入）**：饮水 −/＋ 步进 + 进度条 + 达标文案；睡眠记入睡/起床/质量，可改删当天；卡右上角 🕘「补记」开历史弹窗，翻日期查看/补记/修改/删除过去记录
 - 快捷操作：「记录本次训练」一键开练（自动带入当日周计划）——旧 💧喝水 +1 已随今日饮水卡并入（饮水操作统一在新卡内）
 - 今日饮食卡：摄入 vs 目标（"还差/已超 xx%"紧跟标签文字）+ 进度条 + **蛋白/碳水/脂肪三 chip**（仅当天有饮食时显示）
-- **每日打卡卡从「目标」页移入**（近 7 天网格 + 🔥连击 + 新习惯添加），打卡后原地刷新概览
+- **每日打卡卡（概览页）**：一行一条习惯 + 当天圆钮（只显示今天，含 🔥连击），点后即刷新；习惯的**新增/修改/删除**收敛到「目标」页「每日打卡」管理卡（打卡本体自 v3.1 起在概览页，管理入口收归目标页——概览卡不再内联添加表单/删除按钮，多日历史网格也不展示）
 - 页面顺序：问候+tile → 今日饮食 → 今日计划 → 今日饮水/今日睡眠 → 每日打卡
 - 已移除：体重 7 天差值小字、"今日概览"卡（睡眠/BMI 不在首页展示）；"主目标"卡 v3.1 起撤出首页（当时目标进度归「目标」页，v4.2 体重目标功能整体移除）
 
@@ -52,7 +52,7 @@
 - 睡眠归属语义不变：记录键 = 「起床那天」
 - 两张趋势图仍在统计页（v3.1 迁入）
 
-### 6. 目标 🎯（导航原名"目标打卡"，v3.1 改名；打卡已迁至概览；v4.2 移除体重目标功能）
+### 6. 目标 🎯（导航原名"目标打卡"，v3.1 改名；打卡在概览页，目标页负责习惯管理——新增/修改/删除；v4.2 移除体重目标功能）
 - **每日目标卡**：只显示目标值不显示当日进度——kcal hero + 蛋白/碳水/脂肪三 tile + 活动量/每日饮水两 tile
 - 「修改目标」弹窗 = 热量倾向 + 活动量 + 饮水目标 + 四大营养素 + 自动计算勾选；**热量倾向（v4.2，原"主目标模式"）**：减脂 −400 / 保持 / 增肌 +300 kcal，存于 `state.goal.mode`；自动档 = BMR×活动系数按倾向增减（增肌档蛋白质按 1.8g/kg），改热量倾向/活动量即时重算
 - 新账户/演示数据默认「减脂」档（引导弹窗不再询问，可随时在每日目标里改）
@@ -89,7 +89,7 @@
 
 ### 10. 界面与体验
 - 响应式：手机底部 Tab / 桌面左侧分组边栏；弹窗手机端底部升起
-- **移动端适配（v3.1 修复）**：`.tile` 自带 `min-width:130px` 是多列网格溢出根因，网格列一律 `minmax(0,1fr)` + 子项 `min-width:0`；每日目标五 tile 自适应收窄；概览打卡区改为**左列名字固定 + 右侧 7 天格横向滚动**（≤560px 圆钮缩至 27px、行高两列严格对齐）
+- **移动端适配（v3.1 修复）**：`.tile` 自带 `min-width:130px` 是多列网格溢出根因，网格列一律 `minmax(0,1fr)` + 子项 `min-width:0`；每日目标五 tile 自适应收窄；概览打卡区为**一行一条习惯 + 当天圆钮**（无多日网格/横向滚动，≤560px 圆钮缩至 27px）
 - 深/浅色主题（v4 起每账户独立）；手写 SVG 图表；首次引导；Toast；危险操作二次确认
 - 开发调试钩子：`?selftest` 全视图渲染、`?ftest` 13 项功能自测、`?shot=视图名`、`?probe` 数据摘要（**三个会覆盖当前账户为演示数据**的钩子 `?selftest`/`?ftest`/`?shot` 共用同一确认门卫，v4.4 起确认/取消后自动从地址栏剥除钩子——旧版 `&devok` 常驻 URL 会在每次刷新时静默重置真实账户；`?shot` 先校验视图名再动数据，拼错名不毁数据；自动化场景仍可 URL 追加 `&devok` 跳过确认）
 
@@ -119,7 +119,7 @@ JJ_HealthManagement/
 ```
 
 - **前端核心约定**不变：业务代码只读写 `state`（当前成员工作副本），`save()` = 写回成员 + localStorage + queuePush()；同步层函数集中在 `load()` 之后（fetchState / doPush / queuePush / handleConflict / refreshSyncStatus）
-- **页面归属（v3.2）**：每日打卡渲染函数 `habitCardHTML()` + `bindHabitEvents()` 由概览 `renderHome()` 调用；`openNutritionEditor()` 是"每日目标"统一编辑弹窗（营养+活动量+饮水）；睡眠/饮水趋势图函数 `renderSleepChart/renderWaterChart` 挂在 `renderStats()`，容器 id `st_sleep`/`st_water`；今日饮水/今日睡眠卡 = `lifeTodayHTML()` + `bindLifeToday()`（`lifeWaterCard/lifeSleepCard/bindLifeCard` 以 ctx `home`/`dlg` 双上下文复用——概览今日卡与历史弹窗 `openLifeHistory()/renderLifeDlg()` 共用一套渲染与绑定，睡眠修改走 `sleepQuick(d, sl, after)`）
+- **页面归属**：打卡渲染与绑定 `habitCardHTML()` + `bindHabitEvents()` 由概览 `renderHome()` 调用（当天清单，仅点选）；习惯管理 `habitSettingsCardHTML()` + `bindHabitSettings()` 挂目标页 `renderGoals()`，新增/修改走弹窗 `openHabitAdder()`/`openHabitEditor()`，删除经 `confirm()` 确认后整卡刷新；`openNutritionEditor()` 是"每日目标"统一编辑弹窗（营养+活动量+饮水）；睡眠/饮水趋势图函数 `renderSleepChart/renderWaterChart` 挂在 `renderStats()`，容器 id `st_sleep`/`st_water`；今日饮水/今日睡眠卡 = `lifeTodayHTML()` + `bindLifeToday()`（`lifeWaterCard/lifeSleepCard/bindLifeCard` 以 ctx `home`/`dlg` 双上下文复用——概览今日卡与历史弹窗 `openLifeHistory()/renderLifeDlg()` 共用一套渲染与绑定，睡眠修改走 `sleepQuick(d, sl, after)`）
 - **数据接口（v4 / v4.1）**：公开 = `POST /api/register`、`POST /api/login`、`GET /api/health`、静态页（含 `/admin`）；登录后可用 = `GET/PUT /api/state`（**本人数树**，`{rev?, data}`——rev 过期 409、缺省盲写；服务端只取 `data.users[本人uid]` 那一份，其余键忽略，缺本人键则 400 拒绝防误清空）、`GET /api/me`、`POST /api/logout`、`GET /api/system/library`（**PUT 仅 admin**）；**后台 API（仅 admin，v4.1）** = `GET /api/admin/users`（列表+数据概况）、`PUT /api/admin/role`（设/撤管理员，防"最后一个管理员"）、`PUT /api/admin/password`（重置并强制该账户下线）、`DELETE /api/admin/users`（删账户级联清数据，不可删自己）
 - **API 仍是"整树 state"风格**（v4 粒度收窄为单账户）：细粒度 CRUD 端点留待未来按需追加，mapper 后的关系表结构已支持
 

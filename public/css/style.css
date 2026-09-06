@@ -262,25 +262,10 @@ a{color:var(--brand-ink)}
 .goal-ring .gv{position:absolute;inset:0;display:grid;place-items:center;text-align:center;flex-direction:column}
 .goal-ring .gv b{font-size:22px}
 
-/* 习惯打卡:左列固定名字 + 右侧 7 天格可横滑 */
-.hab-flex{display:flex;gap:6px}
-.hab-names{flex:0 0 auto;width:42%;min-width:130px;max-width:280px}
-.hab-days{flex:1;min-width:0;overflow-x:auto;-webkit-overflow-scrolling:touch}
-.hab-days-in{min-width:262px}
-.hab-h{display:grid;grid-template-columns:repeat(7,minmax(34px,1fr));gap:4px;height:22px;align-items:center;margin-bottom:4px}
-.hab-h span{font-size:11px;color:var(--ink-3);text-align:center;min-width:0}
-.hab-n{height:45px;display:flex;align-items:center;gap:6px;font-size:14px;border-bottom:1px dashed var(--line);overflow:hidden;padding-right:2px}
-.hab-n .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.hab-r{display:grid;grid-template-columns:repeat(7,minmax(34px,1fr));gap:4px;height:45px;align-items:center;border-bottom:1px dashed var(--line)}
-.hab-cell{display:flex;justify-content:center;min-width:0}
+/* 习惯打卡（概览页）：lrow 一行一条习惯，行尾为当天打卡圆钮（原多日横滑网格已随"仅当天"布局移除） */
 .hab-dot{width:34px;height:34px;border-radius:11px;border:1.5px solid var(--line);background:var(--surface-2);color:transparent;font-size:15px;display:grid;place-items:center;transition:.12s;flex:0 0 auto}
 .hab-dot.on{background:var(--brand);border-color:var(--brand);color:#fff}
-.hab-dot.future{opacity:.4}
 @media (max-width:560px){
-  .hab-names{width:37%;min-width:104px}
-  .hab-n,.hab-r{height:39px}
-  .hab-days-in{min-width:227px}
-  .hab-h,.hab-r{grid-template-columns:repeat(7,minmax(29px,1fr))}
   .hab-dot{width:27px;height:27px;border-radius:9px;font-size:13px}
 }
 
