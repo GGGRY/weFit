@@ -42,13 +42,13 @@ const GOAL_MODE = {
   bulk:     { adj:300,  label:'增肌', opt:'增肌（热量盈余）' },
 };
 const GOAL_ADJ = { cut: GOAL_MODE.cut.adj, maintain: GOAL_MODE.maintain.adj, bulk: GOAL_MODE.bulk.adj };
-/* v4.8：「目标」页与 ⚙️ 设置合并为「设置」页，排在统计之后 */
+/* v4.8：「目标」页与 ⚙️ 设置合并为「设置」页，排在历史页之后 */
 const NAV = [
   {id:'home',     label:'概览', ic:'🏠'},
   {id:'diet',     label:'饮食', ic:'🍽️'},
   {id:'train',    label:'运动', ic:'🏋️'},
   {id:'body',     label:'身体', ic:'📏'},
-  {id:'stats',    label:'统计', ic:'📊'},
+  {id:'stats',    label:'历史', ic:'📊'},
   {id:'settings', label:'设置', ic:'⚙️'},
 ];
 
@@ -829,7 +829,7 @@ function go(v){
 function renderView(){
   const map = { home:renderHome, diet:renderDiet, train:renderTrain, body:renderBody, stats:renderStats, settings:renderSettings };
   const topbar = $('#topbar');
-  const titles = { home:'概览', diet:'饮食记录', train:'运动', body:'身体数据', stats:'数据统计', settings:'设置' };
+  const titles = { home:'概览', diet:'饮食记录', train:'运动', body:'身体数据', stats:'历史', settings:'设置' };
   const au = activeUser();
   topbar.innerHTML = '<div class="page-head"><h1>' + titles[curView] + '</h1></div>' +
     '<div class="tools">' +
@@ -1034,7 +1034,7 @@ function renderHome(){
       tileHTML('打卡', habToday + '/' + state.habits.length, '', '', '') +
     '</div>' +
     '<div class="card" style="margin-top:14px"><h3>🍽️ 今日饮食</h3>' +
-      (eat.kcal === 0 ? '<div class="empty"><div class="e-ic">🍽️</div>还没有记录今天的饮食<button class="btn primary sm mt" data-go2="diet">去记录</button></div>'
+      (eat.kcal === 0 ? '<div class="empty"><div class="e-ic">🍽️</div>还没有记录今天的饮食<div class="mt"><button class="btn primary sm" data-go2="diet">去记录</button></div></div>'
         : '<div class="small">' +
           '<div style="display:flex;justify-content:space-between;margin-bottom:5px"><span class="muted">已摄入 vs 目标 <span class="tiny" style="font-weight:400;color:' + (calPct>100?'var(--ink-2)':'var(--cat3)') + '">' + (calPct>100 ? '已超 ' + (calPct-100) + '%' : '还差 ' + (100-calPct) + '%') + '</span></span><b>' + fmtNum(eat.kcal) + ' / ' + fmtNum(T.kcal) + ' kcal</b></div>' +
           '<div class="meter"><i style="width:' + clamp(calPct,0,100) + '%" class="' + (calPct>100?'over':'') + '"></i></div>' +
@@ -1745,7 +1745,7 @@ function renderBodyChart(metric){
   $('#chartBody').innerHTML = '<div class="cc-h"><div class="cc-t">' + esc(mdef.label) + ' 趋势</div><span class="cc-s">近' + out.length + '条 · 悬停看数值</span></div>' + svg;
 }
 
-/* 卡片容器 html：给统计页与身体页复用 */
+/* 卡片容器 html：给历史页（统计看板）与身体页复用 */
 function chartCard(containerId, title, sub, controls){
   return '<div class="chart-card" style="margin-bottom:16px"><div class="cc-h"><div><div class="cc-t">' + esc(title) + '</div>' + (sub ? '<div class="cc-s">' + sub + '</div>' : '') + '</div>' + (controls || '') + '</div><div id="' + containerId + '"></div></div>';
 }
@@ -1755,19 +1755,18 @@ function chartCard(containerId, title, sub, controls){
    记录以日期为键（state.water[date]=杯数；state.sleep[date]=睡眠段数组），
    睡眠归属"起床那天"。v4.6 多段化：一天可记多段（夜间/午睡/其他休息），
    每段 {t,bed,wake,mins,quality}，达标与统计按全天总时长口径。
-   概览页两张"今日"卡直接记录当天；卡右上角 🕘 打开**各自**的历史弹窗
-   （v4.5:睡眠与饮水分开补记、互不混排），弹窗内可翻任意日期查看 / 补记 / 修改 / 删除。
+   概览页两张"今日"卡直接记录当天；补记入口在历史页睡眠/饮水图表卡标题的 🕘，
+   打开**各自**的历史弹窗（v4.5:睡眠与饮水分开补记、互不混排），弹窗内可翻任意日期查看 / 补记 / 修改 / 删除。
 ===================================================== */
 let waterHisDate = today();        // 饮水历史弹窗内翻页的当前日期
 let sleepHisDate = today();        // 睡眠历史弹窗内翻页的当前日期
 const QUALITY = [{n:1,ic:'😖'},{n:2,ic:'😕'},{n:3,ic:'😐'},{n:4,ic:'🙂'},{n:5,ic:'😄'}];
 
-function lifeWaterCard(d, ctx){    // ctx:'home'=概览今日卡（标题/🕘）| 'dlg'=历史弹窗卡
+function lifeWaterCard(d, ctx){    // ctx:'home'=概览今日卡（标题带「今日」）| 'dlg'=历史弹窗卡
   const isHome = ctx === 'home';
   const wCups = waterFor(d);
   const wPct = Math.round(wCups / state.waterTarget * 100);
-  return '<div class="card" style="margin-bottom:0"><h3><span>' + (isHome ? '💧 今日饮水' : '💧 饮水') + '</span><span class="grow"></span>' +
-    (isHome ? '<button class="btn sm ghost" data-watshis title="补记/修改历史饮水记录">🕘 补记</button>' : '') + '</h3>' +
+  return '<div class="card" style="margin-bottom:0"><h3><span>' + (isHome ? '💧 今日饮水' : '💧 饮水') + '</span></h3>' +
     '<div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-top:6px">' +
       '<button class="iconbtn2" data-wmin style="font-size:20px">−</button>' +
       '<span style="font-size:34px;font-weight:800;min-width:52px;text-align:center">' + wCups + '</span>' +
@@ -1784,9 +1783,7 @@ function lifeSleepCard(d, ctx){
   const list = sleepSessions(d);
   const total = sleepTotalMins(d);
   const head = '<span>' + (isHome ? '😴 今日睡眠' : '😴 睡眠') + '</span>' +
-    (list.length ? '<span class="hint">合计 ' + round(total/60,1) + ' 小时 · ' + (total >= SLEEP_GOAL_MINS ? '达标' : '偏少') + '</span>' : '') +
-    '<span class="grow"></span>' +
-    (isHome ? '<button class="btn sm ghost" data-slehis title="补记/修改历史睡眠记录">🕘 补记</button>' : '');
+    (list.length ? '<span class="hint">合计 ' + round(total/60,1) + ' 小时 · ' + (total >= SLEEP_GOAL_MINS ? '达标' : '偏少') + '</span>' : '');
   // 无当日快速表单：空态只留一句提示，新增一律走「记录一段」弹窗（v4.6 用户要求收敛）
   return '<div class="card" style="margin-bottom:0"><h3>' + head + '</h3>' +
     (list.length ? list.map((s, i) => {
@@ -1813,8 +1810,6 @@ function lifeTodayHTML(){
   return '<div class="grid cols-2 mt">' + (state.waterTarget ? lifeWaterCard(today(), 'home') : '') + lifeSleepCard(today(), 'home') + '</div>';
 }
 function bindLifeToday(v){
-  const wh = $('[data-watshis]', v); if(wh) wh.addEventListener('click', openWaterHistory);
-  const sh = $('[data-slehis]', v); if(sh) sh.addEventListener('click', openSleepHistory);
   bindWaterCard(v, today(), renderHome);
   bindSleepCard(v, today(), renderHome);
 }
@@ -1847,7 +1842,7 @@ function renderWaterHistory(b, close){
     '<div class="d-f"><button class="btn ghost" data-cancel>关闭</button></div>';
   bindDaynav(b, step => { waterHisDate = step === 'today' ? today() : addDays(waterHisDate, step); renderWaterHistory(b, close); });
   const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', close);
-  bindWaterCard(b, d, () => { renderWaterHistory(b, close); renderHome(); });   // 弹窗背后概览页同步刷新
+  bindWaterCard(b, d, () => { renderWaterHistory(b, close); renderView(); });   // 弹窗背后的概览/历史页同步刷新
 }
 
 /* ---------- 睡眠历史弹窗（单卡，与饮水分开补记） ---------- */
@@ -1862,7 +1857,7 @@ function renderSleepHistory(b, close){
     '<div class="d-f"><button class="btn ghost" data-cancel>关闭</button></div>';
   bindDaynav(b, step => { sleepHisDate = step === 'today' ? today() : addDays(sleepHisDate, step); renderSleepHistory(b, close); });
   const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', close);
-  bindSleepCard(b, d, () => { renderSleepHistory(b, close); renderHome(); });
+  bindSleepCard(b, d, () => { renderSleepHistory(b, close); renderView(); });   // 弹窗背后的概览/历史页同步刷新
 }
 
 /* 绑定 root 内的饮水卡（+/− stepper） */
@@ -1973,7 +1968,7 @@ function renderWaterChart(){
    目标
 ===================================================== */
 /* =====================================================
-   设置页（v4.8：原「目标 · 打卡」页与 ⚙️ 设置弹窗合并，排在统计之后）
+   设置页（v4.8：原「目标 · 打卡」页与 ⚙️ 设置弹窗合并，排在历史页之后）
    卡片顺序：基础资料 → 每日目标 → 每日打卡管理 → 数据管理
 ===================================================== */
 function renderSettings(){
@@ -2340,7 +2335,7 @@ function chartWrap(title, sub, id, controls){
 }
 
 /* =====================================================
-   统计看板
+   历史页（统计看板）
 ===================================================== */
 function statSummary(){
   const d30 = lastNDates(30);
@@ -2387,8 +2382,8 @@ function renderStats(){
   const c2 = chartWrap('每日热量 vs 目标', '近30天', 'st_cal', '');
   const c3 = chartWrap('宏量营养素摄入', '近14天 · kcal', 'st_macro', legendHTML([{label:'蛋白',color:CX.c1},{label:'碳水',color:CX.c2},{label:'脂肪',color:CX.c3}]));
   const c4 = chartWrap('每周运动容量', '近12周 · Σ重量×次数', 'st_vol', '');
-  const c5 = chartWrap('睡眠时长', '近14天 · 虚线为目标 7 小时', 'st_sleep', '');
-  const c6 = chartWrap('每日饮水量', state.waterTarget ? '近14天 · 虚线为每日目标' : '近14天', 'st_water', '');
+  const c5 = chartWrap('睡眠时长', '近14天 · 虚线为目标 7 小时', 'st_sleep', '<button class="btn sm ghost" data-slehis title="补记/修改历史睡眠记录">🕘 补记</button>');
+  const c6 = chartWrap('每日饮水量', state.waterTarget ? '近14天 · 虚线为每日目标' : '近14天', 'st_water', '<button class="btn sm ghost" data-watshis title="补记/修改历史饮水记录">🕘 补记</button>');
 
   const html =
     '<div class="row">' + tiles + '</div>' +
@@ -2400,6 +2395,10 @@ function renderStats(){
     '<div class="grid cols-2">' + c5 + c6 + '</div>';
 
   $('#view').innerHTML = html;
+
+  // 睡眠/饮水历史补记入口（原在概览页「今日」卡上，移至历史页）
+  const wh = $('#view [data-watshis]'); if(wh) wh.addEventListener('click', openWaterHistory);
+  const sh = $('#view [data-slehis]'); if(sh) sh.addEventListener('click', openSleepHistory);
 
   // 体重图
   const wRecs = state.body.filter(r => r.weight !== undefined && r.weight !== null);
