@@ -256,12 +256,6 @@ a{color:var(--brand-ink)}
 .empty{text-align:center;padding:26px 12px;color:var(--ink-3)}
 .empty .e-ic{font-size:34px;margin-bottom:6px}
 
-/* 目标进度 */
-.goal-ring{position:relative;width:120px;height:120px;flex:none}
-.goal-ring svg{transform:rotate(-90deg)}
-.goal-ring .gv{position:absolute;inset:0;display:grid;place-items:center;text-align:center;flex-direction:column}
-.goal-ring .gv b{font-size:22px}
-
 /* 习惯打卡（概览页）：lrow 一行一条习惯，行尾为当天打卡圆钮（原多日横滑网格已随"仅当天"布局移除） */
 .hab-dot{width:34px;height:34px;border-radius:11px;border:1.5px solid var(--line);background:var(--surface-2);color:transparent;font-size:15px;display:grid;place-items:center;transition:.12s;flex:0 0 auto}
 .hab-dot.on{background:var(--brand);border-color:var(--brand);color:#fff}

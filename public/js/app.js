@@ -1666,42 +1666,36 @@ function renderBody(){
     '<div class="card" style="padding:6px 12px 12px"><div style="overflow:auto"><table class="tbl"><thead><tr><th>日期</th>' + MEASURES.map(m => '<th>' + m.label + '</th>').join('') + '</tr></thead><tbody>' + rows + '</tbody></table></div></div>'
     : '';
 
+  /* BMI 显示数值本身，颜色按分档自动选取（18.5/24/28 → 偏瘦蓝/正常绿/超重橙/肥胖红），小字注明正常范围 */
+  const bmiInfo = bmiV === null ? null : {
+    c: bmiV < 18.5 ? 'var(--cat1)' : bmiV < 24 ? 'var(--brand)' : bmiV < 28 ? 'var(--warn)' : 'var(--danger)',
+    ok: bmiV >= 18.5 && bmiV < 24
+  };
+
   const html =
-    '<div class="card" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">' +
-      '<div class="goal-ring" id="bmiring">' +
-        '<svg width="120" height="120"><circle cx="60" cy="60" r="52" fill="none" stroke="var(--surface-3)" stroke-width="12"></circle><circle id="bmiringc" cx="60" cy="60" r="52" fill="none" stroke="var(--brand)" stroke-width="12" stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="326.7"></circle></svg>' +
-        '<div class="gv"><b id="bmiringv">--</b><span class="tiny muted">BMI</span></div>' +
+    '<div class="card">' +
+      /* 两列统一的三行节奏（标签 → hero 大字 → 小字说明，间距同为 6px），保证体重与 BMI 行行对齐 */
+      '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">' +
+        '<div class="grow" style="min-width:190px">' +
+          '<div class="tiny muted">当前体重</div>' +
+          '<div class="hero" style="color:var(--brand-ink);margin-top:6px">' + (w===null?'--':w.toFixed(1)) + '<span class="unit">kg</span></div>' +
+          '<div class="delta ' + cls + '" style="font-size:12.5px;margin-top:6px">' + (delta || '&nbsp;') + '</div>' +
+        '</div>' +
+        '<div style="min-width:120px;text-align:center">' +
+          '<div class="tiny muted">BMI</div>' +
+          '<div class="hero" style="color:' + (bmiInfo ? bmiInfo.c : 'var(--ink-2)') + ';margin-top:6px">' + (bmiV === null ? '--' : bmiV) + '</div>' +
+          '<div class="tiny muted" style="margin-top:6px">' + (bmiInfo ? (bmiInfo.ok ? '✓ 正常范围 18.5~24' : '⚠ 正常范围 18.5~24') : '记录体重后查看') + '</div>' +
+        '</div>' +
       '</div>' +
-      '<div class="grow" style="min-width:190px">' +
-        '<div class="tiny muted">当前体重</div>' +
-        '<div class="hero" style="color:var(--brand-ink)">' + (w===null?'--':w.toFixed(1)) + '<span class="unit">kg</span></div>' +
-        '<div class="delta ' + cls + '" style="font-size:13px">' + (delta || '&nbsp;') + '</div>' +
-        '<div class="row mt" style="gap:8px"><button class="btn primary" id="bm_add">✏️ 记录今天</button>' +
-        '<button class="btn" id="bm_hist">查看全部</button></div>' +
-      '</div>' +
+      /* 记录按钮收进卡内底部居中（「查看全部」入口已移除，页尾最近记录表仍可看近期数据） */
+      '<div style="text-align:center;margin-top:14px"><button class="btn primary" id="bm_add">✏️ 记录今天</button></div>' +
     '</div>' +
     '<div class="row mt">' + tileVals + '</div>' +
     '<div class="mt">' + chart + '</div>' +
     history;
 
   $('#view').innerHTML = html;
-  // BMI 环
-  (function ring(){
-    if(bmiV === null){ $('#bmiringv').textContent = '--'; return; }
-    $('#bmiringv').textContent = bmiV;
-    const c = $('#bmiringc');
-    const range = [15, 32];
-    const frac = clamp((bmiV - range[0]) / (range[1] - range[0]), 0, 1);
-    c.style.strokeDashoffset = String(326.7 * (1 - frac));
-    c.setAttribute('stroke', bmiV < 18.5 ? 'var(--cat1)' : bmiV < 24 ? 'var(--brand)' : bmiV < 28 ? 'var(--warn)' : 'var(--danger)');
-  })();
   $('#bm_add').addEventListener('click', () => openBodyDialog());
-  $('#bm_hist').addEventListener('click', () => {
-    const all = [...state.body].sort((a,b) => a.date < b.date ? 1 : -1);
-    const rows = all.map(r => '<tr><td>' + dateCN(r.date) + '</td>' + MEASURES.map(m => '<td>' + (r[m.id] !== undefined && r[m.id] !== null ? round(r[m.id],1) : '—') + '</td>').join('') + '</tr>').join('');
-    const dlg = showDialog('身体记录历史（共 ' + all.length + ' 条）',
-      '<div style="overflow:auto;max-height:60vh"><table class="tbl"><thead><tr><th>日期</th>' + MEASURES.map(m => '<th>' + m.label + '</th>').join('') + '</tr></thead><tbody>' + rows + '</tbody></table></div>', {size:'lg'});
-  });
   const sel = $('#bm_select'); if(sel) sel.addEventListener('change', () => { bodyMetric = sel.value; renderBody(); });
   renderBodyChart(bodyMetric);
 }
@@ -1807,7 +1801,9 @@ function lifeSleepCard(d, ctx){
  * 饮水目标设为 0（不追踪饮水）时隐藏「今日饮水」卡；.cols-2 为 auto-fit,
  * 只剩睡眠卡时自动占满整行。 */
 function lifeTodayHTML(){
-  return '<div class="grid cols-2 mt">' + (state.waterTarget ? lifeWaterCard(today(), 'home') : '') + lifeSleepCard(today(), 'home') + '</div>';
+  /* 卡内置 margin-bottom:0（行内间距由 grid gap 负责），容器补 16px 下边距，
+   * 与其余 .card 的 16px 间距一致——否则手机端两卡堆叠后，睡眠卡与下方打卡卡之间是 0 间隙 */
+  return '<div class="grid cols-2 mt" style="margin-bottom:16px">' + (state.waterTarget ? lifeWaterCard(today(), 'home') : '') + lifeSleepCard(today(), 'home') + '</div>';
 }
 function bindLifeToday(v){
   bindWaterCard(v, today(), renderHome);
