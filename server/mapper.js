@@ -16,10 +16,11 @@ const SLOTS = ['breakfast', 'lunch', 'dinner', 'snack'];
 const BODY_KEYS = ['weight', 'chest', 'waist', 'hip', 'arm', 'thigh', 'bf'];
 
 /* 带 user_id 外键的子表(删自己子树用;顺序无关,写事务内完成) */
-/* 睡眠子表 = sleep_sessions（多段）；删账户靠 FK CASCADE 级联清理 */
+/* 睡眠子表 = sleep_sessions（多段）；删账户靠 FK CASCADE 级联清理
+ * v4.11：workout_sets 已随运动项拍平被删除，不再出现在本表（DELETE 不存在的表会 500） */
 const USER_DATA_TABLES = [
   'habit_done', 'habits', 'water_records', 'sleep_sessions', 'body_records',
-  'workout_sets', 'workout_items', 'workouts', 'plan_items', 'plan_defs',
+  'workout_items', 'workouts', 'plan_items', 'plan_defs',
   'meals', 'meal_days',
 ];
 
@@ -139,10 +140,10 @@ function insertUserData(db, uid, u) {
     });
   });
 
-  /* 周计划：键是 "0".."6" */
+  /* 周计划：键是 "0".."6"；项与日志项同形（力量 reps/weight，计时 mins/km，均可缺） */
   const pdefIns = db.prepare('INSERT INTO plan_defs(user_id, weekday, plan_id, name) VALUES (?,?,?,?)');
   const pitemIns = db.prepare(`INSERT INTO plan_items(user_id, weekday, seq, item_id, ex_id,
-                               ex_name, muscle, sets, reps, weight) VALUES (?,?,?,?,?,?,?,?,?,?)`);
+                               ex_name, cat, muscle, reps, weight, mins, km) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
   const plans = u.plans || {};
   Object.keys(plans).forEach(key => {
     if (!/^[0-6]$/.test(key)) return;
@@ -151,23 +152,20 @@ function insertUserData(db, uid, u) {
     pdefIns.run(uid, wd, nz(p.id), nz(p.name));
     const items = Array.isArray(p.items) ? p.items : [];
     items.forEach((it, i) => pitemIns.run(uid, wd, i, nz(it.id), nz(it.exId), nz(it.exName),
-      nz(it.muscle), nz(it.sets), nz(it.reps), nz(it.weight)));
+      nz(it.cat), nz(it.muscle), nz(it.reps), nz(it.weight), nz(it.mins), nz(it.km)));
   });
 
-  /* 训练日志：workouts → items → sets（sets 用 item_seq 引用父项） */
+  /* 运动日志：workouts → items（v4.11 一次记录 = 一条汇总，没有逐组子表） */
   const wIns = db.prepare('INSERT INTO workouts(user_id, workout_id, seq, date, name, note) VALUES (?,?,?,?,?,?)');
-  const wiIns = db.prepare('INSERT INTO workout_items(user_id, workout_id, seq, item_id, ex_id, ex_name, muscle) VALUES (?,?,?,?,?,?,?)');
-  const wsIns = db.prepare('INSERT INTO workout_sets(user_id, workout_id, item_seq, seq, reps, weight) VALUES (?,?,?,?,?,?)');
+  const wiIns = db.prepare(`INSERT INTO workout_items(user_id, workout_id, seq, item_id, ex_id,
+                            ex_name, cat, muscle, reps, weight, mins, km) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
   const workouts = Array.isArray(u.workouts) ? u.workouts : [];
   workouts.forEach((w, i) => {
     const wid = nz(w.id) || ('wk_seq_' + i); // 缺 id 时用序号兜底，避免主键为 NULL
     wIns.run(uid, wid, i, nz(w.date), nz(w.name), nz(w.note));
     const items = Array.isArray(w.items) ? w.items : [];
-    items.forEach((it, j) => {
-      wiIns.run(uid, wid, j, nz(it.id), nz(it.exId), nz(it.exName), nz(it.muscle));
-      const sets = Array.isArray(it.sets) ? it.sets : [];
-      sets.forEach((s, k) => wsIns.run(uid, wid, j, k, nz(s && s.reps), nz(s && s.weight)));
-    });
+    items.forEach((it, j) => wiIns.run(uid, wid, j, nz(it.id), nz(it.exId), nz(it.exName),
+      nz(it.cat), nz(it.muscle), nz(it.reps), nz(it.weight), nz(it.mins), nz(it.km)));
   });
 
   /* 身体数据：date 非键（同日多条合法），指标可缺省 */
@@ -261,27 +259,24 @@ function readUserData(db, uid) {
     p.items = planItems.filter(r => r.weekday === d.weekday).map(r => {
       const it = {};
       put(it, 'id', r.item_id); put(it, 'exId', r.ex_id); put(it, 'exName', r.ex_name);
-      put(it, 'muscle', r.muscle); put(it, 'sets', r.sets); put(it, 'reps', r.reps); put(it, 'weight', r.weight);
+      put(it, 'cat', r.cat); put(it, 'muscle', r.muscle);
+      put(it, 'reps', r.reps); put(it, 'weight', r.weight); put(it, 'mins', r.mins); put(it, 'km', r.km);
       return it;
     });
     plans[String(d.weekday)] = p;
   }
 
-  /* 训练日志 */
+  /* 运动日志（v4.11：项即汇总，一次记录一行） */
   const workouts = [];
   const wiAll = db.prepare('SELECT * FROM workout_items WHERE user_id = ? ORDER BY seq').all(uid);
-  const wsAll = db.prepare('SELECT * FROM workout_sets WHERE user_id = ? ORDER BY item_seq, seq').all(uid);
   for (const w of db.prepare('SELECT * FROM workouts WHERE user_id = ? ORDER BY seq').all(uid)) {
     const o = {};
     put(o, 'id', w.workout_id); put(o, 'date', w.date); put(o, 'name', w.name); put(o, 'note', w.note);
     o.items = wiAll.filter(r => r.workout_id === w.workout_id).map(r => {
       const it = {};
-      put(it, 'id', r.item_id); put(it, 'exId', r.ex_id); put(it, 'exName', r.ex_name); put(it, 'muscle', r.muscle);
-      it.sets = wsAll.filter(s => s.workout_id === w.workout_id && s.item_seq === r.seq).map(s => {
-        const set = {};
-        put(set, 'reps', s.reps); put(set, 'weight', s.weight);
-        return set;
-      });
+      put(it, 'id', r.item_id); put(it, 'exId', r.ex_id); put(it, 'exName', r.ex_name);
+      put(it, 'cat', r.cat); put(it, 'muscle', r.muscle);
+      put(it, 'reps', r.reps); put(it, 'weight', r.weight); put(it, 'mins', r.mins); put(it, 'km', r.km);
       return it;
     });
     workouts.push(o);

@@ -73,13 +73,32 @@ async function main() {
   const seedData = require(path.join(__dirname, '..', '..', 'public', 'js', 'seed-data.js'));
   r = await A.req('GET', '/api/system/library');
   const foodEq = seedData.SEED_FOODS.map(f => ({ name: f.name, per100: f.per100 }));
-  const exEq = seedData.SEED_EXERCISES.map(e => ({ name: e.name, muscle: e.muscle }));
+  const exEq = seedData.SEED_EXERCISES.map(e => ({ name: e.name, cat: e.cat, muscle: e.muscle, mode: e.mode }));
   const foodGot = r.json.foods.map(f => ({ name: f.name, per100: f.per100 }));
-  const exGot = r.json.exercises.map(e => ({ name: e.name, muscle: e.muscle }));
-  ok('T3.5 系统库种子与 seed-data.js 一致(名称+营养值)',
+  const exGot = r.json.exercises.map(e => ({ name: e.name, cat: e.cat, muscle: e.muscle, mode: e.mode }));
+  ok('T3.5 系统库种子与 seed-data.js 一致(名称+营养值+三件套)',
     r.status === 200 && JSON.stringify(foodEq) === JSON.stringify(foodGot)
       && JSON.stringify(exEq) === JSON.stringify(exGot),
     'foods ' + foodGot.length + ' vs ' + foodEq.length + ' / ex ' + exGot.length + ' vs ' + exEq.length);
+
+  /* T3.6 v4.11 动作三件套白名单：cat/mode 非法值丢弃、muscle 取 SEED_MUSCLES、缺键保真 */
+  r = await A.req('PUT', '/api/system/library', { foods: [], exercises: [
+    { id: 'x1', name: '跑步', cat: '有氧', muscle: '全身', mode: 'time' },
+    { id: 'x2', name: '瞎写条目', cat: '不存在的类', muscle: '胸', mode: 'nope' },
+    { id: 'x3', name: '裸条目' },
+  ] });
+  ok('T3.6a 系统库写入成功', r.status === 200, JSON.stringify(r.json).slice(0, 120));
+  r = await A.req('GET', '/api/system/library');
+  const sEx = (r.json && r.json.exercises) || [];
+  ok('T3.6b 合法三件套原样保留', !!sEx[0] && sEx[0].cat === '有氧' && sEx[0].muscle === '全身' && sEx[0].mode === 'time', JSON.stringify(sEx[0]));
+  ok('T3.6c 非法 cat/mode 丢弃、合法 muscle 保留', !!sEx[1] && !('cat' in sEx[1]) && sEx[1].muscle === '胸' && !('mode' in sEx[1]), JSON.stringify(sEx[1]));
+  ok('T3.6d 缺三件套→键全缺(不凭空补默认值)', !!sEx[2] && !('cat' in sEx[2]) && !('muscle' in sEx[2]) && !('mode' in sEx[2]), JSON.stringify(sEx[2]));
+  /* 还原系统库，避免污染后续断言 */
+  r = await A.req('PUT', '/api/system/library', {
+    foods: seedData.SEED_FOODS.map((f, i) => ({ id: 'sf' + i, name: f.name, per100: f.per100 })),
+    exercises: seedData.SEED_EXERCISES.map((e, i) => ({ id: 'se' + i, name: e.name, cat: e.cat, muscle: e.muscle, mode: e.mode })),
+  });
+  ok('T3.6e 系统库已还原', r.status === 200);
 
   /* T4 列表与附加信息 */
   r = await A.req('GET', '/api/admin/users');

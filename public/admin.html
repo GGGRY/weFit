@@ -267,10 +267,14 @@ function paintLib(){
       '<div class="field" style="display:flex;gap:8px"><input class="input" id="lf_p" type="number" placeholder="蛋白 g" style="flex:1"><input class="input" id="lf_c" type="number" placeholder="碳水 g" style="flex:1"><input class="input" id="lf_f" type="number" placeholder="脂肪 g" style="flex:1"><button class="btn primary" id="lf_add">＋ 食物</button></div>' +
     '</div>' +
     '<div class="card"><h3><span>🏋️ 动作库（' + libDraft.exercises.length + '）</span></h3>' +
-      libDraft.exercises.map((e, i) =>
-        '<div class="lrow"><div class="grow"><div class="b small">' + esc(e.name) + '</div><div class="sub">' + esc(e.muscle || '其他') + '</div></div>' +
-        '<button class="iconbtn2" data-dx="' + i + '" style="color:var(--danger)">🗑</button></div>').join('') +
-      '<div class="field" style="display:flex;gap:8px;margin-top:8px;align-items:end"><div style="flex:1.4"><label class="tiny muted">名称</label><input class="input" id="lx_n" placeholder="新动作名"></div><div style="width:130px"><label class="tiny muted">肌群</label><select class="select" id="lx_m">' + SEED_MUSCLES.map(m => '<option>' + m + '</option>').join('') + '</select></div><button class="btn primary" id="lx_add">＋ 动作</button></div>' +   /* v4.4:肌群枚举与用户端同源(seed-data.js),不再各抄一份 */
+      '<table class="libtable"><thead><tr><th>名称</th><th>分类</th><th>方式</th><th></th></tr></thead><tbody>' +
+      (libDraft.exercises.length ? libDraft.exercises.map((e, i) =>
+        '<tr><td>' + esc(e.name) + '</td><td class="tiny muted">' + esc([e.cat, e.muscle].filter(Boolean).join(' · ') || '—') + '</td>' +
+        '<td class="tiny muted">' + esc(SEED_MODE_CN[e.mode] || '—') + '</td>' +
+        '<td class="ta-r"><button class="iconbtn2" data-dx="' + i + '" style="color:var(--danger)">🗑</button></td></tr>').join('')
+        : '<tr><td colspan="4" class="tiny muted" style="text-align:center;padding:14px">暂无动作</td></tr>') +
+      '</tbody></table>' +
+      '<div class="field" style="display:flex;gap:8px;margin-top:8px;align-items:end;flex-wrap:wrap"><div style="flex:1.4;min-width:120px"><label class="tiny muted">名称</label><input class="input" id="lx_n" placeholder="新动作名"></div><div style="width:104px"><label class="tiny muted">大类</label><select class="select" id="lx_c">' + SEED_CATS.map(c => '<option>' + c + '</option>').join('') + '</select></div><div style="width:104px"><label class="tiny muted">部位</label><select class="select" id="lx_m">' + SEED_MUSCLES.map(m => '<option>' + m + '</option>').join('') + '</select></div><div style="width:104px"><label class="tiny muted">记录方式</label><select class="select" id="lx_md">' + SEED_MODES.map(m => '<option value="' + m + '">' + (m === 'time' ? '计时' : '计次') + '</option>').join('') + '</select></div><button class="btn primary" id="lx_add">＋ 动作</button></div>' +   /* v4.11:三件套枚举与用户端同源(seed-data.js),不再各抄一份 */
     '</div>' +
     '<div class="d-f" style="position:static"><button class="btn ghost" id="lib_reload">放弃修改并重载</button><button class="btn primary" id="lib_save">保存系统库</button></div>' +
     '<div class="tiny muted" style="margin-top:8px">保存后对所有用户立即可见（用户端「系统库」页）。已注册用户已有的个人库不会被追溯改动，用户可自行从系统库挑入新条目。</div>';
@@ -281,9 +285,14 @@ function paintLib(){
     libDraft.foods.push({ name, per100: { kcal: +$('#lf_k').value || 0, p: +$('#lf_p').value || 0, c: +$('#lf_c').value || 0, f: +$('#lf_f').value || 0 } });
     paintLib();
   });
+  /* 换大类即把 部位/记录方式 拨到该大类的默认值（v4.11；仍可手改：核心+计时 = 平板支撑） */
+  const lxCat = $('#lx_c'), lxMus = $('#lx_m'), lxMod = $('#lx_md');
+  function lxSyncDefaults(){ lxMus.value = muscleDefault(lxCat.value); lxMod.value = modeDefault(lxCat.value); }
+  lxCat.addEventListener('change', lxSyncDefaults);
+  lxSyncDefaults();
   $('#lx_add').addEventListener('click', () => {
     const name = $('#lx_n').value.trim(); if (!name) return toast('请填写动作名', true);
-    libDraft.exercises.push({ name, muscle: $('#lx_m').value });
+    libDraft.exercises.push({ name, cat: lxCat.value, muscle: lxMus.value, mode: lxMod.value });
     paintLib();
   });
   $('#lib_reload').addEventListener('click', () => { libDraft = null; renderLib(); });

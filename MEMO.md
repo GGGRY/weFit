@@ -1,6 +1,6 @@
 # 健康管理 · 项目备忘录
 
-> 当前版本 **v4.10** · 最后更新 2026-09-06 · 版本变更历史见 [CHANGELOG.md](CHANGELOG.md) · 后续开发计划见 [PLANS.md](PLANS.md)
+> 当前版本 **v4.11** · 最后更新 2026-09-10 · 版本变更历史见 [CHANGELOG.md](CHANGELOG.md) · 后续开发计划见 [PLANS.md](PLANS.md)
 
 ## 一、项目定位
 
@@ -10,7 +10,7 @@
 - **前端** `public/`：`index.html` + `admin.html` + `css/style.css` + `js/seed-data.js` + `js/sleep-shape.js` + `js/app.js`，无构建工具，样式/脚本/图标全内联，零外部依赖
 - **后端** `server/`：Node 内置 `node:http` + `node:sqlite` + `node:crypto`，**npm 依赖为零**，`node server.js` 即起
 - **鉴权**：scrypt 密码哈希 + SQLite 持久会话（30 天）+ HttpOnly Cookie；除登录/注册/健康检查/静态页外全部 API 走鉴权中间件
-- **数据库** `server/data/jjhealth.db`：会增长的集合拆为 16 张关系表（餐次/运动/身体/睡眠/饮水/习惯/账户/会话…）；profile/goal/nutrition 与个人食物/动作库等形状固定对象用 JSON 列整存保真
+- **数据库** `server/data/jjhealth.db`：会增长的集合拆为 15 张关系表（餐次/运动/身体/睡眠/饮水/习惯/账户/会话…；v4.11 起运动项拍平为列，`workout_sets` 逐组子表取消）；profile/goal/nutrition 与个人食物/动作库等形状固定对象用 JSON 列整存保真
 - **同步模型**：同一服务器 + **登录同一账户** = 读写同一份本人数据，天然同步；**不同账户彼此隔离**；浏览器 localStorage 降级为按账户分键的离线缓存，服务器为准数据源
 - **启动**：Windows 双击 `start.bat`，Linux/macOS 运行 `./start.sh`（或 `cd server && node server.js`），端口 8123
 - **手机访问**：与电脑同 Wi-Fi 时打开 `http://<电脑IP>:8123`（启动窗口会打印可用地址）
@@ -24,7 +24,7 @@
 - **问候行**：按时刻问候（夜深了/早上好/中午好/下午好/晚上好）+ 昵称 + 今天日期（含周几）
 - **两 tile**：今日热量（已摄入 / 目标 kcal）｜打卡（今日已完成 / 习惯总数）
 - **今日饮食卡**：无记录时空态 + 「去记录」跳饮食页；有记录时显示"已摄入 vs 目标"（"还差 xx% / 已超 xx%"紧跟标签文字、超标变色）+ 进度条 + 热量数值，并追加**蛋白/碳水/脂肪三 chip**（各显 已摄入/目标 g）
-- **今日运动卡**：有安排时列计划名 + 逐动作（序号/动作名/肌群/组×次/重量或自重）+ 右上「记录本次运动」一键开练（自动带入当日周计划）；无安排时显示"今天没有安排运动"空态
+- **今日运动卡**：有安排时列计划名 + 逐动作（序号/动作名/部位或大类/`fmtItem` 文案：力量「32 次 @60kg」、计时「30 分钟 · 5 km」）+ 右上「记录本次运动」一键开练（自动带入当日周计划）；无安排时显示"今天没有安排运动"空态
 - **今日饮水卡**：
   - 饮水：−/＋ 步进 + 大字号杯数 + `/目标 杯` + 进度条 + 达标文案（"再喝 X 杯达标 / 达标，继续保持 🎉"）；饮水目标为 0（不追踪）时**隐藏本卡**
   - 历史补记入口不在本卡（v4.10 移至历史页，见「历史」一节）
@@ -43,10 +43,10 @@
 - 食物库（双层）：**我的库**可增删；**系统库**由管理员维护、只读，可一键「＋我的库」挑入；管理入口在「设置」→ 💾 数据管理 的「📚 食物库」弹窗（饮食页不再挂入口，记录弹窗仍可从库选用/勾选存库）
 
 ### 3. 运动 🏋️
-- **周计划**：周一~周日各安排一个计划（名称 + 动作×组×次×重量，自重留空）
-- **运动日志**：逐动作逐组记 次数×重量；可从周计划一键导入再改；可编辑/删除历史
-- **PR 检测**：保存时对比历史，刷新最大重量 🏆 / 刷新估算 1RM（Epley 公式）标「PR 刷新」
-- **动作库**（双层：我的库 | 系统库）：18 个种子动作按肌群分组，运动中出现的新动作自动入我的库；管理入口在「设置」→ 💾 数据管理 的「📚 动作库」弹窗（`openExLib()`，运动页分段条只留「我的计划 | 运动日志」两档）
+- **周计划**：周一~周日各安排一个计划（名称 + 逐动作「总次数 + 重量」或「总时长 + 距离」；v4.11 起与日志项同形，无组数）
+- **运动日志**：逐动作记**一条汇总**（力量 = 总次数 + 重量；计时 = 总时长 + 可选距离）；可从周计划一键导入（直接复制）；可编辑/删除历史；卡头显示「容量 X kg · 时长 Y 分钟」；记录弹窗计时行带 15/30/45/60 快捷档
+- **PR 检测**：只比最大重量（🏆）。v4.11 **移除估算 1RM 与「PR 刷新」角标**——原 Epley 公式 `重量×(1+次数/30)` 的前提是「单组次数」，而 `reps` 现在是总次数
+- **动作库**（双层：我的库 | 系统库）：27 个种子动作（力量 17 · 有氧 6 · 课程 2 · 球类 1 · 柔韧 1）以**平铺表格**展示（名称 | 分类 | 方式 | 操作；按 大类→部位→名称 排序，无分组树；我的库/系统库/选择器三处共用 `libTableHTML()`），运动中出现的新动作自动入我的库；管理入口在「设置」→ 💾 数据管理 的「📚 动作库」弹窗（`openExLib()`，运动页分段条只留「我的计划 | 运动日志」两档）
 - 每次运动容量统计 Σ(重量×次数)
 
 ### 4. 身体数据 📏
@@ -73,7 +73,7 @@
 - 体重"主目标"功能已整体移除（引导"主要目标"下拉、🎯主目标卡/完成度环/每周节奏评估、身体页与历史页目标虚线、历史页"距目标"tile）
 
 ### 7. 历史 📊（v4.10 由「统计」改名，视图 id 仍为 `stats`）
-- 6 个汇总卡 + 6 张图（体重趋势/热量对比/营养素供能/每周运动容量 + **睡眠时长、每日饮水量**近 30 天柱状，并排一行；睡眠/饮水记录在概览页完成）
+- 6 个汇总卡 + 7 张图（体重趋势/热量对比/营养素供能/每周运动容量/**每周运动时长** + **睡眠时长、每日饮水量**近 30 天柱状，并排一行；睡眠/饮水记录在概览页完成）
 - 汇总口径统一近 30 天：摄入/运动次数/体重变化/平均睡眠/平均饮水/打卡完成率（营养素供能图为近 14 天例外）；「当前BMI」磁贴 v4.10 移除（BMI 环保留于身体页）
 - 「睡眠时长」「每日饮水量」图卡标题右侧 🕘「补记」→ 各自独立的历史弹窗（`openSleepHistory()`/`openWaterHistory()`）：daynav 翻任意日期查看/补记/修改/删除，弹窗内改动同步刷新背后页面（`renderView()`）
 
@@ -123,12 +123,13 @@ weFit/
 │  ├─ server.js                 #   node:http：鉴权中间件 + 静态托管 + 登录/注册 + 本人数树读写 + 系统库 + /api/admin/*
 │  ├─ auth.js                   #   异步 scrypt 密码哈希 / 会话 token / Cookie 解析（node:crypto）
 │  ├─ seed.js                   #   系统库种子构建（数据源 = public/js/seed-data.js）+ 个人库初始拷贝
-│  ├─ db.js                     #   node:sqlite 建表 + 幂等列迁移（16 张表，每用户 rev）
+│  ├─ db.js                     #   node:sqlite 建表 + 幂等列迁移（15 张表，每用户 rev）
 │  ├─ mapper.js                 #   单人数树 ⇄ 关系表；不变量：PUT→GET 深度相等（只触碰本人子树）
 │  ├─ test/roundtrip.test.js    #   67 项断言：鉴权 + 双账户隔离 + 系统库权限 + 形状保真（含睡眠多段、脏形状清洗与段数上限 400、静态映射）+ 规模压测 + 回归
-│  ├─ test/admin.test.js        #   39 项断言：后台 API（角色/重置密码/删号 + 护栏）
+│  ├─ test/admin.test.js        #   44 项断言：后台 API（角色/重置密码/删号 + 护栏）+ 系统库三件套白名单
 │  ├─ test/sleep-shape.test.js  #   16 项断言：睡眠形状契约纯函数（两侧共用同一份）
-│  ├─ test/render.test.js       #   15 项断言：前端渲染逻辑无头验证（node:vm + DOM/fetch 桩，零依赖）
+│  ├─ test/migration.test.js    #   20 项断言：v4.11 破坏性迁移（旧运动结构重置 + 非运动数据逐值完好 + rev bump + 不复发）
+│  ├─ test/render.test.js       #   33 项断言：前端渲染逻辑无头验证（node:vm + DOM/fetch 桩，零依赖）
 │  └─ data/jjhealth.db          #   SQLite 数据库（.gitignore 已排除）
 └─ MEMO.md
 ```
@@ -141,7 +142,7 @@ weFit/
 
 ### 数据库结构（`server/data/jjhealth.db` · 建表与列迁移见 `server/db.js`）
 
-设计原则：会增长的集合拆为真正关系表；profile/goal/nutrition 与个人库等形状固定的小对象用 JSON 列整存保真；有数组语义处一律带 `seq` 保证顺序往返一致；成员数据全部 `REFERENCES users(id) ON DELETE CASCADE`；幂等迁移用 `PRAGMA table_info` 检查后 `ALTER TABLE ADD COLUMN`。
+设计原则：会增长的集合拆为真正关系表；profile/goal/nutrition 与个人库等形状固定的小对象用 JSON 列整存保真；有数组语义处一律带 `seq` 保证顺序往返一致；成员数据全部 `REFERENCES users(id) ON DELETE CASCADE`；幂等迁移用 `PRAGMA table_info` 检查后 `ALTER TABLE ADD COLUMN`。**v4.11 唯一例外**：运动项由 `sets` 数组拍平为列，旧运动表整体作废（`db.js: wipeLegacyWorkout()`，事务内执行，判据 = `workout_sets` 表是否存在；同时 bump 各账户 `rev`，饮食/身体/睡眠/饮水/习惯/账户/食物库不受影响）。客户端 `adoptRaw` 另有一层旧形状清洗兜底：带 `sets` 的旧运动项丢弃、旧个人库（整份无 `mode`）换新种子，堵住脏缓存回推与导入旧备份两条路径。
 
 | 表 | 主键 | 说明 |
 |---|---|---|
@@ -152,10 +153,9 @@ weFit/
 | `meal_days` | (user_id, date) | "日期被打开过"标记——餐次 4 槽全空也要能原样还原 |
 | `meals` | (user_id, date, slot, seq) | 饮食条目：slot=早/午/晚/加餐, item_id, name, kcal, p, c, f, g |
 | `plan_defs` | (user_id, weekday) | 周计划头：plan_id, name |
-| `plan_items` | (user_id, weekday, seq) | 周计划动作：item_id, ex_id, ex_name, muscle, sets, reps, weight |
+| `plan_items` | (user_id, weekday, seq) | 周计划动作：item_id, ex_id, ex_name, cat, muscle, reps, weight, mins, km（**v4.11 起与日志项同形**，无 sets） |
 | `workouts` | (user_id, workout_id) | 运动记录头：date, name, note（seq 保留列） |
-| `workout_items` | (user_id, workout_id, seq) | 运动动作项：item_id, ex_id, ex_name, muscle |
-| `workout_sets` | (user_id, workout_id, item_seq, seq) | 逐组 reps×weight；用 `item_seq` 引用所属动作项而非 item_id（主键列不能 NULL，item_id 可能缺省） |
+| `workout_items` | (user_id, workout_id, seq) | 运动动作项：item_id, ex_id, ex_name, cat, muscle, reps, weight, mins, km（v4.11 一次记录 = 一条汇总） |
 | `body_records` | (user_id, seq) | 身体 7 项：weight/chest/waist/hip/arm/thigh/bf；主键用 seq 因同日可能多条；索引 `idx_body_date(user_id, date)` |
 | `sleep_sessions` | (user_id, date, seq) | **睡眠多段**：t(night/nap/rest), bed, wake, mins, quality(1-5)；seq = 录入顺序 |
 | `water_records` | (user_id, date) | cups |
@@ -180,7 +180,7 @@ weFit/
 - **手机端**：同一 Wi-Fi 下打开启动窗口显示的 `http://<电脑IP>:8123`，每人注册/登录**自己的账户**，互不干扰；自己多设备用同一账户登录 = 自动同步
 - **管理后台**：浏览器访问 `http://<服务器>:8123/admin`，仅管理员账户可登录；普通用户即使在登录页输对了密码也会看到"无管理权限"提示
 - **换电脑**：整个文件夹拷走（OneDrive 同步即等价），`server/data/jjhealth.db` 就是全部数据（含账户与会话）
-- **跑测试**：`cd server && npm test`（四个文件：roundtrip 67 + admin 39 + sleep-shape 16 + render 15 项断言；也可 `node test/xxx.test.js` 单跑）；浏览器 `?ftest` 15 项功能自测（会覆盖为演示数据，需确认或 `&devok`）
+- **跑测试**：`cd server && npm test`（五个文件：roundtrip 67 + admin 44 + sleep-shape 16 + migration 20 + render 33 项断言；也可 `node test/xxx.test.js` 单跑）；浏览器 `?ftest` 15 项功能自测（会覆盖为演示数据，需确认或 `&devok`）
 - **渲染回归**：`test/render.test.js` 用零依赖 `node:vm` + 迷你 DOM/fetch 桩真实走完 init → /api/me → /api/state → 渲染链，守「数据 → 页面 HTML」这一段（六页冒烟、卡片显隐、多段合计、营养换算）；布局/间距/配色等视觉表现不在其能力内，仍靠目测（Cindy 浏览器工具被策略禁访本地地址，agent 也无法截图本地页）
 - **清零重来**：设置页 → 💾 数据管理 → 🗑 清空数据（仅本账户，服务器同步清本人子树，不可恢复，先导出留底）；**全库重来**：停服务后删除 `server/data/jjhealth.db`
 - **忘记密码**：找任一管理员在后台「用户管理 → 重置密码」处理（该账户会被强制下线）；若所有管理员都失联：停服务删库重来（最后手段）

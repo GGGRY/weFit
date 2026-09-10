@@ -144,7 +144,7 @@ async function main() {
   /* ============ 单用户往返 ============ */
   r = await A.req('GET', '/api/state');
   ok('T7a 新账户 state:rev=0+个人库=系统种子', r.status === 200 && r.json.rev === 0
-    && r.json.data && r.json.data.shared.foods.length === 14 && r.json.data.shared.exercises.length === 18
+    && r.json.data && r.json.data.shared.foods.length === 14 && r.json.data.shared.exercises.length === 27
     && Object.keys(r.json.data.users).length === 1, JSON.stringify(r.json).slice(0, 160));
   uidA = Object.keys(r.json.data.users)[0];
 
@@ -167,7 +167,7 @@ async function main() {
   ok('T10b 缺省rev→盲写成功 rev:2', r.status === 200 && r.json.rev === 2);
 
   /* 替换语义:第二次写入覆盖第一次 */
-  const small = { theme: 'light', onboarded: false, shared: { foods: [{ id: 'f0', name: '米饭', per100: { kcal: 116, p: 2.6, c: 25.9, f: 0.3 } }], exercises: [{ id: 'e0', name: '卧推', muscle: '胸' }] }, users: { [uidA]: { id: uidA, name: '陈', body: [{ date: '2026-01-01', weight: 70 }] } }, active: uidA };
+  const small = { theme: 'light', onboarded: false, shared: { foods: [{ id: 'f0', name: '米饭', per100: { kcal: 116, p: 2.6, c: 25.9, f: 0.3 } }], exercises: [{ id: 'e0', name: '卧推', cat: '力量', muscle: '胸', mode: 'reps' }] }, users: { [uidA]: { id: uidA, name: '陈', body: [{ date: '2026-01-01', weight: 70 }] } }, active: uidA };
   r = await A.req('PUT', '/api/state', { rev: 2, data: small });
   ok('T11a 正确rev→rev:3', r.status === 200 && r.json.rev === 3);
   r = await A.req('GET', '/api/state');
@@ -312,7 +312,10 @@ async function main() {
     goal: { mode: 'keep', startKg: 80, targetKg: 80, targetDate: '2027-01-01', note: '' },
     activity: 1.2, waterTarget: 8,
     nutrition: { auto: false, kcal: 2000, protein: 120, carbs: 250, fat: 60 },
-    meals: {}, plans: { '1': { id: 'p1', name: '计划', items: [{ id: 'i1', exId: 'e0', exName: '卧推', muscle: '胸', sets: 5, reps: 5, weight: 100 }] } },
+    meals: {}, plans: { '1': { id: 'p1', name: '计划', items: [
+      { id: 'i1', exId: 'e0', exName: '卧推', cat: '力量', muscle: '胸', reps: 25, weight: 100 },
+      { id: 'i2', exId: 'e18', exName: '跑步', cat: '有氧', muscle: '全身', mins: 40, km: 7.5 },
+    ] } },
     workouts: [], body: [], habits: [{ id: 'h1', name: '习惯', icon: '🔥', color: 'var(--cat1)', done: {} }],
     sleep: {}, water: {},
   };
@@ -333,7 +336,8 @@ async function main() {
   for (let i = 0; i < 300; i++) u.body.push({ date: '2026-' + pad(1 + (i % 12)) + '-' + pad(1 + (i % 28)), weight: Math.round((80 - i * 0.013) * 10) / 10 });
   for (let i = 0; i < 120; i++) {
     u.workouts.push({ id: 'w' + i, date: '2026-' + pad(1 + (i % 12)) + '-' + pad(1 + (i % 28)), name: '训' + i, note: i % 3 ? '' : '备注', items: [
-      { id: 'wi' + i, exId: 'e0', exName: '卧推', muscle: '胸', sets: [{ reps: 5, weight: 100 }, { reps: 5, weight: 102.5 }, { reps: 4, weight: 105 }] },
+      { id: 'wi' + i, exId: 'e0', exName: '卧推', cat: '力量', muscle: '胸', reps: 14, weight: 102.5 },
+      { id: 'wj' + i, exId: 'e18', exName: '跑步', cat: '有氧', muscle: '全身', mins: 30 + (i % 20), km: Math.round((3 + i * 0.05) * 10) / 10 },
     ] });
   }
   const big = { theme: 'light', onboarded: true, shared: fixture.shared, users: { [uidA]: u }, active: uidA };

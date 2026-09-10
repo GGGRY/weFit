@@ -18,7 +18,7 @@ const os = require('node:os');
 const dbm = require('./db');
 const mapper = require('./mapper');
 const auth = require('./auth');
-const { copyLibrary, FOOD_NUM_KEYS } = require('./seed');
+const { copyLibrary, FOOD_NUM_KEYS, SEED_CATS, SEED_MUSCLES, SEED_MODES } = require('./seed');
 
 const DEFAULT_PORT = Number(process.env.PORT || 8123);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -134,7 +134,11 @@ function sanitizeLibrary(body) {
   for (const e of body.exercises) {
     if (!e || typeof e.name !== 'string' || !e.name.trim()) return null;
     const o = { id: typeof e.id === 'string' && e.id ? e.id : auth.genId(), name: e.name.trim().slice(0, 80) };
-    if (typeof e.muscle === 'string' && e.muscle.trim()) o.muscle = e.muscle.trim().slice(0, 20);
+    /* v4.11：cat/muscle/mode 三件套按 seed-data.js 的枚举白名单收（单一数据源）；
+     * 非法取值静默丢弃该键——客户端有默认值兜底，不因一个脏字段 400 整库 */
+    if (SEED_CATS.includes(e.cat)) o.cat = e.cat;
+    if (SEED_MUSCLES.includes(e.muscle)) o.muscle = e.muscle;
+    if (SEED_MODES.includes(e.mode)) o.mode = e.mode;
     exercises.push(o);
   }
   return { foods, exercises };
