@@ -260,7 +260,7 @@ async function handleAdmin(db, req, res, sessionUser, pathname) {
     const rows = db.prepare(`
       SELECT a.username, a.role, a.created_at, u.name, u.rev,
              (SELECT COUNT(*) FROM body_records b WHERE b.user_id = u.id) AS body_n,
-             (SELECT COUNT(*) FROM workouts w WHERE w.user_id = u.id) AS wk_n,
+             (SELECT COUNT(DISTINCT wi.date) FROM workout_items wi WHERE wi.user_id = u.id AND wi.done = 1) AS wk_n,   /* v4.12：完成在项上，按「有打勾项的天数」计 */
              (SELECT COUNT(*) FROM meals m WHERE m.user_id = u.id) AS meal_n
       FROM accounts a JOIN users u ON u.id = a.user_id
       ORDER BY a.created_at`).all();

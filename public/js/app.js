@@ -105,7 +105,7 @@ const USER_COLORS = [
   {id:'pink',   hex:'#e87ba4'},
 ];
 const USER_AVATARS = ['🙂','😊','🦁','🐱','🐶','🐼','🐯','🦊','🐸','🐰','🦄','⭐','🌱','⚡','💪','🏃','🍀','🌊','🔥','😎'];
-const DATA_FIELDS = ['profile','goal','activity','waterTarget','nutrition','meals','plans','workouts','body','habits','sleep','water'];
+const DATA_FIELDS = ['profile','goal','activity','waterTarget','nutrition','meals','workouts','body','habits','sleep','water'];
 
 function seedFoodArr(){ return SEED_FOODS.map((f,i)=>({id:'f'+i, name:f.name, per100:Object.assign({}, f.per100)})); }
 function seedExArr(){ return SEED_EXERCISES.map((e,i)=>({id:'e'+i, name:e.name, cat:e.cat, muscle:e.muscle, mode:e.mode})); }
@@ -124,7 +124,6 @@ function freshUserData(){
     nutrition:{ auto:true, kcal:null, protein:null, carbs:null, fat:null },
     waterTarget:8,
     meals:{},
-    plans:{},
     workouts:[],
     body:[],
     habits: defaultHabits(),
@@ -144,39 +143,48 @@ function userCount(){ return Object.keys(USERS.users).length; }
 let USERS = null;
 let state = null;
 
-/* ---------- v4.11 旧运动形状清洗（幂等，客户端兜底） ----------
+/* ---------- 运动安排形状清洗（幂等，客户端兜底） ----------
  * 服务端 wipeLegacyWorkout() 已做一次性重置；但「本机脏缓存回推」「本机为准覆盖服务器」
- * 「导入 v4.11 以前的备份」三条路径仍可能把 sets 数组时代的旧形状送回来。
- * 清洗收在 adoptRaw→ensureUserIntact 这一个咽喉（缓存树/服务器树/导入树都过这里）：
- *   · 运动项带 sets 键 = 旧形状 → 按「旧运动数据作废」的裁定丢弃；计划/日志因此空掉则整条移除；
+ * 「导入旧备份」三条路径仍可能把旧形状送回来。清洗收在 adoptRaw→ensureUserIntact 这一个咽喉
+ * （缓存树/服务器树/导入树都过这里），且必须与服务端 insertUserData 的落库规则逐条对齐
+ * （缺 date / 同日重复 / 项级 done 真值化 / 丢 note），否则 PUT≠GET，同步会反复抖动：
+ *   · v4.12（同版本第二步）：`done` 由「一天」下放到「每一项」——旧的天级 done=true 下发给它每一项，
+ *     再删掉天级键（与服务端 migrate() 的回填同口径）；
+ *   · v4.12：`plans` 键存在 = v4.11 树 → 周计划整体作废；原 workouts 本来就来自「运动日志」，
+ *     一律把每一项补 done:true（不然它们会在合并后变成一堆“未开始”），然后按 date 去重；
+ *   · v4.11：运动项带 sets 键 = sets 时代旧形状 → 按裁定丢弃；整条因此空掉则移除；
  *   · 个人动作库整份缺 mode = 旧库 → 整份换新种子（与旧库作废同口径），避免半新半旧。
- * 新形状（无 sets 键、条目带 mode）原样通过，不动任何数据。 */
+ * 新形状原样通过，不动任何数据。 */
 let legacyShapeCleaned = false;   /* 本进程是否清洗过；boot/导入后据此补一次 save + 提示 */
 function isLegacyWorkoutItem(it){ return !!(it && typeof it === 'object' && Object.prototype.hasOwnProperty.call(it, 'sets')); }
-function normalizeLegacyWorkout(u){
-  if(u.plans && typeof u.plans === 'object' && !Array.isArray(u.plans)){
-    Object.keys(u.plans).forEach(k => {
-      const p = u.plans[k];
-      /* 形状坏到没法渲染（无 items 数组）的条目一并移除，否则 renderPlans 会抛 */
-      if(!p || typeof p !== 'object' || Array.isArray(p) || !Array.isArray(p.items)){ delete u.plans[k]; legacyShapeCleaned = true; return; }
-      const items = p.items.filter(it => !isLegacyWorkoutItem(it));
-      if(items.length === p.items.length) return;
+function normalizeWorkoutDays(u){
+  if(!Array.isArray(u.workouts)) u.workouts = [];
+  const hadPlans = u.plans !== undefined && u.plans !== null;
+  if(hadPlans){ delete u.plans; legacyShapeCleaned = true; }   /* v4.12：周计划整体作废 */
+  const seen = {};
+  u.workouts = u.workouts.filter(w0 => {
+    if(!w0 || typeof w0 !== 'object' || Array.isArray(w0)){ legacyShapeCleaned = true; return false; }
+    /* 一天一条：date 就是身份，没有日期/同日重复的条目落库即冲突，就地丢弃 */
+    if(typeof w0.date !== 'string' || !w0.date){ legacyShapeCleaned = true; return false; }
+    if(seen[w0.date]){ legacyShapeCleaned = true; return false; }
+    const rawItems = Array.isArray(w0.items) ? w0.items : [];
+    const items = rawItems.filter(it => !isLegacyWorkoutItem(it));
+    if(items.length !== rawItems.length){
       legacyShapeCleaned = true;
-      if(items.length) p.items = items; else delete u.plans[k];   /* 全是旧形状 → 计划作废 */
+      if(!items.length) return false;                             /* 只剩旧形状项 → 整条作废 */
+    }
+    seen[w0.date] = true;
+    w0.items = items;
+    if(!w0.id) w0.id = uid();
+    delete w0.note;                                               /* v4.12：note 已并入 name，不再落库 */
+    /* v4.12：天级 done 下放到每一项（含 v4.11 树的“原日志都是完成的”那一档） */
+    const dayDone = !!w0.done || hadPlans;
+    if(w0.done !== undefined) delete w0.done;
+    w0.items.forEach(it => {
+      if(dayDone || it.done) it.done = true; else delete it.done; /* 假值不落键，与服务端 NULL↔缺键对齐 */
     });
-  }
-  if(Array.isArray(u.workouts)){
-    const kept = u.workouts.filter(w => {
-      if(!w || typeof w !== 'object' || Array.isArray(w) || !Array.isArray(w.items)){ legacyShapeCleaned = true; return false; }
-      const items = w.items.filter(it => !isLegacyWorkoutItem(it));
-      if(items.length === w.items.length) return true;
-      legacyShapeCleaned = true;
-      if(!items.length) return false;                             /* 只剩旧形状项 → 日志作废 */
-      w.items = items;
-      return true;
-    });
-    if(kept.length !== u.workouts.length) u.workouts = kept;
-  }
+    return true;
+  });
 }
 function normalizeLegacyShared(shared){
   const exs = shared && shared.exercises;
@@ -205,7 +213,7 @@ function ensureUserIntact(u){
     if(segs) u.sleep[d] = segs; else delete u.sleep[d];
   });
   if(u.habits === undefined || !u.habits.length) u.habits = defaultHabits();
-  normalizeLegacyWorkout(u);   /* v4.11：sets 时代的旧运动项按裁定作废（见上） */
+  normalizeWorkoutDays(u);   /* 运动：计划/记录合并后的形状清洗（见上） */
   if(!u.color) u.color = 'green';
   if(!u.avatar) u.avatar = '🙂';
   if(!u.name) u.name = '未命名';
@@ -315,13 +323,14 @@ function save(){
   metaSet(meta);
   queuePush();   // 落盘后 600ms 防抖推送服务器
 }
-/* v4.11：采纳/导入时清洗掉旧运动形状后必须补一次 save（本地缓存 + 防抖推送），
- * 否则内存已清、磁盘/服务器还留着旧形状，下次启动再洗一遍（幂等但白费，且旧形状可能被推回） */
+/* 采纳/导入时清洗掉旧运动形状后必须补一次 save（本地缓存 + 防抖推送），
+ * 否则内存已清、磁盘/服务器还留着旧形状，下次启动再洗一遍（幂等但白费，且旧形状可能被推回）。
+ * v4.12 起「旧形状」还包含：plans 周计划作废、同日重复条目去重 */
 function syncLegacyCleanup(){
   if(!legacyShapeCleaned) return;
   legacyShapeCleaned = false;
   save();
-  toast('检测到旧版运动数据，已按 v4.11 新结构清理并同步');
+  toast('检测到旧版运动数据，已按「计划/记录合并」新结构清理并同步');
 }
 function wipeAll(){
   /* 只清本人的数据(保留昵称/头像),其他账户不受影响 */
@@ -619,20 +628,28 @@ function dayTotals(date){
 }
 function dayCount(date){ return SLOTS.reduce((n,s)=> n + dayMeals(date)[s.id].length, 0); }
 
-/* ---------- 运动数据辅助（v4.11：一次记录 = 一条汇总，无组无段） ---------- */
+/* ---------- 运动数据辅助（v4.11：一次安排 = 一条汇总，无组无段） ---------- */
 function exName(exId){ const e = state.exercises.find(x => x.id === exId); return e ? e.name : (exId||'动作'); }
-function planForDate(date){ return state.plans[String(weekday(date))] || null; }
-function planLabel(dow){ return '周' + DAY_CN[dow]; }
+/* v4.12：计划与记录是同一条数据、完成的粒度在**每一项**上（`item.done`），
+ * 一天只要有一项打了勾，这天就算已运动（进历史统计、算 PR）。
+ * 「按天汇总」：一天最多一条，同日再安排就是编辑当天那条（见 openWorkoutDlg）。 */
+function workoutForDate(date){ return state.workouts.find(w => w.date === date) || null; }
+function itemDone(it){ return !!(it && it.done); }
+function doneCount(w){ return (w && w.items ? w.items : []).filter(itemDone).length; }
+function allDone(w){ return !!w && w.items.length > 0 && doneCount(w) === w.items.length; }
+function isDone(w){ return !!w && doneCount(w) > 0; }   /* 任一项打勾 = 当天已运动 */
+function workoutsByDone(done){ return state.workouts.filter(w => isDone(w) === done); }
+/* 全部按日期倒序：未来的安排在最上，历史往下排 */
+function workoutsDesc(){ return state.workouts.slice().sort((a,b) => a.date < b.date ? 1 : -1); }
 
 /* 计数方式只看项里有没有时长/距离——单一事实来源，不存可能打架的 mode 标记位。
  * 与方案 §5.1 的差异（有意）：不回退库里的 libMode(exId)——正常 UI 路径下计时项必有 mins/km，
- * 回退只影响旧数据/异常导入，而那种数据本该被 normalizeLegacyWorkout 清掉，多一处判据反而更难查。 */
+ * 回退只影响旧数据/异常导入，而那种数据本该被 normalizeWorkoutDays 清掉，多一处判据反而更难查。 */
 function itemMode(it){ return (it.mins !== undefined && it.mins !== null) || (it.km !== undefined && it.km !== null) ? 'time' : 'reps'; }
 function itemVolume(it){ return (it.weight||0) * (it.reps||0); }   /* NaN 防线：计时项天然贡献 0 */
 function itemMins(it){ return it.mins || 0; }
 function itemKm(it){ return it.km || 0; }
 function itemSub(it){ return it.muscle || it.cat || ''; }         /* 副标题：力量→胸，有氧→全身 */
-function itemBadge(it){ const s = itemMode(it)==='time' ? (it.exName||'') : (it.muscle || it.cat || ''); return s ? s.slice(0,1) : ''; }
 function fmtMins(m){ return m < 1 ? Math.round(m*60) + ' 秒' : (m % 1 ? round(m,1) + ' 分钟' : m + ' 分钟'); }
 /* 项文案：力量 "32 次 @60kg" / "30 次 · 自重"；计时 "30 分钟 · 5 km" / "45 分钟" */
 function fmtItem(it){
@@ -647,20 +664,43 @@ function fmtItem(it){
 }
 
 function bestOf(items){ let bestW = 0; items.forEach(it => { if(it.weight && it.weight > bestW) bestW = it.weight; }); return bestW; }
-/* 最大重量 PR。v4.11 起 reps = 总次数，原 weight×(1+reps/30) 的估算 1RM 已移除（公式前提失效） */
+/* 最大重量 PR。v4.11 起 reps = 总次数，原 weight×(1+reps/30) 的估算 1RM 已移除（公式前提失效）
+ * v4.12：历史 = 比 date 更早的、已打勾的项（同日不算、未来安排不算、未打勾的项不算） */
 function isPRItem(it, date){
   const cur = bestOf([it]);
   if(!cur) return { wPR:false };
   let histBestW = 0;
   state.workouts.forEach(w => {
-    if(w.date === date) return;
-    w.items.forEach(x => { if(x.exId !== it.exId) return; const b = bestOf([x]); if(b > histBestW) histBestW = b; });
+    if(w.date >= date) return;
+    w.items.forEach(x => { if(!itemDone(x) || x.exId !== it.exId) return; const b = bestOf([x]); if(b > histBestW) histBestW = b; });
   });
   return { wPR: cur > histBestW };
 }
-function wkVolume(w){ let v = 0; w.items.forEach(it => { v += itemVolume(it); }); return v; }
-function wkMinutes(w){ let v = 0; w.items.forEach(it => { v += itemMins(it); }); return v; }
-function wkDistance(w){ let v = 0; w.items.forEach(it => { v += itemKm(it); }); return v; }
+/* 实际完成量（只算已打勾项）——历史图表与已开始的那一天都用它；
+ * 计划量（全部项）只用于还没开始的那一天，免得卡头空着 */
+function sumItems(items, fn){ let v = 0; items.forEach(it => { v += fn(it); }); return v; }
+function doneItems(w){ return (w && w.items ? w.items : []).filter(itemDone); }
+function wkVolume(w){ return sumItems(doneItems(w), itemVolume); }
+function wkMinutes(w){ return sumItems(doneItems(w), itemMins); }
+function wkDistance(w){ return sumItems(doneItems(w), itemKm); }
+function planVolume(w){ return sumItems(w.items || [], itemVolume); }
+function planMinutes(w){ return sumItems(w.items || [], itemMins); }
+/* 单项打勾 / 取消：完成的最小单位。写盘后整页重渲染（保持与卡片和统计一致） */
+function toggleItemDone(dayId, itemId){
+  const w = state.workouts.find(x => x.id === dayId); if(!w) return;
+  const it = w.items.find(x => x.id === itemId); if(!it) return;
+  if(it.done) delete it.done; else it.done = true;
+  save(); renderView();
+  if(allDone(w)) toast('全部完成，' + w.date + ' 记为运动记录 💪');
+}
+/* 一键全勾 / 全取消（计划没照着做时，逐项勾太麻烦） */
+function toggleAllItems(dayId){
+  const w = state.workouts.find(x => x.id === dayId); if(!w) return;
+  const on = !allDone(w);
+  w.items.forEach(it => { if(on) it.done = true; else delete it.done; });
+  save(); renderView();
+  toast(on ? '已全部完成，计入运动记录 💪' : '已全部取消完成');
+}
 
 /* ---------- 身体数据辅助 ---------- */
 function upsertBody(rec){
@@ -778,11 +818,20 @@ function seedRichMember(u, t, foods, ex){
     if(km) it.km = km;
     return [it];
   });
-  u.plans['1'] = { id:uid(), name:'推日', items:toItems(pushPlan) };
-  u.plans['2'] = { id:uid(), name:'晨跑', items:toTimeItems([['跑步',30,5]]) };
-  u.plans['3'] = { id:uid(), name:'拉日', items:toItems(pullPlan) };
-  u.plans['5'] = { id:uid(), name:'腿日', items:toItems(legPlan) };
-  // 运动日志：近 10 周 一三五力量 + 周二/周六有氧（计时项）
+  /* 运动安排（v4.12：计划与记录同一集合，done 区分）——
+   * 未来一周按「周一推 / 周二跑 / 周三拉 / 周五腿」安排，尚未打勾（= 计划） */
+  const planByWd = {
+    1: { name:'推日', items:toItems(pushPlan) },
+    2: { name:'晨跑', items:toTimeItems([['跑步',30,5]]) },
+    3: { name:'拉日', items:toItems(pullPlan) },
+    5: { name:'腿日', items:toItems(legPlan) },
+  };
+  for(let i = 1; i <= 7; i++){
+    const d = addDays(t, i), p = planByWd[weekday(d)];
+    if(!p || !p.items.length) continue;
+    u.workouts.push({ id:uid(), date:d, name:p.name, items:p.items });   /* done 缺省 = 未完成 */
+  }
+  // 运动记录：近 10 周 一三五力量 + 周二/周六有氧（计时项），全部已打勾
   const cycles = [
     {name:'推日 · 胸部', items:[['杠铃卧推',70,32],['哑铃飞鸟',12,36],['坐姿划船',45,30]]},
     {name:'拉日 · 背部', items:[['引体向上',0,32],['杠铃划船',60,40],['哑铃二头弯举',14,36]]},
@@ -799,18 +848,18 @@ function seedRichMember(u, t, foods, ex){
         const prog = Math.floor((parseISO(t) - parseISO(cursor)) / (1000*60*60*24*14));
         const w = Math.max(0, Math.round(baseW + prog * 2 + Math.random()*2));
         const reps = baseRm + Math.floor(Math.random()*5);
-        const it = { id:uid(), exId:e.id, exName:e.name, cat:e.cat, muscle:e.muscle, reps };
+        const it = { id:uid(), exId:e.id, exName:e.name, cat:e.cat, muscle:e.muscle, reps, done:true };
         if(w) it.weight = w;
         return [it];
       });
-      if(items.length) u.workouts.push({ id:uid(), date:cursor, name:cycles[ci].name, items, note:'' });
+      if(items.length) u.workouts.push({ id:uid(), date:cursor, name:cycles[ci].name, items });
     } else if(cardio[wd]){
       const [nm, km0] = cardio[wd];
       const e = ex.find(x => x.name === nm);
       if(e){
-        const it = { id:uid(), exId:e.id, exName:e.name, cat:e.cat, muscle:e.muscle, mins: (wd === 2 ? 30 : 45) + Math.round(Math.random()*8) };
+        const it = { id:uid(), exId:e.id, exName:e.name, cat:e.cat, muscle:e.muscle, done:true, mins: (wd === 2 ? 30 : 45) + Math.round(Math.random()*8) };
         if(km0) it.km = Math.round((km0 + Math.random()) * 10) / 10;
-        u.workouts.push({ id:uid(), date:cursor, name:(wd === 2 ? '晨跑' : '燃脂操课'), items:[it], note:'' });
+        u.workouts.push({ id:uid(), date:cursor, name:(wd === 2 ? '晨跑' : '燃脂操课'), items:[it] });
       }
     }
     cursor = addDays(cursor, 1);
@@ -1019,7 +1068,7 @@ function importData(file){
     materialize(); applyTheme(); save();
     if(curDialog) closeDialog();
     go('home');
-    toast('导入成功：已作为本账户数据' + (legacyShapeCleaned ? '（旧版运动数据已按 v4.11 新结构清理）' : ''));
+    toast('导入成功：已作为本账户数据' + (legacyShapeCleaned ? '（旧版运动数据已按新结构清理）' : ''));
     legacyShapeCleaned = false;
   };
   rd.onerror = () => toast('读取文件失败', true);
@@ -1107,18 +1156,24 @@ function renderHome(){
   const greet = nowH < 5 ? '夜深了' : nowH < 11 ? '早上好' : nowH < 14 ? '中午好' : nowH < 18 ? '下午好' : '晚上好';
   const calPct = Math.round(eat.kcal / T.kcal * 100);
   const habToday = state.habits.filter(h => h.done[t]).length;
-  const plan = planForDate(t);
+  const day = workoutForDate(t);
+  const dn = day ? doneCount(day) : 0;
+  const all = allDone(day);
 
   let planHTML = '';
-  if(plan){
-    const exs = plan.items.map((it,i) =>
-      '<div class="lrow"><div class="thumb" style="background:var(--surface-3)">' + (i+1) + '</div><div class="grow"><div class="b">' + esc(it.exName) + '</div><div class="sub">' + esc(itemSub(it)) + '</div></div>' +
-      '<div class="tiny" style="white-space:nowrap">' + esc(fmtItem(it)) + '</div></div>').join('');
+  if(day){
+    /* 与「今日打卡」卡同一套交互：逐项一个圆钮，勾了就计入当天运动记录 */
     planHTML =
-      '<div class="card"><h3><span>📋 今日运动 · ' + esc(plan.name || '') + '</span><span class="grow"></span>' +
-      '<button class="btn primary sm" data-quick="train">记录本次运动</button></h3>' + exs + '</div>';
+      '<div class="card"><h3><span>' + (all ? '✅' : '📋') + ' 今日运动 · ' + esc(day.name || '') + '</span>' +
+      '<span class="chip' + (all ? ' ok' : '') + '">' + dn + '/' + day.items.length + '</span><span class="grow"></span>' +
+      (all ? '' : '<button class="btn sm ghost" data-allday="' + esc(day.id) + '">全部完成</button>') +
+      '<button class="iconbtn2" data-editday="' + esc(day.id) + '" title="编辑动作" style="width:30px;height:30px;font-size:13px">✏️</button>' +
+      '</h3>' +
+      (day.items.length ? day.items.map(it => exRowHTML(day, it, false)).join('')
+                        : '<div class="empty" style="padding:12px">今天这条安排还没有动作<br><span class="tiny">点「✏️」补上</span></div>') +
+      '</div>';
   } else {
-    planHTML = '<div class="card"><h3>📋 今日运动</h3><div class="empty"><div class="e-ic">🛋️</div>今天没有安排运动<br><button class="btn sm mt" data-quick="train">去运动页安排计划</button></div></div>';
+    planHTML = '<div class="card"><h3>📋 今日运动</h3><div class="empty"><div class="e-ic">🛋️</div>今天没有安排运动<br><button class="btn sm mt" data-quick="train">＋ 安排今天</button></div></div>';
   }
 
   const html =
@@ -1147,7 +1202,12 @@ function renderHome(){
   bindHabitEvents();
   bindLifeToday($('#view'));
   const q = $('#view [data-quick="train"]');
-  if(q) q.addEventListener('click', startTodayWorkout);
+  if(q) q.addEventListener('click', () => openWorkoutDlg(today()));
+  const qa = $('#view [data-allday]');
+  if(qa) qa.addEventListener('click', () => toggleAllItems(qa.dataset.allday));
+  bindItemChecks($('#view'));
+  const qe = $('#view [data-editday]');
+  if(qe) qe.addEventListener('click', () => openWorkoutDlg(null, qe.dataset.editday));
   const g = $('#view [data-go2="diet"]');
   if(g) g.addEventListener('click', () => go('diet'));
   const gh = $('#view [data-go2="settings"]');
@@ -1385,52 +1445,78 @@ function openFoodLib(onClose){
 /* =====================================================
    训练模块
 ===================================================== */
-let trainTab = 'plan';
-function segBar(sel, items){
-  return '<div class="seg">' + items.map(it => '<button data-seg="' + it.id + '" class="' + (sel===it.id?'active':'') + '">' + it.label + '</button>').join('') + '</div>';
+/* 单一列表：一天一张日程卡，卡内逐项打勾（勾过的行变暗、圆钮变实心）。
+ * 不再分「计划 / 记录」两档——同一条数据上既有计划量又有完成进度，一眼看清。
+ * 动作库已移至「设置 → 数据管理」弹窗入口。 */
+function exRowHTML(w, it, showPR){
+  const done = itemDone(it);
+  const pr = showPR && done ? isPRItem(it, w.date) : { wPR:false };
+  return '<div class="lrow"' + (done ? ' style="opacity:.6"' : '') + '>' +
+    '<button class="hab-dot ' + (done ? 'on' : '') + '" data-itemdone="' + esc(w.id) + '" data-item="' + esc(it.id) + '" title="' + (done ? '取消完成' : '打勾完成') + '">✓</button>' +
+    '<div class="grow"><div class="b">' + esc(it.exName) + '</div>' +
+    (itemSub(it) ? '<div class="sub">' + esc(itemSub(it)) + '</div>' : '') + '</div>' +
+    (pr.wPR ? '<span style="color:var(--cat3)" title="最大重量纪录">🏆</span>' : '') +
+    '<div class="tiny" style="white-space:nowrap">' + esc(fmtItem(it)) + '</div></div>';
+}
+function bindItemChecks(root){
+  $$('[data-itemdone]', root).forEach(b => b.addEventListener('click', () => toggleItemDone(b.dataset.itemdone, b.dataset.item)));
 }
 
 function renderTrain(){
   $('#view').innerHTML =
     '<div class="row" style="align-items:center;justify-content:space-between;margin-bottom:14px">' +
-      segBar(trainTab, [
-        {id:'plan', label:'🗓 我的计划'},
-        {id:'log', label:'📒 运动日志'},
-      ]) +
-      (trainTab === 'log' ? '<button class="btn primary" id="tr_add">＋ 记录运动</button>' : '') +
-      (trainTab === 'plan' ? '<button class="btn primary" id="tr_planadd">＋ 新建计划</button>' : '') +
+      '<div class="muted small">安排任意一天 · 逐项打勾即计入运动记录</div>' +
+      '<button class="btn primary" id="tr_add">＋ 安排运动</button>' +
     '</div><div id="tabBody"></div>';
-  const v = $('#view');
-  $$('[data-seg]', v).forEach(b => b.addEventListener('click', () => { trainTab = b.dataset.seg; renderTrain(); }));
-  const add = $('#tr_add', v); if(add) add.addEventListener('click', () => openWorkoutDlg(today(), planForDate(today()) ? String(weekday(today())) : null));
-  const pa = $('#tr_planadd', v); if(pa) pa.addEventListener('click', () => openPlanEditor(null));
-  fillTrainTab();
-}
-function fillTrainTab(){
-  const body = $('#tabBody');
-  if(trainTab === 'log') renderWorkoutList(body);
-  else renderPlans(body);   /* 动作库已移至「设置 → 数据管理」弹窗入口 */
+  $('#tr_add', $('#view')).addEventListener('click', () => openWorkoutDlg(today()));
+  renderWorkoutDays($('#tabBody'));
 }
 
-/* ---------- 周训练计划 ---------- */
-function renderPlans(body){
-  const order = [1,2,3,4,5,6,0];
-  const cells = order.map(dow => {
-    const p = state.plans[dow];
-    const items = p ? p.items.map(it =>
-      '<div class="lrow" style="padding:7px 2px"><div class="grow small">' + esc(it.exName) + '</div><div class="tiny">' + esc(fmtItem(it)) + '</div></div>').join('') : '';
-    return '<div class="card" style="margin-bottom:0;padding:12px;display:flex;flex-direction:column">' +
-      '<h3 style="margin-bottom:8px;justify-content:space-between"><span>周' + DAY_CN[dow] + '</span>' +
-      (p ? '<button class="iconbtn2" data-planedit="' + dow + '" title="编辑" style="width:28px;height:28px;font-size:13px">✏️</button>' : '') + '</h3>' +
-      (p
-        ? '<div style="flex:1">' + items + '</div><div class="tiny muted" style="padding-top:6px;border-top:1px dashed var(--line)">' + esc(p.name||'运动') + ' · 共' + p.items.length + '个动作</div>'
-        : '<div style="flex:1;display:flex;flex-direction:column;justify-content:center"><div class="tiny muted" style="text-align:center;padding:14px 0">无计划</div></div>' +
-          '<button class="btn sm block" data-planedit="' + dow + '">＋ 安排</button>') +
-      '</div>';
-  }).join('');
-  body.innerHTML = '<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">' + cells + '</div>';
-  $$('[data-planedit]', body).forEach(b => b.addEventListener('click', () => openPlanEditor(b.dataset.planedit)));
+/* ---------- 日程卡 ---------- */
+function dayCardHTML(w){
+  const tot = w.items.length, dn = doneCount(w), started = dn > 0, all = allDone(w);
+  const overdue = !started && w.date < today();
+  /* 还没开始的那天显示「计划量」，已开始的显示「实际完成量」（只算打勾项） */
+  const vol = started ? wkVolume(w) : planVolume(w);
+  const mins = started ? wkMinutes(w) : planMinutes(w);
+  const bits = [];
+  if(vol > 0) bits.push((started ? '' : '计划 ') + '容量 ' + Math.round(vol) + ' kg');
+  if(mins > 0) bits.push('时长 ' + Math.round(mins) + ' 分钟');
+  return '<div class="card" data-wk="' + esc(w.id) + '">' +
+    '<h3><span>' + dateCNW(w.date) + '</span><span class="hint">' + esc(w.name||'运动') + '</span>' +
+    (tot ? '<span class="chip' + (all ? ' ok' : '') + '">' + dn + '/' + tot + '</span>' : '') +
+    (overdue ? '<span class="chip" style="color:var(--danger);border-color:var(--danger)">已过期</span>' : '') +
+    '<span class="grow"></span>' +
+    (bits.length ? '<span class="hint">' + esc(bits.join(' · ')) + '</span>' : '') +
+    '</h3>' +
+    (tot ? w.items.map(it => exRowHTML(w, it, true)).join('')
+         : '<div class="empty" style="padding:12px">这条安排还没有动作<br><span class="tiny">点「✏️ 编辑」补上，或删除它</span></div>') +
+    '<div class="row gap8" style="margin-top:10px">' +
+      (all ? '<button class="btn sm ghost" data-allday="' + esc(w.id) + '">↺ 全部取消</button>'
+           : '<button class="btn sm primary" data-allday="' + esc(w.id) + '">✔ 全部完成</button>') +
+      '<button class="btn sm ghost" data-wedit="' + esc(w.id) + '">✏️ 编辑</button>' +
+      '<button class="btn sm ghost" data-wdel="' + esc(w.id) + '" style="color:var(--danger)">🗑 删除</button>' +
+    '</div></div>';
 }
+function emptyCard(icon, text, sub){
+  return '<div class="card"><div class="empty"><div class="e-ic">' + icon + '</div>' + text +
+    (sub ? '<br><span class="tiny">' + sub + '</span>' : '') + '</div></div>';
+}
+function renderWorkoutDays(body){
+  const list = workoutsDesc();   /* 日期倒序：未来的安排与今天在最上，历史往下排 */
+  if(!list.length){ body.innerHTML = emptyCard('🏋️', '还没有运动安排', '点右上「＋ 安排运动」选一天，逐项打勾即成为那天的运动记录'); return; }
+  body.innerHTML = list.map(dayCardHTML).join('');
+  bindItemChecks(body);
+  $$('[data-allday]', body).forEach(b => b.addEventListener('click', () => toggleAllItems(b.dataset.allday)));
+  $$('[data-wedit]', body).forEach(b => b.addEventListener('click', () => openWorkoutDlg(null, b.dataset.wedit)));
+  $$('[data-wdel]', body).forEach(b => b.addEventListener('click', () => {
+    const w = state.workouts.find(x => x.id === b.dataset.wdel); if(!w) return;
+    if(!confirm(isDone(w) ? '删除这次运动记录？' : '删除这条运动安排？')) return;
+    state.workouts = state.workouts.filter(x => x.id !== b.dataset.wdel);
+    save(); renderTrain(); toast('已删除');
+  }));
+}
+
 
 /* ---------- 运动项数值输入（计划与日志共用） ----------
  * v4.11：一次记录 = 一条汇总。力量 = 总次数 + 重量(留空=自重)；计时 = 总时长(分钟) + 距离 km(可选)。
@@ -1473,6 +1559,7 @@ function collectItems(model, needEx){
     if(m.exId) it.exId = m.exId;
     if(m.cat) it.cat = m.cat;
     if(m.muscle) it.muscle = m.muscle;
+    if(m.done) it.done = true;                       /* v4.12：完成状态在项上，编辑时不能丢 */
     ['reps', 'weight', 'mins', 'km'].forEach(k => { if(m[k]) it[k] = num(m[k]); });
     if(!it.exName) return;
     if(!(it.reps || it.mins || it.km)) return;
@@ -1481,138 +1568,32 @@ function collectItems(model, needEx){
   });
   return out;
 }
-/* 动作下拉：按大类一级 optgroup（原生 select 显示不了列，分组只作排序分隔） */
-function exOptsHTML(selId){
-  let h = '';
-  CATS.forEach(c => {
-    const list = exLibSort(state.exercises.filter(e => (CAT_RANK[e.cat] === undefined ? '其他' : e.cat) === c));
-    if(!list.length) return;
-    h += '<optgroup label="' + esc(c) + '">' + list.map(e =>
-      '<option value="' + e.id + '"' + (selId === e.id ? ' selected' : '') + '>' + esc(e.name) + (e.mode === 'time' ? ' ⏱' : '') + '</option>').join('') + '</optgroup>';
-  });
-  return h;
-}
 
-function openPlanEditor(dow){
-  const editing = dow !== null && dow !== undefined && state.plans[dow];
-  dow = dow === null || dow === undefined ? null : String(dow);
-  const existing = editing ? state.plans[dow] : null;
+
+/* ---------- 编辑弹窗：安排某一天 / 修改已有那天 ---------- */
+function openWorkoutDlg(date, editId){
+  /* 一天一条：同日再「安排」就是编辑当天那条；完成状态在**每一项**上（行首圆钮），不再有天级勾选框 */
+  let w = editId ? state.workouts.find(x => x.id === editId) : null;
+  if(!w && date) w = workoutForDate(date);
+  const editing = !!w;
+  if(w) date = w.date;
+  if(!date) date = today();
   const fromItem = it => {
     const m = { exId:it.exId, exName:it.exName, cat:it.cat, muscle:it.muscle, _mode:itemMode(it) };
     ['reps','weight','mins','km'].forEach(k => { if(it[k]) m[k] = it[k]; });
+    if(it.done) m.done = true;                        /* v4.12：完成状态在项上，编辑时不能丢 */
     return m;
   };
-  const model = existing ? existing.items.map(fromItem) : [{ exId:'', exName:'', cat:'', muscle:'', _mode:'reps', reps:10 }];
-  let name = existing ? existing.name : '';
-  function rowHTML(m, i){
-    return '<div class="grid" style="grid-template-columns:2fr 74px 66px 34px;gap:6px;align-items:center;margin-bottom:6px" data-row="' + i + '">' +
-      '<select class="select pi_ex" data-i="' + i + '"><option value="">— 选择动作 —</option>' + exOptsHTML(m.exId) + '</select>' +
-      itemInputsHTML(m, i, 'pi') +
-      '<button class="iconbtn2 pi_del" data-i="' + i + '" style="width:30px;height:30px;color:var(--danger)">×</button></div>';
+  const model = { name: w ? (w.name||'') : '', items: w ? w.items.map(fromItem) : [] };
+  function importFrom(id){
+    const src = state.workouts.find(x => x.id === id); if(!src) return;
+    /* 复制的是动作清单，不带完成状态（否则复制昨天已完成的安排会直接把新的一天变成全勾） */
+    src.items.forEach(it => { const m = fromItem(it); delete m.done; model.items.push(m); });
   }
-  function buildRows(){ return model.map(rowHTML).join(''); }
-  const html =
-    '<div class="row gap8" style="margin-bottom:10px"><span class="chip">周' + DAY_CN[dow] + '安排</span>' +
-    '<input class="input" id="pl_name" placeholder="计划名（如：推日）" value="' + esc(name) + '" style="max-width:200px"></div>' +
-    '<div id="pl_rows">' + buildRows() + '</div>' +
-    '<button class="btn sm" id="pl_addrow" style="margin-top:4px">＋ 添加动作</button>' +
-    '<div class="tiny muted" style="margin-top:8px">力量填「总次数 + 重量」，计时填「总时长 + 距离」；重量留空 = 自重，距离可留空。</div>' +
-    '<div class="d-f"><button class="btn ghost" data-cancel>取消</button>' + (editing ? '<button class="btn danger ghost" id="pl_delplan">删除本日计划</button>' : '') + '<button class="btn primary" id="pl_save">保存</button></div>';
-  const dlg = showDialog((editing ? '编辑' : '安排') + ' 周' + DAY_CN[dow] + ' 运动', html);
-  const b = dlg.box;
-  function rereadRows(){ const r = $('#pl_rows', b); if(!r) return; r.innerHTML = buildRows(); bindRows(); }
-  function bindRows(){
-    const r = $('#pl_rows', b);
-    $$('.pi_ex', r).forEach(s => s.addEventListener('change', e => {
-      const i = num(e.target.dataset.i);
-      const ex = state.exercises.find(x => x.id === e.target.value);
-      const m = model[i];
-      m.exId = e.target.value;
-      m.exName = ex ? ex.name : '';
-      m.cat = ex ? ex.cat : '';
-      m.muscle = ex ? ex.muscle : '';
-      setItemMode(m, ex && ex.mode === 'time' ? 'time' : 'reps');   /* 换动作即换输入形态，顺带清残留 */
-      rereadRows();
-    }));
-    bindItemInputs(r, 'pi', model);
-    $$('.pi_del', r).forEach(btn => btn.addEventListener('click', () => { model.splice(num(btn.dataset.i),1); rereadRows(); }));
-  }
-  bindRows();
-  $('#pl_addrow', b).addEventListener('click', () => { model.push({ exId:'', exName:'', cat:'', muscle:'', _mode:'reps', reps:10 }); rereadRows(); });
-  $('#pl_save', b).addEventListener('click', () => {
-    const valid = collectItems(model, true);
-    if(!valid.length){ toast('请至少选择一个动作并填写数值', true); return; }
-    const pname = $('#pl_name', b).value.trim();
-    const items = valid.map(m => Object.assign({ id:uid() }, m));
-    if(editing && state.plans[dow]) {
-      state.plans[dow].name = pname || state.plans[dow].name;
-      state.plans[dow].items = items;
-    } else {
-      state.plans[dow] = { id:uid(), name: pname || ('周' + DAY_CN[dow] + '运动'), items };
-    }
-    save(); closeDialog(); renderTrain(); toast('已保存计划');
-  });
-  if(editing){ $('#pl_delplan', b).addEventListener('click', () => { delete state.plans[dow]; save(); closeDialog(); renderTrain(); toast('已删除'); }); }
-  const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
-}
-
-/* ---------- 训练日志 ---------- */
-function renderWorkoutList(body){
-  const list = [...state.workouts].sort((a,b) => a.date < b.date ? 1 : -1);
-  if(!list.length){
-    body.innerHTML = '<div class="card"><div class="empty"><div class="e-ic">🏋️</div>还没有运动记录<br><span class="tiny">先到「我的计划」安排一周，然后在运动日点「记录运动」</span></div></div>';
-    return;
-  }
-  const cards = list.map(w => {
-    const vol = wkVolume(w), mins = wkMinutes(w);
-    const items = w.items.map(it => {
-      const pr = isPRItem(it, w.date);
-      const sub = [fmtItem(it), itemSub(it)].filter(Boolean).join(' · ');
-      return '<div class="lrow" style="padding:8px 2px;align-items:flex-start">' +
-        '<div style="min-width:18px;text-align:center">' + esc(itemBadge(it)) + '</div>' +
-        '<div class="grow"><div class="b small">' + esc(it.exName) + '</div>' +
-        '<div class="sub">' + esc(sub) + '</div></div>' +
-        (pr.wPR ? '<span style="color:var(--cat3)" title="最大重量纪录">🏆</span>' : '') +
-      '</div>';
-    }).join('');
-    const headBits = [];
-    if(vol > 0) headBits.push('容量 ' + Math.round(vol) + ' kg');
-    if(mins > 0) headBits.push('时长 ' + Math.round(mins) + ' 分钟');
-    return '<div class="card" data-wk="' + w.id + '">' +
-      '<h3><span>' + dateCNW(w.date) + '</span><span class="hint">' + esc(w.name||'运动') + '</span><span class="grow"></span>' +
-      '<span class="hint">' + esc(headBits.join(' · ')) + '</span>' +
-      '<button class="iconbtn2" data-wkedit="' + w.id + '" style="width:30px;height:30px;font-size:13px">✏️</button>' +
-      '<button class="iconbtn2" data-wkdel="' + w.id + '" style="width:30px;height:30px;font-size:13px;color:var(--danger)">🗑</button>' +
-      '</h3>' + items + '</div>';
-  }).join('');
-  body.innerHTML = cards;
-  $$('[data-wkedit]', body).forEach(b => b.addEventListener('click', () => openWorkoutDlg(null, null, b.dataset.wkedit)));
-  $$('[data-wkdel]', body).forEach(b => b.addEventListener('click', () => {
-    if(confirm('删除这次运动记录？')){ state.workouts = state.workouts.filter(x => x.id !== b.dataset.wkdel); save(); renderTrain(); toast('已删除'); }
-  }));
-}
-
-function startTodayWorkout(){
-  const p = planForDate(today());
-  openWorkoutDlg(today(), p ? String(weekday(today())) : null);
-}
-
-function openWorkoutDlg(date, planKey, editId){
-  const editing = !!editId;
-  let w = editing ? state.workouts.find(x => x.id === editId) : null;
-  if(!date) date = w ? w.date : today();
-  const fromItem = it => {
-    const m = { exId:it.exId, exName:it.exName, cat:it.cat, muscle:it.muscle, _mode:itemMode(it) };
-    ['reps','weight','mins','km'].forEach(k => { if(it[k]) m[k] = it[k]; });
-    return m;
-  };
-  const model = { name: w ? w.name : '', note: w ? (w.note||'') : '', items: w ? w.items.map(fromItem) : [] };
-  function importPlan(pk){
-    const p = state.plans[pk]; if(!p) return;
-    p.items.forEach(it => model.items.push(fromItem(it)));   /* v4.11:计划项与日志项同形，导入即复制 */
-  }
-  if(planKey) importPlan(planKey);
-  const planOpts = [1,2,3,4,5,6,0].filter(d => state.plans[d]).map(d => '<option value="' + d + '">周' + DAY_CN[d] + ' · ' + esc(state.plans[d].name||'') + '</option>').join('');
+  /* 「复制已有安排」（原「从周计划导入」的替代）：挑一天直接复制动作 */
+  const others = state.workouts.filter(x => !w || x.id !== w.id).sort((a,b) => a.date < b.date ? 1 : -1).slice(0, 30);
+  const copyOpts = others.map(x => '<option value="' + esc(x.id) + '">' + esc(dateCN(x.date)) + ' · ' +
+    esc(x.name || '运动') + '（' + doneCount(x) + '/' + x.items.length + '）</option>').join('');
   /* 计时行附 15/30/45/60 快捷档（方案 §5.2）：点一下写进 mins 并重绘，km 不受影响 */
   const QUICK_MINS = [15, 30, 45, 60];
   function itemRow(it, i){
@@ -1621,6 +1602,7 @@ function openWorkoutDlg(date, planKey, editId){
           '<button type="button" class="btn sm ghost wl_quick" data-i="' + i + '" data-min="' + m + '" style="padding:2px 8px;font-size:12px">' + m + ' 分</button>').join('') + '</div>'
       : '';
     return '<div class="lrow" style="align-items:center" data-witem="' + i + '">' +
+      '<button type="button" class="hab-dot ' + (it.done ? 'on' : '') + '" data-wtoggle="' + i + '" title="' + (it.done ? '取消完成' : '打勾完成') + '">✓</button>' +
       '<div class="grow"><div class="b small">' + esc(it.exName || '未命名动作') + ' <span class="tiny muted">' + esc(itemSub(it)) + '</span></div>' + quick + '</div>' +
       itemInputsHTML(it, i, 'wl') +
       '<button class="iconbtn2" data-removeitem="' + i + '" style="color:var(--danger);width:30px;height:30px;font-size:14px">✕</button></div>';
@@ -1629,17 +1611,17 @@ function openWorkoutDlg(date, planKey, editId){
   const html =
     '<div class="row gap10" style="margin-bottom:10px;align-items:center;flex-wrap:wrap">' +
       '<input class="input" type="date" id="wl_date" value="' + date + '" style="max-width:170px">' +
-      '<input class="input" id="wl_name" placeholder="运动名（可选）" value="' + esc(model.name) + '" style="max-width:200px">' +
+      '<input class="input" id="wl_name" placeholder="运动名（可选，如：推日）" value="' + esc(model.name) + '" style="max-width:200px">' +
     '</div>' +
-    (planOpts ? '<div class="row gap8" style="margin-bottom:10px;align-items:center"><span class="tiny muted">从周计划导入：</span>' +
-      '<select class="select" id="wl_plan" style="max-width:200px"><option value="">选择…</option>' + planOpts + '</select></div>' : '') +
+    (copyOpts ? '<div class="row gap8" style="margin-bottom:10px;align-items:center"><span class="tiny muted">复制已有安排：</span>' +
+      '<select class="select" id="wl_copy" style="max-width:230px"><option value="">选择…</option>' + copyOpts + '</select></div>' : '') +
     '<div id="wl_rows">' + rowsHTML() + '</div>' +
     '<div class="row gap8"><button class="btn sm" id="wl_addex">＋ 添加动作</button>' +
     '<button class="btn sm ghost" id="wl_addbody">＋ 徒手/自重</button>' +
     '<button class="btn sm ghost" id="wl_addtime">＋ 计时运动</button></div>' +
-    '<div class="tiny muted" style="margin:6px 0">力量填「总次数 + 重量」，计时填「总时长 + 距离」；重量留空 = 自重。动作名可双击修改，保存时新动作自动加入动作库。</div>' +
-    '<div class="d-f"><button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="wl_save">保存运动</button></div>';
-  const dlg = showDialog(editing ? '修改运动记录' : '记录运动', html, {size:'lg'});
+    '<div class="tiny muted" style="margin:6px 0">力量填「总次数 + 重量」，计时填「总时长 + 距离」；重量留空 = 自重。动作名可双击修改，保存时新动作自动加入动作库；行首圆钮就是完成状态。</div>' +
+    '<div class="d-f"><button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="wl_save">' + (editing ? '保存' : '保存安排') + '</button></div>';
+  const dlg = showDialog(editing ? '编辑运动安排' : '安排运动', html, {size:'lg'});
   const b = dlg.box;
   const rowsBox = $('#wl_rows', b);
   function rerender(){ rowsBox.innerHTML = rowsHTML(); bindWL(); }
@@ -1651,10 +1633,16 @@ function openWorkoutDlg(date, planKey, editId){
       setItemField(it, 'mins', btn.dataset.min);
       rerender();
     }));
+    /* 行首圆钮：在弹窗里也能逐项打勾（与列表卡片同一套习惯打卡视觉） */
+    $$('[data-wtoggle]', rowsBox).forEach(btn => btn.addEventListener('click', () => {
+      const it = model.items[num(btn.dataset.wtoggle)]; if(!it) return;
+      if(it.done) delete it.done; else it.done = true;
+      rerender();
+    }));
     $$('[data-removeitem]', rowsBox).forEach(btn => btn.addEventListener('click', () => { model.items.splice(num(btn.dataset.removeitem),1); rerender(); }));
   }
   bindWL();
-  const planSel = $('#wl_plan', b); if(planSel) planSel.addEventListener('change', () => { if(planSel.value !== ''){ importPlan(planSel.value); planSel.value=''; rerender(); } });
+  const copySel = $('#wl_copy', b); if(copySel) copySel.addEventListener('change', () => { if(copySel.value !== ''){ importFrom(copySel.value); copySel.value=''; rerender(); } });
   $('#wl_addex', b).addEventListener('click', () => openExercisePicker(m => {
     const it = { exId:m.id, exName:m.name, cat:m.cat, muscle:m.muscle, _mode:(m.mode === 'time' ? 'time' : 'reps') };
     if(m.mode === 'time') it.mins = 30; else it.reps = 10;
@@ -1676,6 +1664,9 @@ function openWorkoutDlg(date, planKey, editId){
     if(!model.items.length){ toast('请至少填写一个动作与数值', true); return; }
     const d = $('#wl_date', b).value || date;
     const nm = $('#wl_name', b).value.trim();
+    /* 一天一条：撞日期就拒绝，而不是静默覆盖/存成两条（服务端以 date 为主键） */
+    const clash = state.workouts.find(x => x.date === d && (!w || x.id !== w.id));
+    if(clash){ toast('该日期已有安排，请直接编辑那一条', true); return; }
     /* 未匹配库中动作的新名称自动入库（带 cat/muscle/mode 三件套）；同名视为同一动作 */
     model.items.forEach(it => {
       if(it.exId) return;
@@ -1689,7 +1680,7 @@ function openWorkoutDlg(date, planKey, editId){
     const items = model.items.map(it => Object.assign({ id:uid() }, it));
     if(editing){ w.name = nm; w.date = d; w.items = items; }
     else { state.workouts.push({ id:uid(), date:d, name:nm, items }); }
-    save(); closeDialog(); renderTrain(); toast('运动已保存 💪');
+    save(); closeDialog(); renderTrain(); toast('已保存');
   });
   const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
 }
@@ -2524,7 +2515,7 @@ function statSummary(){
     if(waterFor(x) > 0){ waterSum += waterFor(x); waterCnt++; }
     const mins = sleepTotalMins(x); if(mins > 0){ sleepSum += mins; sleepCnt++; }   // 全天各段总时长
   });
-  const wk30 = state.workouts.filter(w => w.date >= d30[0] && w.date <= today()).length;
+  const wk30 = state.workouts.filter(w => isDone(w) && w.date >= d30[0] && w.date <= today()).length;   /* 只算已完成的记录，未来的计划不进统计 */
   const wNow = latestVal('weight');
   const w30 = bodyVal('weight', d30[0]);
   let wDelta = null, wDeltaCls = '';
@@ -2638,7 +2629,7 @@ function weeklySeries(weeks, fn, keep2){
     const ws = addDays(curMonday, -7*k);
     const we = addDays(ws, 7);
     let v = 0;
-    state.workouts.forEach(w => { if(w.date >= ws && w.date < we) v += fn(w); });
+    state.workouts.forEach(w => { if(!isDone(w)) return; if(w.date >= ws && w.date < we) v += fn(w); });
     out.push({ x: ws, y: keep2 ? Math.round(v*100)/100 : Math.round(v), wk: 'W' + (weeks - k) });
   }
   return out;
@@ -2698,23 +2689,36 @@ function runFTest(){
   T('mealDialog', () => { dietDate = today(); renderDiet(); addMealDialog(today(), 'dinner'); const b = curDialog.box; $('#mi_name', b).value = '测试餐'; $('#mi_kcal', b).value = 100; $('#mi_p', b).value = 10; $('#mi_c', b).value = 10; $('#mi_f', b).value = 5; $('#mi_g', b).value = 200; $('#mi_save', b).click(); if(dayTotals(today()).kcal < 10) throw new Error('meal-dialog-not-saved'); });
   T('workoutCore', () => {
     const before = state.workouts.length;
+    /* 用未被占用的日期，别撞上真实数据里今天已有的那条 */
+    let d = addDays(today(), 1);
+    for(let i = 0; i < 400 && workoutForDate(d); i++) d = addDays(d, 1);
     const ex0 = state.exercises[0];
-    state.workouts.push({ id:uid(), date:today(), name:'测试', items:[
-      { id:uid(), exId:ex0.id, exName:ex0.name, cat:'力量', muscle:'胸', reps:32, weight:60 },
-      { id:uid(), exName:'测试跑步', cat:'有氧', muscle:'全身', mins:30, km:5 },
+    state.workouts.push({ id:'wt_core', date:d, name:'测试', items:[
+      { id:'wt_c1', exId:ex0.id, exName:ex0.name, cat:'力量', muscle:'胸', reps:32, weight:60, done:true },
+      { id:'wt_c2', exName:'测试跑步', cat:'有氧', muscle:'全身', mins:30, km:5 },
     ] });
-    const w = state.workouts[state.workouts.length-1];
-    if(wkVolume(w) !== 1920) throw new Error('vol-wrong');
-    if(wkMinutes(w) !== 30) throw new Error('mins-wrong');
-    if(wkDistance(w) !== 5) throw new Error('km-wrong');
+    const w = workoutForDate(d);
     if(itemVolume(w.items[1]) !== 0) throw new Error('time-item-polluted-volume');
-    const pr = isPRItem({ exId:ex0.id, weight:200, reps:1 }, today());
+    /* v4.12：统计只算已打勾的项（完成的最小单位是项） */
+    if(wkVolume(w) !== 1920 || wkMinutes(w) !== 0 || wkDistance(w) !== 0) throw new Error('done-only-sum-wrong');
+    if(planVolume(w) !== 1920 || planMinutes(w) !== 30) throw new Error('plan-sum-wrong');
+    if(doneCount(w) !== 1 || !isDone(w) || allDone(w)) throw new Error('progress-wrong');
+    toggleItemDone('wt_core', 'wt_c2');
+    if(!allDone(w) || wkMinutes(w) !== 30 || wkDistance(w) !== 5 || doneCount(w) !== 2) throw new Error('toggle-item-wrong');
+    /* PR 只跟更早、已打勾的项比：未来安排与未打勾项都不算。合成 exId 避开真实历史 */
+    state.workouts.push({ id:'wt_plan_pr', date:addDays(d, 3), name:'未来安排', items:[
+      { id:'wt_p1', exId:ex0.id, exName:ex0.name, cat:'力量', muscle:'胸', reps:1, weight:99999 } ] });
+    const pr = isPRItem({ exId:'__selftest_ex__', weight:200, reps:1 }, d);
     if(!pr.wPR) throw new Error('pr-false');
-    if(state.workouts.length <= before) throw new Error('not-added');
+    state.workouts = state.workouts.filter(x => x.id !== 'wt_plan_pr' && x.id !== 'wt_core');
+    if(state.workouts.length !== before) throw new Error('not-cleaned');
   });
   T('workoutDlg', () => {
+    /* 挑一个尚未被占用的日期：合并后“同日再安排 = 编辑那条”，撞日会不新增 */
+    let d = addDays(today(), 1);
+    for(let i = 0; i < 400 && workoutForDate(d); i++) d = addDays(d, 1);
     const before = state.workouts.length;
-    openWorkoutDlg(today());
+    openWorkoutDlg(d);
     let ovs = $$('.overlay');
     $('#wl_addex', ovs[ovs.length-1]).click();
     ovs = $$('.overlay');
@@ -2726,10 +2730,52 @@ function runFTest(){
     ovs = $$('.overlay');
     $('#wl_save', ovs[ovs.length-1]).click();
     if(state.workouts.length <= before) throw new Error('dlg-not-saved');
-    const saved = state.workouts[state.workouts.length-1];
-    if(!saved.items.some(it => it.mins > 0)) throw new Error('time-item-not-saved');
+    const saved = workoutForDate(d);
+    if(!saved || !saved.items.some(it => it.mins > 0)) throw new Error('time-item-not-saved');
+    if(isDone(saved)) throw new Error('new-arrangement-should-be-empty');
+    state.workouts = state.workouts.filter(x => x.id !== saved.id);
   });
-  T('plans', () => { let mon = null; for(let i = 0; i < 400 && !mon; i++){ const d = addDays(today(), -i); if(weekday(d) === 1) mon = d; } if(!planForDate(mon)) throw new Error('monday-plan-missing'); });
+  T('merge', () => {
+    /* v4.12：完成的最小单位是「项」——勾一项这天就算已运动；全勾 = 全部完成 */
+    let d = addDays(today(), 2);
+    for(let i = 0; i < 400 && workoutForDate(d); i++) d = addDays(d, 1);
+    const day = { id:'wt_merge', date:d, name:'合并测试', items:[
+      { id:'wt_m1', exName:'动作一', reps:10 }, { id:'wt_m2', exName:'动作二', reps:10 } ] };
+    state.workouts.push(day);
+    if(isDone(day) || doneCount(day) !== 0) throw new Error('should-start-empty');
+    if(workoutsByDone(false).indexOf(day) < 0) throw new Error('not-in-pending');
+    toggleItemDone('wt_merge', 'wt_m1');
+    if(!isDone(day) || doneCount(day) !== 1 || allDone(day)) throw new Error('first-item-wrong');
+    if(workoutsByDone(true).indexOf(day) < 0) throw new Error('not-in-done');
+    toggleAllItems('wt_merge');
+    if(!allDone(day) || doneCount(day) !== 2) throw new Error('all-wrong');
+    toggleAllItems('wt_merge');
+    if(isDone(day)) throw new Error('clear-all-wrong');
+    state.workouts = state.workouts.filter(x => x.id !== 'wt_merge');
+  });
+  T('workoutShape', () => {
+    /* ① 天级 done 下放到项；② v4.11 树（有 plans）里原 workouts 都是已完成的日志；
+     * ③ sets 旧项/同日/无日期丢弃 */
+    const down = { workouts: [
+      { date:'2026-03-01', done:true, items:[{ exName:'A', reps:1 }, { exName:'B', reps:1 }] },
+      { date:'2026-03-02', items:[{ exName:'C', reps:1 }], done:false },
+    ] };
+    normalizeWorkoutDays(down);
+    if(down.workouts[0].done !== undefined || down.workouts[0].items.some(it => !it.done)) throw new Error('downshift ' + JSON.stringify(down.workouts[0]));
+    if(down.workouts[1].items[0].done !== undefined) throw new Error('false-should-drop ' + JSON.stringify(down.workouts[1]));
+    const u = { plans:{ '1':{ items:[] } }, workouts: [
+      { date:'2026-01-01', note:'旧', items:[{ exName:'旧', sets:[{ reps:8, weight:60 }] }, { exName:'留', reps:1 }] },
+      { date:'2026-01-02', items:[{ exName:'新', reps:10 }] },
+      { date:'2026-01-02', items:[{ exName:'重复', reps:5 }] },
+      { items:[{ exName:'无日期', reps:5 }] },
+    ] };
+    normalizeWorkoutDays(u);
+    if(u.plans !== undefined) throw new Error('plans-not-dropped');
+    if(u.workouts.length !== 2) throw new Error('kept=' + u.workouts.length + ' ' + JSON.stringify(u.workouts));
+    if(u.workouts[0].items.length !== 1 || u.workouts[0].items[0].done !== true) throw new Error('sets-drop ' + JSON.stringify(u.workouts[0]));
+    if(u.workouts[1].items[0].done !== true) throw new Error('v411-backfill ' + JSON.stringify(u.workouts[1]));
+    legacyShapeCleaned = false;   /* 别把测试里的清洗标记留给真实启动路径 */
+  });
   T('charts', () => { const s1 = lineChartSVG({ points:[{x:'2026-01-01',y:1},{x:'2026-01-02',y:3}], color:CX.brand }); if(s1.indexOf('<svg') < 0) throw new Error('line-no-svg'); const s2 = groupedBarSVG({ days:['2026-01-01','2026-01-02'], series:[{label:'a', color:CX.c1, data:[1,2]}] }); if(s2.indexOf('<rect') < 0) throw new Error('bar-no-rect'); });
   T('selfTree', () => {
     /* v4:任何时刻树里只有本账户一位成员 */

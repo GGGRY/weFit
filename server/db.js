@@ -17,7 +17,9 @@ const DEFAULT_DB = path.join(__dirname, 'data', 'jjhealth.db');
  * - users：成员注册表；profile/goal/nutrition 是形状固定的小配置对象，JSON 列保真
  * - 会增长的集合（饮食/训练/计划/身体/睡眠/饮水/习惯）全部拆为真正的关系表
  * - 有数组语义处一律带 seq，保证顺序往返一致；日期/星期/习惯 id 等映射键天然唯一
- * - v4.11 唯一一处例外：运动项由 sets 数组拍平为列，旧运动表整体作废（见 wipeLegacyWorkout） */
+ * - v4.11 唯一一处例外：运动项由 sets 数组拍平为列，旧运动表整体作废（见 wipeLegacyWorkout）
+ * - v4.12：周计划与运动记录合并——plan_defs/plan_items 取消，workouts/workout_items 改按 date 键，
+ *   一天一条；done=1 即运动记录，done 缺省即未完成的计划（见 wipeLegacyWorkout） */
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS app (
   id INTEGER PRIMARY KEY CHECK (id = 1)
@@ -50,38 +52,32 @@ CREATE TABLE IF NOT EXISTS meals (
   kcal REAL, p REAL, c REAL, f REAL, g REAL,
   PRIMARY KEY (user_id, date, slot, seq)
 );
-CREATE TABLE IF NOT EXISTS plan_defs (
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  weekday INTEGER NOT NULL,
-  plan_id TEXT, name TEXT,
-  PRIMARY KEY (user_id, weekday)
-);
-/* v4.11：运动项拍平 —— 力量（次数+重量）与计时（时长+距离）同表同形，
- * 计划项与日志项字段完全一致（导入计划 = 直接复制）。旧结构见 wipeLegacyWorkout()。 */
-CREATE TABLE IF NOT EXISTS plan_items (
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  weekday INTEGER NOT NULL,
-  seq INTEGER NOT NULL,
-  item_id TEXT, ex_id TEXT, ex_name TEXT, cat TEXT, muscle TEXT,
-  reps REAL, weight REAL, mins REAL, km REAL,
-  PRIMARY KEY (user_id, weekday, seq)
-);
+/* v4.12：周计划与运动记录合并 —— 一天一条「运动安排」，date 即身份。
+ * 同版本第二步：完成的粒度从「一天」下放到「每一项」——done 移到 workout_items，
+ * 当天只要有一项打勾即视为该日已运动（days 表的 done 列已废弃，存量库保留死列不 DROP）。
+ * seq 只用于保数组顺序（与其余集合同约定），旧结构见 wipeLegacyWorkout()。 */
 CREATE TABLE IF NOT EXISTS workouts (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  workout_id TEXT NOT NULL,
+  date TEXT NOT NULL,
   seq INTEGER NOT NULL,
-  date TEXT, name TEXT, note TEXT,
-  PRIMARY KEY (user_id, workout_id)
+  day_id TEXT, name TEXT,
+  PRIMARY KEY (user_id, date)
 );
+/* v4.11：运动项拍平 —— 力量（次数+重量）与计时（时长+距离）同表同形；
+ * v4.12：随 workouts 一起改挂 date（一天一条，项序用 seq 保真）；
+ * v4.12：done 落到每一项（1 = 已打勾完成）。 */
 CREATE TABLE IF NOT EXISTS workout_items (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  workout_id TEXT NOT NULL,
+  date TEXT NOT NULL,
   seq INTEGER NOT NULL,
   item_id TEXT, ex_id TEXT, ex_name TEXT, cat TEXT, muscle TEXT,
   reps REAL, weight REAL, mins REAL, km REAL,
-  PRIMARY KEY (user_id, workout_id, seq)
+  done INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, date, seq)
 );
-/* v4.11 起不再有 workout_sets（逐组子表）——一次记录 = 一条汇总，见 wipeLegacyWorkout() */
+/* v4.11 起不再有 workout_sets（逐组子表）——一次记录 = 一条汇总，见 wipeLegacyWorkout()；
+ * v4.12 起不再有 plan_defs/plan_items——周计划已并入 workouts；
+ * v4.12 起 workouts.done 废弃（完成状态在 workout_items.done），存量库保留死列 */
 /* 同日多条是旧版导入可能出现的形状，故主键用 seq 而非 date */
 CREATE TABLE IF NOT EXISTS body_records (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -143,32 +139,47 @@ function tableExists(db, table) {
 }
 
 /* =====================================================
-   v4.11 破坏性重置：旧运动数据整体作废（用户裁定 2026-09-06）
-   判据 = workout_sets 表存在。该表只属于旧结构，新 SCHEMA 不再建它 ——
-   因此这段逻辑天然幂等：跑过一次之后判据永远为假，绝不会复发。
-   删除范围：周计划 / 运动日志 / 个人动作库（置 NULL，客户端以新种子重建）
-             / 系统库的 exercises 部分（foods 原样保留）
-   保留：饮食、身体、睡眠、饮水、习惯、账户、食物库
+   破坏性重置：旧运动数据整体作废
+   v4.11（用户裁定 2026-09-06）：运动项 sets 拍平 → 周计划 / 日志 / 个人动作库作废
+   v4.12（用户裁定 2026-09-11）：计划与记录合并 → 周计划 / 日志作废，动作库**保留**
+
+   判据（两类，任一为真即重置）：
+     preV411 = workout_sets 表存在（该表只属于 v4.10 及以前，新 SCHEMA 不再建它）
+     preV412 = plan_defs/plan_items 存在，或 workouts/workout_items 还是旧列
+   跑过一次之后判据全部为假，故天然幂等、绝不复发。
+   删除范围：周计划 / 运动日志；preV411 额外作废个人动作库与系统库 exercises（foods 保留）
+   保留：饮食、身体、睡眠、饮水、习惯、账户、食物库；v4.12 的动作库原样保留
    ===================================================== */
 const LEGACY_WORKOUT_TABLES = ['workout_items', 'workout_sets', 'workouts', 'plan_items', 'plan_defs'];
+function legacyWorkoutShape(db) {
+  const preV411 = tableExists(db, 'workout_sets');
+  const preV412 = preV411
+    || tableExists(db, 'plan_defs') || tableExists(db, 'plan_items')
+    || (tableExists(db, 'workouts') && !tableCols(db, 'workouts').includes('day_id'))
+    || (tableExists(db, 'workout_items') && !tableCols(db, 'workout_items').includes('date'));
+  return preV412 ? { wipe: true, preV411 } : { wipe: false, preV411: false };
+}
 function wipeLegacyWorkout(db) {
-  if (!tableExists(db, 'workout_sets')) return false;
+  const { wipe, preV411 } = legacyWorkoutShape(db);
+  if (!wipe) return false;
   /* 整段包进一个事务：DROP 与两处 JSON 更新要么全成、要么全回滚。
    * 逐条裸跑时若崩在中间（判据表已删、JSON 还没换），下次启动判据即消失 → 重置永久只做一半，
    * 且 SCHEMA 的 CREATE IF NOT EXISTS 也补不回来（旧表还在，新列永远不会补）。 */
   db.exec('BEGIN IMMEDIATE');
   try {
     LEGACY_WORKOUT_TABLES.forEach(t => db.exec('DROP TABLE IF EXISTS ' + t));
-    /* 下面两步按「表 + 列都在」为条件执行：workout_sets 存在说明这是 v4.10 及以前的旧结构，
-     * 但本函数跑在 open() 建表/迁移之前，多一层判空可避免任何形状异常把服务器启动打断 */
+    /* 下面两步按「表 + 列都在」为条件执行：本函数跑在 open() 建表/迁移之前，
+     * 多一层判空可避免任何形状异常把服务器启动打断 */
     if (tableExists(db, 'users')) {
       const cols = tableCols(db, 'users');
-      if (cols.includes('exercises_json')) db.exec('UPDATE users SET exercises_json = NULL');   // 个人动作库作废（客户端以新种子重建）
+      /* v4.11 才需要动动作库：sets 时代个人库缺 cat/mode 三件套，必须整份重建。
+       * v4.12 只合并了计划/记录，动作项形状与 v4.11 一致，个人动作库原样保留。 */
+      if (preV411 && cols.includes('exercises_json')) db.exec('UPDATE users SET exercises_json = NULL');
       /* rev +1：让各客户端「本机脏缓存」走进人工裁决（converge 的 dirty && rev 前移分支），
        * 而不是凭同代脏直接整树回推——否则旧形状会在重置后悄悄回流 */
       if (cols.includes('rev')) db.exec('UPDATE users SET rev = rev + 1');
     }
-    if (tableExists(db, 'app') && tableCols(db, 'app').includes('system_json')) {
+    if (preV411 && tableExists(db, 'app') && tableCols(db, 'app').includes('system_json')) {
       const row = db.prepare('SELECT system_json FROM app WHERE id = 1').get();
       let sys = {};
       try { sys = JSON.parse((row && row.system_json) || '{}') || {}; } catch (e) { sys = {}; }
@@ -196,6 +207,17 @@ function migrate(db) {
   addColumn(db, 'users', 'exercises_json', 'TEXT');
   /* 系统共享库：单行 app 上整存 {foods, exercises}，管理员维护 */
   addColumn(db, 'app', 'system_json', 'TEXT');
+  /* v4.12 第二步（就地补列）：完成粒度由「一天」下放到「每一项」。
+   * ① 给存量库补 workout_items.done（新库已在 SCHEMA 里带上，这里是 no-op）；
+   * ② 把旧的「整天已完成」下放到它的每一项——数据零丢失，不破坏性重置。
+   * **回填必须在「刚刚补上这一列」的那一次做**（hadItemDone 判定）：
+   * 否则每次启动都会把旧 done=1 那天的项重新刷成 1，用户取消完成的操作会被静默推翻。 */
+  const hadItemDone = tableCols(db, 'workout_items').includes('done');
+  addColumn(db, 'workout_items', 'done', 'INTEGER NOT NULL DEFAULT 0');
+  if (!hadItemDone && tableExists(db, 'workouts') && tableCols(db, 'workouts').includes('done')) {
+    db.exec(`UPDATE workout_items SET done = 1 WHERE done = 0
+             AND date IN (SELECT date FROM workouts WHERE done = 1)`);
+  }
   db.exec('INSERT OR IGNORE INTO app(id) VALUES (1)');
   const row = db.prepare('SELECT system_json FROM app WHERE id = 1').get();
   let ok = false;
@@ -214,9 +236,9 @@ function open(dbPath) {
   db.exec('PRAGMA journal_mode = DELETE;');
   db.exec('PRAGMA synchronous = NORMAL;');
   db.exec('PRAGMA foreign_keys = ON;');
-  /* v4.11：必须在建表之前——先DROP旧结构，再由 SCHEMA 建出拍平后的新表 */
+  /* 必须在建表之前——先 DROP 旧结构，再由 SCHEMA 建出新结构的表 */
   if (wipeLegacyWorkout(db)) {
-    console.log('[db] v4.11 破坏性重置：旧运动数据（计划/日志/个人动作库）已作废并重建新结构');
+    console.log('[db] 破坏性重置：旧运动数据（周计划/运动日志）已作废并重建新结构');
   }
   db.exec(SCHEMA);
   migrate(db);

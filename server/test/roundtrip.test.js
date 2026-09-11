@@ -3,7 +3,7 @@
    鉴权 + 账户隔离 + 单用户往返一致性测试(真实 HTTP + 临时库,无测试框架)
    核心不变量:登录某账户后 PUT 进去的本人数树,GET 出来必须深度相等;
    任何账户的读写都不得影响其他账户(数据、rev、库)。
-   服务器规范化约定:补齐 7 个集合字段(meals/plans/workouts/body/habits/sleep/water)
+   服务器规范化约定:补齐 6 个集合字段(meals/workouts/body/habits/sleep/water)
    与 theme 默认值;composeUser 恒带 id 键(值 = 服务端 uid)。
    运行:node test/roundtrip.test.js
    ===================================================== */
@@ -53,13 +53,12 @@ function ok(name, cond, detail) {
   if (cond) { passed++; console.log('[PASS] ' + name); }
   else { failed++; console.log('[FAIL] ' + name + (detail ? '  →  ' + detail : '')); }
 }
-/* 规范化期望值:服务端补齐 7 个集合字段、id 恒为服务端 uid */
+/* 规范化期望值:服务端补齐 6 个集合字段、id 恒为服务端 uid */
 function normalizeExpected(state, uid) {
   const out = JSON.parse(JSON.stringify(state));
   for (const id of Object.keys(out.users)) {
     const u = out.users[id];
     if (u.meals === undefined) u.meals = {};
-    if (u.plans === undefined) u.plans = {};
     if (u.workouts === undefined) u.workouts = [];
     if (u.body === undefined) u.body = [];
     if (u.habits === undefined) u.habits = [];
@@ -312,11 +311,7 @@ async function main() {
     goal: { mode: 'keep', startKg: 80, targetKg: 80, targetDate: '2027-01-01', note: '' },
     activity: 1.2, waterTarget: 8,
     nutrition: { auto: false, kcal: 2000, protein: 120, carbs: 250, fat: 60 },
-    meals: {}, plans: { '1': { id: 'p1', name: '计划', items: [
-      { id: 'i1', exId: 'e0', exName: '卧推', cat: '力量', muscle: '胸', reps: 25, weight: 100 },
-      { id: 'i2', exId: 'e18', exName: '跑步', cat: '有氧', muscle: '全身', mins: 40, km: 7.5 },
-    ] } },
-    workouts: [], body: [], habits: [{ id: 'h1', name: '习惯', icon: '🔥', color: 'var(--cat1)', done: {} }],
+    meals: {}, workouts: [], body: [], habits: [{ id: 'h1', name: '习惯', icon: '🔥', color: 'var(--cat1)', done: {} }],
     sleep: {}, water: {},
   };
   const pad = n => String(n).padStart(2, '0');
@@ -334,12 +329,20 @@ async function main() {
     u.habits[0].done[d] = true;
   }
   for (let i = 0; i < 300; i++) u.body.push({ date: '2026-' + pad(1 + (i % 12)) + '-' + pad(1 + (i % 28)), weight: Math.round((80 - i * 0.013) * 10) / 10 });
+  /* v4.12：一天一条（date 是主键），故日志用互不重复的日期；
+   * v4.12：done 在每一项上——偶数日全勾，奇数日只勾第一项（部分完成也要往返保真） */
+  const dayISO = i => new Date(Date.UTC(2025, 0, 1) + i * 86400000).toISOString().slice(0, 10);
   for (let i = 0; i < 120; i++) {
-    u.workouts.push({ id: 'w' + i, date: '2026-' + pad(1 + (i % 12)) + '-' + pad(1 + (i % 28)), name: '训' + i, note: i % 3 ? '' : '备注', items: [
-      { id: 'wi' + i, exId: 'e0', exName: '卧推', cat: '力量', muscle: '胸', reps: 14, weight: 102.5 },
-      { id: 'wj' + i, exId: 'e18', exName: '跑步', cat: '有氧', muscle: '全身', mins: 30 + (i % 20), km: Math.round((3 + i * 0.05) * 10) / 10 },
+    const full = i % 2 === 0;
+    const run = { id: 'wj' + i, exId: 'e18', exName: '跑步', cat: '有氧', muscle: '全身', mins: 30 + (i % 20), km: Math.round((3 + i * 0.05) * 10) / 10 };
+    if (full) run.done = true;   /* 假值不落键（服务端 NULL↔缺键），与客户端 normalize 同口径 */
+    u.workouts.push({ id: 'w' + i, date: dayISO(i), name: '训' + i, items: [
+      { id: 'wi' + i, exId: 'e0', exName: '卧推', cat: '力量', muscle: '胸', reps: 14, weight: 102.5, done: true },
+      run,
     ] });
   }
+  for (let i = 0; i < 8; i++) u.workouts.push({ id: 'p' + i, date: dayISO(200 + i), name: '计划' + i, items: [
+    { id: 'pi' + i, exId: 'e0', exName: '卧推', cat: '力量', muscle: '胸', reps: 20, weight: 100 } ] });
   const big = { theme: 'light', onboarded: true, shared: fixture.shared, users: { [uidA]: u }, active: uidA };
   const t0 = Date.now();
   r = await A.req('PUT', '/api/state', { rev: curRev, data: big });

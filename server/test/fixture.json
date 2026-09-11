@@ -34,27 +34,23 @@
           "snack": []
         }
       },
-      "plans": {
-        "1": { "id": "p1", "name": "推日", "items": [
-          { "id": "pi1", "exId": "e0", "exName": "杠铃卧推", "cat": "力量", "muscle": "胸", "reps": 32, "weight": 70 },
-          { "id": "pi2", "exId": "e17", "exName": "引体向上", "cat": "力量", "muscle": "背", "reps": 30 }
-        ] },
-        "3": { "id": "p3", "name": "跑日", "items": [
-          { "id": "pi3", "exId": "e18", "exName": "跑步", "cat": "有氧", "muscle": "全身", "mins": 30, "km": 5 },
-          { "id": "pi4", "exId": "e19", "exName": "平板支撑", "cat": "力量", "muscle": "核心", "mins": 1.5 }
-        ] },
-        "5": { "id": "p5", "name": "腿日", "items": [] }
-      },
       "workouts": [
-        { "id": "w2", "date": "2026-09-02", "name": "拉日", "items": [
-          { "id": "wi2", "exId": "e17", "exName": "引体向上", "cat": "力量", "muscle": "背", "reps": 14 }
+        { "id": "w5", "date": "2026-09-09", "name": "腿日", "items": [
+          { "id": "wi7", "exId": "e0", "exName": "杠铃卧推", "cat": "力量", "muscle": "胸", "reps": 32, "weight": 90 }
+        ] },
+        { "id": "w4", "date": "2026-09-05", "name": "跑日", "items": [
+          { "id": "wi5", "exId": "e0", "exName": "杠铃卧推", "cat": "力量", "muscle": "胸", "reps": 32, "weight": 70, "done": true },
+          { "id": "wi6", "exId": "e18", "exName": "跑步", "cat": "有氧", "muscle": "全身", "mins": 30, "km": 5 }
         ] },
         { "id": "w3", "date": "2026-09-03", "name": "夜跑", "items": [
-          { "id": "wi3", "exId": "e18", "exName": "跑步", "cat": "有氧", "muscle": "全身", "mins": 32.5, "km": 5.2 },
-          { "id": "wi4", "exName": "拉伸", "cat": "柔韧", "muscle": "全身", "mins": 10 }
+          { "id": "wi3", "exId": "e18", "exName": "跑步", "cat": "有氧", "muscle": "全身", "mins": 32.5, "km": 5.2, "done": true },
+          { "id": "wi4", "exName": "拉伸", "cat": "柔韧", "muscle": "全身", "mins": 10, "done": true }
         ] },
-        { "id": "w1", "date": "2026-08-30", "name": "推日", "note": "", "items": [
-          { "id": "wi1", "exId": "e0", "exName": "杠铃卧推", "cat": "力量", "muscle": "胸", "reps": 32, "weight": 70 }
+        { "id": "w2", "date": "2026-09-02", "name": "拉日", "items": [
+          { "id": "wi2", "exId": "e17", "exName": "引体向上", "cat": "力量", "muscle": "背", "reps": 14, "done": true }
+        ] },
+        { "id": "w1", "date": "2026-08-30", "name": "推日", "items": [
+          { "id": "wi1", "exId": "e0", "exName": "杠铃卧推", "cat": "力量", "muscle": "胸", "reps": 32, "weight": 70, "done": true }
         ] }
       ],
       "body": [

@@ -199,6 +199,7 @@ a{color:var(--brand-ink)}
 .chip.b1{background:var(--cat1-soft);border-color:transparent;color:var(--cat1);font-weight:600}
 .chip.b2{background:var(--cat2-soft);border-color:transparent;color:var(--cat2);font-weight:600}
 .chip.b3{background:var(--cat3-soft);border-color:transparent;color:var(--cat3);font-weight:600}
+.chip.ok{background:var(--brand-soft);border-color:transparent;color:var(--brand-ink);font-weight:600}
 
 /* 列表行 */
 .lrow{display:flex;align-items:center;gap:12px;padding:10px 4px;border-bottom:1px solid var(--line)}

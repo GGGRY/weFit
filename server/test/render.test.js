@@ -166,21 +166,29 @@ async function main() {
   ok('T6 打卡卡渲染习惯名与「🔥 连续 2 天」',
      view.__html.includes('背单词') && view.__html.includes('🔥 连续 2 天'));
 
-  /* T7 v4.11 运动日志：力量按「总次数 @重量」、计时按「总时长 · 距离」渲染
+  /* T7 v4.12 运动页 = 单一日程列表：每项一个打卡圆钮，卡头 n/N，勾过的行变暗
    * 注意：运动页正文写进 #tabBody（桩里是独立节点），不在 view.__html 里 */
-  ev("trainTab='log'; renderTrain()");
-  const logHTML = doc.getElementById('tabBody').__html;
-  ok('T7a 力量行「32 次 @70kg」', logHTML.includes('32 次 @70kg'), 'n=' + ev('state.workouts.length') + ' html=' + logHTML);
-  ok('T7b 计时行「32.5 分钟 · 5.2 km」', logHTML.includes('32.5 分钟 · 5.2 km'));
-  ok('T7c 卡头容量与时长并存', logHTML.includes('容量 2240 kg') && logHTML.includes('时长 '));
-  ok('T7d 首字徽标：计时取动作名首字(跑)、力量取部位首字(胸)',
-     logHTML.includes('>跑</div>') && logHTML.includes('>胸</div>'));
+  ev("renderTrain()");
+  const trainHTML = doc.getElementById('tabBody').__html;
+  ok('T7a 力量行「32 次 @70kg」', trainHTML.includes('32 次 @70kg'), 'n=' + ev('state.workouts.length') + ' html=' + trainHTML.slice(0, 300));
+  ok('T7b 计时行「32.5 分钟 · 5.2 km」', trainHTML.includes('32.5 分钟 · 5.2 km'));
+  ok('T7c 全完成那天卡头显示实际容量「容量 2240 kg」（只算已打勾项）', trainHTML.includes('容量 2240 kg'));
+  ok('T7d 每项都有独立打卡圆钮：已完成的带 on、未打勾的不带',
+     trainHTML.includes('class="hab-dot on" data-itemdone="w1" data-item="wi1"')
+     && trainHTML.includes('class="hab-dot " data-itemdone="w5" data-item="wi7"'));
+  ok('T7e 部分完成那天卡头显示 1/2，且容量只算已打勾项（1 项 @70kg×32）',
+     trainHTML.includes('>1/2<') && trainHTML.includes('>2/2<'),
+     'html=' + trainHTML.slice(0, 500));
+  ok('T7f 未开始的那天显示计划量「计划 容量 2880 kg」', trainHTML.includes('计划 容量 2880 kg'));
+  ok('T7g PR 只跟更早、已打勾的项比：全列表只有 w1 一个 🏆', (trainHTML.match(/🏆/g) || []).length === 1);
+  ok('T7h 一键按钮：未完成的是「✔ 全部完成」，全完成的是「↺ 全部取消」',
+     trainHTML.includes('✔ 全部完成') && trainHTML.includes('↺ 全部取消'));
 
-  /* T8 v4.11 计划卡：同一套 fmtItem 文案；计时计划项显示「30 分钟 · 5 km」 */
-  ev("trainTab='plan'; renderTrain()");
-  const planHTML = doc.getElementById('tabBody').__html;
-  ok('T8 计划卡渲染计时段', planHTML.includes('30 分钟 · 5 km') && planHTML.includes('32 次 @70kg'),
-     'plans=' + ev('JSON.stringify(state.plans)').slice(0, 300) + ' | html=' + planHTML.slice(0, 400));
+  /* T8 列表按日期倒序：最上是最新/未来的安排，历史往下排 */
+  ok('T8 单列表按日期倒序（9/9 腿日 在 8/30 推日 之前），不再有「计划/记录」分段',
+     trainHTML.indexOf('腿日') < trainHTML.indexOf('推日') && trainHTML.includes('腿日') && trainHTML.includes('推日')
+     && !view.__html.includes('📒 记录') && view.__html.includes('＋ 安排运动'),
+     'i腿=' + trainHTML.indexOf('腿日') + ' i推=' + trainHTML.indexOf('推日'));
 
   /* T9 v4.11 历史页新增「每周运动时长」图（容量图之外的独立口径） */
   ev("go('stats')");
@@ -210,20 +218,26 @@ async function main() {
     try { ev('closeDialog && curDialog && closeDialog()'); ev(call); return ev('curDialog.box.__html'); }
     catch (e) { return 'ERR:' + e.message; }
   }
-  const hPlan = dlgHTML("openPlanEditor('3')");          /* fixture 周三 = 跑日（计时计划项） */
-  ok('T12a 计划编辑器渲染计时输入(时长+距离)', !hPlan.startsWith('ERR:') && hPlan.includes('pi_mins')
-     && hPlan.includes('pi_km') && hPlan.includes('选择动作') && hPlan.includes('总时长 + 距离'),
-     hPlan.startsWith('ERR:') ? hPlan : hPlan.slice(0, 120));
-  /* 从周计划导入 fixture 周三（跑步 30min/5km + 平板支撑 1.5min）→ 行内应出现预填的计时输入 */
-  const hWk = dlgHTML("openWorkoutDlg(today(), '3')");
-  ok('T12b 记录弹窗：计划导入为直接复制，计时行预填 30 分钟 / 5 km', !hWk.startsWith('ERR:')
+  const hPlan = dlgHTML("openWorkoutDlg(today())");   /* 安排弹窗：日期 + 复制已有安排 + 三档添加 */
+  ok('T12a 安排弹窗：日期选择 + 复制已有安排 + 三档添加，且无天级完成勾选框', !hPlan.startsWith('ERR:')
+     && hPlan.includes('wl_date') && hPlan.includes('复制已有安排') && !hPlan.includes('wl_done')
+     && hPlan.includes('＋ 徒手/自重') && hPlan.includes('＋ 计时运动') && hPlan.includes('保存安排'),
+     hPlan.startsWith('ERR:') ? hPlan : hPlan.slice(0, 160));
+  /* w4 跑日：第一项（卧推）已打勾、第二项（跑步）未打勾 → 行内应预填 30 分钟 / 5 km，圆钮一对一 */
+  const hWk = dlgHTML("openWorkoutDlg(null, 'w4')");
+  ok('T12b 编辑弹窗：计时行预填 30 分钟 / 5 km，行首圆钮反映项级完成', !hWk.startsWith('ERR:')
      && hWk.includes('wl_mins') && hWk.includes('wl_km') && hWk.includes('value="30"') && hWk.includes('value="5"')
-     && hWk.includes('＋ 计时运动') && hWk.includes('＋ 徒手/自重'), hWk.startsWith('ERR:') ? hWk : hWk.slice(0, 200));
+     && hWk.includes('class="hab-dot on" data-wtoggle="0"') && hWk.includes('class="hab-dot " data-wtoggle="1"'),
+     hWk.startsWith('ERR:') ? hWk : hWk.slice(0, 260));
+  /* 全完成的那天：弹窗里每一项的圆钮都应已勾上 */
+  const hDone = dlgHTML("openWorkoutDlg(null, 'w1')");
+  ok('T12c 编辑已完成的记录：该项圆钮为 on 状态', !hDone.startsWith('ERR:') && hDone.includes('class="hab-dot on" data-wtoggle="0"'),
+     hDone.startsWith('ERR:') ? hDone : hDone.slice(0, 200));
   /* 计时快捷档：15/30/45/60 四个 chip（方案 §5.2） */
   ok('T12e 计时行有 15/30/45/60 快捷档', [15, 30, 45, 60].every(m => hWk.includes('data-min="' + m + '"')),
      hWk.startsWith('ERR:') ? hWk : hWk.slice(0, 400));
   const hPick = dlgHTML('openExercisePicker(function(){})');
-  ok('T12c 动作选择器为平铺表格', !hPick.startsWith('ERR:') && hPick.includes('<th>分类</th>') && hPick.includes('杠铃卧推'), hPick.slice(0, 140));
+  ok('T12f 动作选择器为平铺表格', !hPick.startsWith('ERR:') && hPick.includes('<th>分类</th>') && hPick.includes('杠铃卧推'), hPick.slice(0, 140));
   /* 动作库弹窗内容写在 #xl_host 子节点里（桩不做真实 DOM 树，内容不在 box.__html 里） */
   let hLib = '';
   try { ev('closeDialog && curDialog && closeDialog()'); ev('openExLib()'); hLib = ev("$('#xl_body', $('#xl_host', curDialog.box)).__html");   /* 表格在再下一层 #xl_body */ }
@@ -232,21 +246,20 @@ async function main() {
      && hLib.includes('<th>方式</th>') && hLib.includes('nx_cat') && hLib.includes('nx_mode'), hLib.slice(0, 160));
   ev('closeDialog && curDialog && closeDialog()');
 
-  /* T13 v4.11 纯函数契约：旧形状清洗 / 项收集 / 字段写入 / 排序 / 徽标 / 周聚合。
+  /* T13 v4.12 纯函数契约：旧形状清洗 / 项收集（含 done 保真）/ 字段写入 / 排序 / 完成进度 / 周聚合。
    * 对话框交互（点 chip/保存）在桩里点不到，但这几个决策函数零成本可直接断言。 */
   const pure = JSON.parse(ev(`JSON.stringify({
     legacy: (function(){ const u = {
+      plans: { '1': { id:'p1', items:[{ exId:'e0', exName:'旧计划', sets:4 }] } },
       workouts: [
-        { id:'w1', date:'2026-01-01', items:[{ exId:'e0', exName:'旧', muscle:'胸', sets:[{ reps:8, weight:60 }] }] },
-        { id:'w2', date:'2026-01-02', items:[{ exId:'e0', exName:'新', cat:'力量', muscle:'胸', reps:32, weight:60 }] }
-      ],
-      plans: {
-        '1': { id:'p1', items:[{ exId:'e0', exName:'旧计划', muscle:'胸', sets:4, reps:8, weight:70 }] },
-        '3': { id:'p3', items:[{ exId:'e18', exName:'跑步', cat:'有氧', muscle:'全身', mins:30 }] }
-      }
-    }; normalizeLegacyWorkout(u); return u; })(),
+        { id:'w1', date:'2026-01-01', note:'旧', items:[{ exId:'e0', exName:'旧', muscle:'胸', sets:[{ reps:8, weight:60 }] }] },
+        { id:'w2', date:'2026-01-02', items:[{ exId:'e0', exName:'新', cat:'力量', muscle:'胸', reps:32, weight:60 }] },
+        { id:'w3', date:'2026-01-02', items:[{ exId:'e0', exName:'同日重复', reps:1 }] },
+        { id:'w4', items:[{ exId:'e0', exName:'无日期', reps:1 }] }
+      ]
+    }; normalizeWorkoutDays(u); return u; })(),
     collect: collectItems([
-      { exName:'A', exId:'x', cat:'力量', muscle:'胸', reps:32, weight:60, _mode:'reps' },
+      { exName:'A', exId:'x', cat:'力量', muscle:'胸', reps:32, weight:60, _mode:'reps', done:true },
       { exName:'B', reps:0, weight:5 },
       { exName:'C', mins:30, km:5, _mode:'time' },
       { exName:'', reps:10 },
@@ -266,26 +279,29 @@ async function main() {
       { name:'杠铃卧推', cat:'力量', muscle:'胸' },
       { name:'平板支撑', cat:'力量', muscle:'核心' }
     ]).map(e => e.name),
-    badge: itemBadge({ exName:'跑步', mins:30 }) + '/' + itemBadge({ exName:'杠铃卧推', muscle:'胸', reps:32 }),
+    badge: (function(){ const w = { items:[{ exName:'跑步', mins:30, done:true }, { exName:'杠铃卧推', muscle:'胸', reps:32 }] };
+      return doneCount(w) + '/' + isDone(w) + '/' + allDone(w) + '/' + itemDone(w.items[0]) + '/' + itemDone(w.items[1]); })(),
     libSeed: (function(){ const s = { exercises:[{ id:'e0', name:'杠铃卧推', muscle:'胸' }] };
       normalizeLegacyShared(s); return [s.exercises.length, s.exercises.every(e => e.cat && e.mode)]; })(),
     wk: (function(){ const y0 = weeklyMinutes(12)[11].y, k0 = weeklyDistances(12)[11].y;
-      state.workouts.push({ id:'w_t13', date:today(), name:'', items:[{ exName:'跑步', mins:30, km:5 }, { exName:'操课', mins:15 }] });
+      state.workouts.push({ id:'w_t13', date:today(), name:'', items:[{ exName:'跑步', mins:30, km:5, done:true }, { exName:'操课', mins:15, done:true }] });
       return [weeklyMinutes(12)[11].y - y0, weeklyDistances(12)[11].y - k0]; })()
   })`));
-  ok('T13a 旧形状清洗：sets 项丢弃、相应的空记录/旧计划移除、新形状原样、旧库换新种子',
-     pure.legacy.workouts.length === 1 && pure.legacy.workouts[0].id === 'w2'
-     && !pure.legacy.plans['1'] && pure.legacy.plans['3'].items.length === 1
+  ok('T13a 旧树清洗：plans 作废、天级 done 下放到项、sets/同日/无日期丢弃、旧库换新种子',
+     pure.legacy.plans === undefined && pure.legacy.workouts.length === 1
+     && pure.legacy.workouts[0].id === 'w2' && pure.legacy.workouts[0].done === undefined
+     && pure.legacy.workouts[0].note === undefined && pure.legacy.workouts[0].items.length === 1
+     && pure.legacy.workouts[0].items[0].done === true
      && pure.libSeed[0] === 27 && pure.libSeed[1] === true, JSON.stringify(pure.legacy) + JSON.stringify(pure.libSeed));
-  ok('T13b collectItems：丢空项/无值项、剥 _mode、needEx 生效',
+  ok('T13b collectItems：丢空项/无值项、剥 _mode、done 保真、needEx 生效',
      JSON.stringify(pure.collect) === JSON.stringify([
-       { exName:'A', exId:'x', cat:'力量', muscle:'胸', reps:32, weight:60 },
+       { exName:'A', exId:'x', cat:'力量', muscle:'胸', done:true, reps:32, weight:60 },
        { exName:'C', mins:30, km:5 }]) && pure.collectNeedEx === 0, JSON.stringify(pure.collect));
   ok('T13c setItemField 正数留/0 与负数删键；setItemMode 清残留',
      pure.fields.a === 30 && pure.fields.b === false && pure.fields.c === false && pure.fields.r === 1.5
      && pure.mode.hasReps === false && pure.mode.mode === 'time', JSON.stringify(pure.fields) + JSON.stringify(pure.mode));
-  ok('T13d exLibSort 大类→部位→名称；itemBadge 计时取名首字 / 力量取部位首字',
-     JSON.stringify(pure.sort) === JSON.stringify(['杠铃卧推','引体向上','平板支撑','跑步']) && pure.badge === '跑/胸',
+  ok('T13d exLibSort 大类→部位→名称；完成进度口径 doneCount/isDone/allDone/itemDone',
+     JSON.stringify(pure.sort) === JSON.stringify(['杠铃卧推','引体向上','平板支撑','跑步']) && pure.badge === '1/true/false/true/false',
      JSON.stringify(pure.sort) + ' ' + pure.badge);
   ok('T13e weeklyMinutes/Distances 只累计各自口径', pure.wk[0] === 45 && pure.wk[1] === 5, JSON.stringify(pure.wk));
 

@@ -20,7 +20,7 @@ const BODY_KEYS = ['weight', 'chest', 'waist', 'hip', 'arm', 'thigh', 'bf'];
  * v4.11：workout_sets 已随运动项拍平被删除，不再出现在本表（DELETE 不存在的表会 500） */
 const USER_DATA_TABLES = [
   'habit_done', 'habits', 'water_records', 'sleep_sessions', 'body_records',
-  'workout_items', 'workouts', 'plan_items', 'plan_defs',
+  'workout_items', 'workouts',
   'meals', 'meal_days',
 ];
 
@@ -140,32 +140,25 @@ function insertUserData(db, uid, u) {
     });
   });
 
-  /* 周计划：键是 "0".."6"；项与日志项同形（力量 reps/weight，计时 mins/km，均可缺） */
-  const pdefIns = db.prepare('INSERT INTO plan_defs(user_id, weekday, plan_id, name) VALUES (?,?,?,?)');
-  const pitemIns = db.prepare(`INSERT INTO plan_items(user_id, weekday, seq, item_id, ex_id,
-                               ex_name, cat, muscle, reps, weight, mins, km) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
-  const plans = u.plans || {};
-  Object.keys(plans).forEach(key => {
-    if (!/^[0-6]$/.test(key)) return;
-    const wd = Number(key);
-    const p = plans[key] || {};
-    pdefIns.run(uid, wd, nz(p.id), nz(p.name));
-    const items = Array.isArray(p.items) ? p.items : [];
-    items.forEach((it, i) => pitemIns.run(uid, wd, i, nz(it.id), nz(it.exId), nz(it.exName),
-      nz(it.cat), nz(it.muscle), nz(it.reps), nz(it.weight), nz(it.mins), nz(it.km)));
-  });
-
-  /* 运动日志：workouts → items（v4.11 一次记录 = 一条汇总，没有逐组子表） */
-  const wIns = db.prepare('INSERT INTO workouts(user_id, workout_id, seq, date, name, note) VALUES (?,?,?,?,?,?)');
-  const wiIns = db.prepare(`INSERT INTO workout_items(user_id, workout_id, seq, item_id, ex_id,
-                            ex_name, cat, muscle, reps, weight, mins, km) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+  /* 运动安排（v4.12：计划与记录合并为一条）：一天一条，date 即身份；项与 v4.11 同形。
+   * v4.12：done 在每一项上（1 = 已打勾），当天任一项打勾即视为该日已运动。
+   * 缺 date 的条目无法定位到"哪一天"，同日重复又与主键冲突 —— 两者防御性跳过（客户端
+   * normalizeWorkoutDays 做同一套清洗，两侧必须一致，否则 PUT≠GET 会让同步反复抖动）。 */
+  const wIns = db.prepare('INSERT INTO workouts(user_id, date, seq, day_id, name) VALUES (?,?,?,?,?)');
+  const wiIns = db.prepare(`INSERT INTO workout_items(user_id, date, seq, item_id, ex_id,
+                            ex_name, cat, muscle, reps, weight, mins, km, done)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   const workouts = Array.isArray(u.workouts) ? u.workouts : [];
-  workouts.forEach((w, i) => {
-    const wid = nz(w.id) || ('wk_seq_' + i); // 缺 id 时用序号兜底，避免主键为 NULL
-    wIns.run(uid, wid, i, nz(w.date), nz(w.name), nz(w.note));
+  const seenDates = new Set();
+  workouts.forEach((w0, i) => {
+    const w = (w0 && typeof w0 === 'object') ? w0 : {};   // 脏元素降级成空行，让它走"缺 date → 跳过"
+    const date = nz(w.date);
+    if (date === null || seenDates.has(date)) return;
+    seenDates.add(date);
+    wIns.run(uid, date, i, nz(w.id), nz(w.name));
     const items = Array.isArray(w.items) ? w.items : [];
-    items.forEach((it, j) => wiIns.run(uid, wid, j, nz(it.id), nz(it.exId), nz(it.exName),
-      nz(it.cat), nz(it.muscle), nz(it.reps), nz(it.weight), nz(it.mins), nz(it.km)));
+    items.forEach((it, j) => wiIns.run(uid, date, j, nz(it.id), nz(it.exId), nz(it.exName),
+      nz(it.cat), nz(it.muscle), nz(it.reps), nz(it.weight), nz(it.mins), nz(it.km), it.done ? 1 : 0));
   });
 
   /* 身体数据：date 非键（同日多条合法），指标可缺省 */
@@ -250,33 +243,18 @@ function readUserData(db, uid) {
     if (Array.isArray(meals[r.date][r.slot])) meals[r.date][r.slot].push(it);
   }
 
-  /* 周计划 */
-  const plans = {};
-  const planItems = db.prepare('SELECT * FROM plan_items WHERE user_id = ? ORDER BY weekday, seq').all(uid);
-  for (const d of db.prepare('SELECT * FROM plan_defs WHERE user_id = ? ORDER BY weekday').all(uid)) {
-    const p = {};
-    put(p, 'id', d.plan_id); put(p, 'name', d.name);
-    p.items = planItems.filter(r => r.weekday === d.weekday).map(r => {
-      const it = {};
-      put(it, 'id', r.item_id); put(it, 'exId', r.ex_id); put(it, 'exName', r.ex_name);
-      put(it, 'cat', r.cat); put(it, 'muscle', r.muscle);
-      put(it, 'reps', r.reps); put(it, 'weight', r.weight); put(it, 'mins', r.mins); put(it, 'km', r.km);
-      return it;
-    });
-    plans[String(d.weekday)] = p;
-  }
-
-  /* 运动日志（v4.11：项即汇总，一次记录一行） */
+  /* 运动安排（v4.12：计划与记录同一条，done 在每一项上） */
   const workouts = [];
-  const wiAll = db.prepare('SELECT * FROM workout_items WHERE user_id = ? ORDER BY seq').all(uid);
+  const wiAll = db.prepare('SELECT * FROM workout_items WHERE user_id = ? ORDER BY date, seq').all(uid);
   for (const w of db.prepare('SELECT * FROM workouts WHERE user_id = ? ORDER BY seq').all(uid)) {
     const o = {};
-    put(o, 'id', w.workout_id); put(o, 'date', w.date); put(o, 'name', w.name); put(o, 'note', w.note);
-    o.items = wiAll.filter(r => r.workout_id === w.workout_id).map(r => {
+    put(o, 'id', w.day_id); put(o, 'date', w.date); put(o, 'name', w.name);
+    o.items = wiAll.filter(r => r.date === w.date).map(r => {
       const it = {};
       put(it, 'id', r.item_id); put(it, 'exId', r.ex_id); put(it, 'exName', r.ex_name);
       put(it, 'cat', r.cat); put(it, 'muscle', r.muscle);
       put(it, 'reps', r.reps); put(it, 'weight', r.weight); put(it, 'mins', r.mins); put(it, 'km', r.km);
+      if (r.done) it.done = true;
       return it;
     });
     workouts.push(o);
@@ -313,7 +291,7 @@ function readUserData(db, uid) {
     habits.push(o);
   }
 
-  return { meals, plans, workouts, body, habits, sleep, water };
+  return { meals, workouts, body, habits, sleep, water };
 }
 
 module.exports = { isValidUserState, validateUserData, userRev, createUser, replaceUser, composeUser };

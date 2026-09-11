@@ -21,7 +21,7 @@
 - 样式共三处,按改动性质只查需要的那处:
   1. 全局类/主题 → `public/css/style.css`(≈300 行,可整读;分节:主题变量/布局骨架/卡片与通用/弹窗/登录门)
   2. 页面结构与内联 style → app.js 渲染函数,锚点(函数名 grep 即得行号):
-     概览 `renderHome`/`tileHTML`/`habitCardHTML` · 饮食 `renderDiet`/`openFoodLib`/`foodRowHTML` · 训练 `renderTrain`/`renderPlans`/`renderWorkoutList`/`openWorkoutDlg`/`openPlanEditor`/`itemInputsHTML`/`collectItems`/`libTableHTML`/`openExLib`/`renderExLib` · 身体 `renderBody`/`openBodyDialog`/`renderBodyChart` · 睡眠饮水卡 `lifeTodayHTML`/`renderSleepChart`/`renderWaterChart` · 设置 `renderSettings`/`habitSettingsCardHTML`/`openNutritionEditor` · 历史 `renderStats`/`legendHTML` · 档案 `openProfile`/`openProfileEditor` · 弹窗框架 `showDialog` · 主题切换 `applyTheme`
+     概览 `renderHome`/`tileHTML`/`habitCardHTML` · 饮食 `renderDiet`/`openFoodLib`/`foodRowHTML` · 训练 `renderTrain`/`renderWorkoutDays`/`dayCardHTML`/`exRowHTML`/`openWorkoutDlg`/`itemInputsHTML`/`collectItems`/`libTableHTML`/`openExLib`/`renderExLib` · 身体 `renderBody`/`openBodyDialog`/`renderBodyChart` · 睡眠饮水卡 `lifeTodayHTML`/`renderSleepChart`/`renderWaterChart` · 设置 `renderSettings`/`habitSettingsCardHTML`/`openNutritionEditor` · 历史 `renderStats`/`legendHTML` · 档案 `openProfile`/`openProfileEditor` · 弹窗框架 `showDialog` · 主题切换 `applyTheme`
   3. 页面外壳 → `public/index.html`(小文件)
 - 新增页面/函数后,若命名或归属变了,顺手同步上面的锚点清单;若清单已维护不住,参考 PLANS.md §8 的 ES module 拆分方案(需用户确认后再动手)。
 
