@@ -1291,7 +1291,8 @@ function renderHome(){
   }
 
   const html =
-    '<div class="muted">' + esc(greet) + '，<b>' + esc(activeUser().name) + '</b> · ' + dateCNW(t) + '</div>' +
+    /* 问候语：手机端居中（.home-greet，见 style.css 的 ≤899px 块）；桌面侧仍左对齐与下方内容对齐 */
+    '<div class="muted home-greet">' + esc(greet) + '，<b>' + esc(activeUser().name) + '</b> · ' + dateCNW(t) + '</div>' +
     '<div class="row mt">' +
       tileHTML('今日热量', fmtNum(eat.kcal), '/ ' + fmtNum(T.kcal) + ' kcal', '', '') +
       /* BMI 磁贴：数值 + 分档小字，颜色同身体页（bmiTone 单一来源）；无体重/身高时给提示文案 */

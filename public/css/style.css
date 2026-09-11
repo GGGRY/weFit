@@ -311,6 +311,8 @@ a{color:var(--brand-ink)}
   .main::-webkit-scrollbar{display:none;width:0;height:0}
   /* 移动端更紧凑(2026-09-11 按要求)：卡间距 16px → 12px。桌面侧保持 16px */
   .card{margin-bottom:12px}
+  /* 概览页顶部问候语手机端居中(2026-09-11 按要求)。只这一行居中——下方磁贴/卡片仍左对齐 */
+  .home-greet{text-align:center}
   .hero{font-size:34px}
 }
 

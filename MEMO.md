@@ -112,7 +112,7 @@
 - 备份文件在 OneDrive 目录内 = 自动获得异地备份 + OneDrive 版本历史
 
 ### 10. 界面与体验
-- 布局尺度：卡片 `padding:16px`、卡间 `margin-bottom` 桌面 16px / **手机 12px**（`≤899px` 覆盖，2026-09-11 按要求收紧）；`.main` 左右内边距 `clamp(12px,3vw,32px)`（手机上约 12px，桌面最宽 32px），上 20px / 下 40px（手机下 106px 给 Tab 栏让位）
+- 布局尺度：卡片 `padding:16px`、卡间 `margin-bottom` 桌面 16px / **手机 12px**（`≤899px` 覆盖，2026-09-11 按要求收紧）；`.main` 左右内边距 `clamp(12px,3vw,32px)`（手机上约 12px，桌面最宽 32px），上 20px / 下 40px（手机下 106px 给 Tab 栏让位）；概览页顶部问候语 `.home-greet` 手机端居中（桌面左对齐）
 - 响应式：手机底部 Tab / 桌面左侧分组边栏；弹窗手机端底部升起。Tab 栏尺寸（仅 ≤899px 显示）：图标 25px + 文字 12.5px，整条约 75px 高（另加 `env(safe-area-inset-bottom)`），对应 `.main` 下内边距 106px
 - **滚动容器**：桌面滚文档（`.sidebar` 靠 `sticky` 贴边；2026-09-11 起无顶栏，内容直接从 `.main` 顶部开始，上内边距 20px）；`≤899px` 改滚 `.main`（`html,body{height:100%;overflow:hidden}`，`.app`/`.main` 取 `100dvh`，`100vh` 仅作回退），避免移动浏览器翻页时收起地址栏改变视口高度、把 `fixed;bottom:0` 的 Tab 栏拖着上下跳。随之两处移动端专属修正（原「`.topbar` 改 `position:static`」一条已随顶栏整体移除作废）：①隐 `.main` 滚动条（`scrollbar-width:none` + `::-webkit-scrollbar{display:none}`），否则全局滚动条样式会让这个内层容器常驻一条占宽竖条；②原生下拉刷新随之失效（挂在根滚动器上 + `.main` 的 `overscroll-behavior-y:contain` 阻断滚动链），由手写手势 `bindPullToRefresh()` 补回——`.main` 顶部下拉 0.5 阻尼跟手、过 72px 松手整页重载（重走冷启动收敛），`#ptr` 胶囊指示器，仅 ≤899px 且无登录门/弹窗时接管。切页归顶由 `go(v)` 同时处理 `window` 与 `.main` 两处
 - **移动端适配**：`.tile` 自带 `min-width:130px` 是多列网格溢出根因，网格列一律 `minmax(0,1fr)` + 子项 `min-width:0`；每日目标五 tile 自适应收窄；概览打卡区为**一行一条习惯 + 当天圆钮**（无多日网格/横向滚动，≤560px 圆钮缩至 27px）
