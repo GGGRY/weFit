@@ -1196,7 +1196,9 @@ function renderHome(){
         '<span class="chip b1">蛋白 ' + eat.p + 'g / ' + T.p + 'g</span>' +
         '<span class="chip b2">碳水 ' + eat.c + 'g / ' + T.c + 'g</span>' +
         '<span class="chip b3">脂肪 ' + eat.f + 'g / ' + T.f + 'g</span>' +
-      '</div>' : '') +
+      '</div>' +
+      /* 有记录时也留入口（未标版号用户要求）：卡底右对齐，样式对齐睡眠卡的「＋ 记录一段」 */
+      '<div class="row mt" style="justify-content:flex-end"><button class="btn sm ghost" data-go2="diet">去记录</button></div>' : '') +
     '</div>' +
     planHTML +
     lifeTodayHTML() +
@@ -1999,8 +2001,11 @@ function lifeSleepCard(d, ctx){
   const isHome = ctx === 'home';
   const list = sleepSessions(d);
   const total = sleepTotalMins(d);
+  const totalTxt = '合计 ' + round(total/60,1) + ' 小时 · ' + (total >= SLEEP_GOAL_MINS ? '达标' : '偏少');
+  /* 概览「今日」卡：合计挪到底部按钮那一行的最左（未标版号，用户要求），标题只留卡名；
+   * 历史弹窗卡仍留在卡头 hint（isHome=false 分支不变） */
   const head = '<span>' + (isHome ? '😴 今日睡眠' : '😴 睡眠') + '</span>' +
-    (list.length ? '<span class="hint">合计 ' + round(total/60,1) + ' 小时 · ' + (total >= SLEEP_GOAL_MINS ? '达标' : '偏少') + '</span>' : '');
+    (list.length && !isHome ? '<span class="hint">' + totalTxt + '</span>' : '');
   // 无当日快速表单：空态只留一句提示，新增一律走「记录一段」弹窗（v4.6 用户要求收敛）
   return '<div class="card" style="margin-bottom:0"><h3>' + head + '</h3>' +
     (list.length ? list.map((s, i) => {
@@ -2016,7 +2021,11 @@ function lifeSleepCard(d, ctx){
         '<div class="sub">' + label + ' · ' + esc(s.bed || '--:--') + ' → ' + esc(s.wake || '--:--') + '</div></div>' +
         '<button class="iconbtn2" data-sleedit data-i="' + i + '" title="修改/删除">✏️</button></div>';
     }).join('') : '<div class="tiny muted" style="text-align:center;padding:8px 0">还没有睡眠记录</div>') +
-    '<div class="row mt" style="justify-content:flex-end"><button class="btn sm ghost" data-sleadd>＋ 记录一段</button></div>' +
+    '<div class="row mt" style="' + (isHome ? 'align-items:center' : 'justify-content:flex-end') + '">' +
+      (isHome && list.length ? '<span class="tiny">' + totalTxt + '</span>' : '') +
+      /* margin-left:auto 而非 space-between：窄卡换行时按钮仍靠右，不会跳到下一行行首 */
+      '<button class="btn sm ghost" data-sleadd' + (isHome ? ' style="margin-left:auto"' : '') + '>＋ 记录一段</button>' +
+    '</div>' +
   '</div>';
 }
 
@@ -2174,7 +2183,7 @@ function renderSleepChart(){
   const el = $('#st_sleep'); if(!el) return;
   const ds = lastNDates(30);
   const pts = ds.map(x => ({ x, y: sleepTotalMins(x) }));   // 全天各段总时长
-  el.innerHTML = barChartSVG({ points: pts, color: 'var(--cat2)', target: SLEEP_GOAL_MINS, targetLabel:'7h', unit:'分钟', fmtY: v => (v/60).toFixed(1) + 'h' });
+  el.innerHTML = barChartSVG({ points: pts, color: 'var(--cat2)', target: SLEEP_GOAL_MINS, targetLabel:'10h', unit:'分钟', fmtY: v => (v/60).toFixed(1) + 'h' });
 }
 function renderWaterChart(){
   const el = $('#st_water'); if(!el) return;
@@ -2610,7 +2619,7 @@ function renderStats(){
   const c3 = chartWrap('宏量营养素摄入', '近14天 · kcal', 'st_macro', legendHTML([{label:'蛋白',color:CX.c1},{label:'碳水',color:CX.c2},{label:'脂肪',color:CX.c3}]));
   const c4 = chartWrap('每周运动容量', '近12周 · Σ重量×次数', 'st_vol', '');
   const c4b = chartWrap('每周运动时长', '近12周 · Σ分钟（当周有距离时显示在悬停提示里）', 'st_mins', '');
-  const c5 = chartWrap('睡眠时长', '近30天 · 虚线为目标 7 小时', 'st_sleep', '<button class="btn sm ghost" data-slehis title="补记/修改历史睡眠记录">🕘 补记</button>');
+  const c5 = chartWrap('睡眠时长', '近30天 · 虚线为目标 10 小时', 'st_sleep', '<button class="btn sm ghost" data-slehis title="补记/修改历史睡眠记录">🕘 补记</button>');
   const c6 = chartWrap('每日饮水量', state.waterTarget ? '近30天 · 虚线为每日目标' : '近30天', 'st_water', '<button class="btn sm ghost" data-watshis title="补记/修改历史饮水记录">🕘 补记</button>');
 
   const html =

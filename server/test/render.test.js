@@ -144,6 +144,16 @@ async function main() {
   ok('T3b 饮食页渲染食物行(名称/克数/kcal)',
      view.__html.includes(x3.name) && view.__html.includes('150g') && view.__html.includes(String(x3.expKcal)));
 
+  /* T3c 概览「今日饮食」卡：有记录时也保留「去记录」入口（未标版号用户要求；
+   * 绑定用单元素 querySelector,同页必须恰好一个 data-go2="diet"） */
+  ev('renderHome()');
+  const dietI = view.__html.indexOf('🍽️ 今日饮食');
+  const dietCard = dietI < 0 ? '' : view.__html.slice(dietI, dietI + 1600);
+  ok('T3c 有记录时卡底仍有一个「去记录」按钮',
+     dietCard.includes('kcal') && dietCard.includes('data-go2="diet"')
+     && (view.__html.match(/data-go2="diet"/g) || []).length === 1,
+     'n=' + (view.__html.match(/data-go2="diet"/g) || []).length);
+
   /* T4 饮水卡显隐(PLANS/MEMO 记载的「目标 0 隐藏」契约) */
   ev('state.waterTarget = 0; renderHome()');
   ok('T4a 饮水目标 0 → 概览隐藏饮水卡', !view.__html.includes('💧 今日饮水'),
@@ -152,12 +162,18 @@ async function main() {
   ok('T4b 目标 8 · 已 3 → 显示「再喝 5 杯达标」',
      view.__html.includes('💧 今日饮水') && view.__html.includes('再喝 5 杯达标'));
 
-  /* T5 睡眠多段合计(v4.6 多段化契约:450+30 → 8 小时,≥420min 达标) */
+  /* T5 睡眠多段合计（v4.6 多段化契约；未标版号：目标由 7h/420min 改为 10h/600min） */
   ev(`state.sleep[today()] = [
     { t:'night', bed:'23:00', wake:'06:30', mins:450, q:4 },
     { t:'nap',   bed:'13:00', wake:'13:30', mins:30,  q:3 },
   ]; renderHome()`);
-  ok('T5 睡眠多段合计「合计 8 小时 · 达标」', view.__html.includes('合计 8 小时 · 达标'),
+  ok('T5a 8 小时 < 新目标 10 小时 → 「合计 8 小时 · 偏少」', view.__html.includes('合计 8 小时 · 偏少'),
+     view.__html.includes('😴') ? view.__html.slice(view.__html.indexOf('😴'), view.__html.indexOf('😴') + 120) : '无睡眠卡');
+  ev(`state.sleep[today()] = [
+    { t:'night', bed:'22:00', wake:'07:00', mins:540, q:4 },
+    { t:'nap',   bed:'13:00', wake:'14:00', mins:60,  q:3 },
+  ]; renderHome()`);
+  ok('T5b 10 小时 = 新目标 → 「合计 10 小时 · 达标」', view.__html.includes('合计 10 小时 · 达标'),
      view.__html.includes('😴') ? view.__html.slice(view.__html.indexOf('😴'), view.__html.indexOf('😴') + 120) : '无睡眠卡');
 
   /* T6 打卡卡:今日+昨日已打卡 → 连续 2 天 */
