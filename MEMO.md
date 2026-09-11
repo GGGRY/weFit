@@ -20,7 +20,7 @@
 
 ### 1. 概览首页 🏠（`renderHome()`，聚合"今天的事"）
 
-页面自上而下拼装，顺序与 `renderHome()` 一致：
+页面自上而下拼装：**问候行 → 四 tile（固定）→ `.home-cards` 容器（5 张「今日卡片」，顺序可拖）**。
 
 - **问候行**：按时刻问候（夜深了/早上好/中午好/下午好/晚上好）+ 昵称 + 今天日期（含周几）
 - **四 tile**（一行，窄屏自动折行）：今日热量（已摄入 / 目标 kcal）｜BMI（数值 + 分档小字 偏瘦/正常/超重/肥胖，颜色同身体页，两者共用 `bmiTone()`；无体重或身高时显 `--` + 「记录体重后查看」）｜今日运动（当天已打勾项 / 全部项，如 `1/3`，今天没安排显 `--`）｜打卡（今日已完成 / 习惯总数）
@@ -34,6 +34,7 @@
   - 历史补记入口不在本卡（v4.10 移至历史页，见「历史」一节）
 - **今日打卡卡**：一行一条习惯（图标 + 名称 + 🔥连续 N 天 / 今天还没打卡 + 当天 ✓ 圆钮），点圆钮切换当天完成并即时刷新；无习惯时空态 + 「去『设置』页添加」
 
+- **卡片自由排序**（未标版号，2026-09-11）：除顶部磁贴行外，今日饮食/今日运动/今日饮水/今日睡眠/今日打卡 5 张卡收进 `.home-cards`（grid），**顺序 = 用户顺序**，存本人状态树 `state.homeOrder`（5 个 id 的全排列，与服务端 `users.home_order_json` 列对称往返）。拖动：手机长按 250ms 拾取（移动 >8px 当作滚动不拾取）、卡头右端抓手 `⠿` 按下即拖、桌面鼠标按下即拖；拖动跟手 + 越过邻居中线即时交换 DOM（不重渲染），上下边缘 60px 内自动滚动，落下后吞掉一次 click 防误打卡；拖动中下拉刷新让路，切页调 `cancelHomeDrag()`。饮水目标设 0 时饮水卡不渲染但**位次由 `mergeOrder()` 按后继锚点保留**，重新打开后回原位；`resolveHomeOrder()` 负责丢未知 id/去重/补缺；设置页「数据管理」在顺序被改过后出现「↺ 概览卡片顺序：恢复默认」
 - 首页不展示：体重 7 天差值小字、"今日概览"卡（睡眠）、"主目标"卡（体重目标功能已整体移除）；BMI 以顶部磁贴形式保留（数值 + 分档小字，与身体页同色）；习惯的新增/修改/删除收归「设置」页「每日打卡」管理卡（概览卡只打卡，不内联添加表单/删除按钮、不展示多日历史网格）
 
 ### 2. 饮食 🍽️
@@ -112,7 +113,7 @@
 - 备份文件在 OneDrive 目录内 = 自动获得异地备份 + OneDrive 版本历史
 
 ### 10. 界面与体验
-- 布局尺度：卡片 `padding:16px`、卡间 `margin-bottom` 桌面 16px / **手机 12px**（`≤899px` 覆盖，2026-09-11 按要求收紧）；`.main` 左右内边距 `clamp(12px,3vw,32px)`（手机上约 12px，桌面最宽 32px），上 20px / 下 40px（手机下 106px 给 Tab 栏让位）；概览页顶部问候语 `.home-greet` 手机端居中（桌面左对齐）
+- 布局尺度：卡片 `padding:16px`、卡间 `margin-bottom` 桌面 16px / **手机 12px**（`≤899px` 覆盖，2026-09-11 按要求收紧；概览 `.home-cards` 容器同口径，容器内 `.card` 的 `margin` 清零、间距交给 grid `gap`）；`.main` 左右内边距 `clamp(12px,3vw,32px)`（手机上约 12px，桌面最宽 32px），上 20px / 下 40px（手机下 106px 给 Tab 栏让位）；概览页顶部问候语 `.home-greet` 手机端居中（桌面左对齐）；概览卡片容器手机单列、`≥900px` 两列（`repeat(2,minmax(0,1fr))` + `grid-auto-flow:row dense`；不用 auto-fit——1080px 宽会算出三列，只剩饮水/睡眠两张窄卡时右边空一列），带 `data-wide` 的卡（饮食/运动/打卡）`grid-column:1/-1` 整行，饮水/睡眠相邻时可并排——即旧版「三张整行 + 两张并排」的观感
 - 响应式：手机底部 Tab / 桌面左侧分组边栏；弹窗手机端底部升起。Tab 栏尺寸（仅 ≤899px 显示）：图标 25px + 文字 12.5px，整条约 75px 高（另加 `env(safe-area-inset-bottom)`），对应 `.main` 下内边距 106px
 - **滚动容器**：桌面滚文档（`.sidebar` 靠 `sticky` 贴边；2026-09-11 起无顶栏，内容直接从 `.main` 顶部开始，上内边距 20px）；`≤899px` 改滚 `.main`（`html,body{height:100%;overflow:hidden}`，`.app`/`.main` 取 `100dvh`，`100vh` 仅作回退），避免移动浏览器翻页时收起地址栏改变视口高度、把 `fixed;bottom:0` 的 Tab 栏拖着上下跳。随之两处移动端专属修正（原「`.topbar` 改 `position:static`」一条已随顶栏整体移除作废）：①隐 `.main` 滚动条（`scrollbar-width:none` + `::-webkit-scrollbar{display:none}`），否则全局滚动条样式会让这个内层容器常驻一条占宽竖条；②原生下拉刷新随之失效（挂在根滚动器上 + `.main` 的 `overscroll-behavior-y:contain` 阻断滚动链），由手写手势 `bindPullToRefresh()` 补回——`.main` 顶部下拉 0.5 阻尼跟手、过 72px 松手整页重载（重走冷启动收敛），`#ptr` 胶囊指示器，仅 ≤899px 且无登录门/弹窗时接管。切页归顶由 `go(v)` 同时处理 `window` 与 `.main` 两处
 - **移动端适配**：`.tile` 自带 `min-width:130px` 是多列网格溢出根因，网格列一律 `minmax(0,1fr)` + 子项 `min-width:0`；每日目标五 tile 自适应收窄；概览打卡区为**一行一条习惯 + 当天圆钮**（无多日网格/横向滚动，≤560px 圆钮缩至 27px）
@@ -150,7 +151,7 @@ weFit/
 - **前端核心约定**：业务代码只读写 `state`（当前成员工作副本），`save()` = 写回成员 + localStorage + queuePush()；同步层函数集中在 `load()` 之后（fetchState / doPush / queuePush / handleConflict / refreshSyncStatus / converge）
 - **叠层弹窗**：`showDialog` 维护 `dialogStack`，`curDialog` 恒为栈顶，也只有栈顶响应 Esc（睡眠段编辑器是从概览卡/历史弹窗里再开一层）
 - **页面记忆**：视图导航收敛到 `go(v)`，同时把 `v` 写进按账户分键的 `localStorage`（`jjhealth_view:<用户名>`，与离线缓存同口径）；启动链 `startMain()` 结尾走 `go(readView())`，刷新/重开回到上次浏览的页面，非法/陌生的视图名回退 `home`。纯 UI 状态，不参与服务器同步也不进数据树
-- **页面归属**：打卡渲染与绑定 `habitCardHTML()` + `bindHabitEvents()` 由概览 `renderHome()` 调用（当天清单，仅点选）；「设置」页 = `renderSettings()` 组装四卡——🧍基础资料（展示 + 修改弹窗 `openProfileEditor()`）、🥗每日目标（「修改目标」统一编辑弹窗 `openNutritionEditor()`，营养+活动量+饮水）、📌习惯管理 `habitSettingsCardHTML()` + `bindHabitSettings()`（新增/修改走弹窗 `openHabitAdder()`/`openHabitEditor()`，删除经 `confirm()` 确认后整卡刷新）、💾数据管理（📚食物库/动作库弹窗入口 `openFoodLib()`/`openExLib()` + 导出/导入/清空绑定内联 + `#st_sync` 同步状态行；食物库弹窗「＋记录」保存后 `go('diet')` 跳转饮食页）；睡眠/饮水趋势图函数 `renderSleepChart/renderWaterChart` 挂在 `renderStats()`，容器 id `st_sleep`/`st_water`；今日饮水/今日睡眠卡 = `lifeTodayHTML()` + `bindLifeToday()`（`lifeWaterCard/lifeSleepCard/bindWaterCard/bindSleepCard` 以 ctx `home`/`dlg` 双上下文复用——概览今日卡与**各自**历史弹窗 `openWaterHistory()/openSleepHistory()` 共用一套渲染与绑定；睡眠逐段新增/修改/删除走 `sleepSessionEditor(d, idx, after)`）
+- **页面归属**：打卡渲染与绑定 `habitCardHTML()` + `bindHabitEvents()` 由概览 `renderHome()` 调用（当天清单，仅点选）；「设置」页 = `renderSettings()` 组装四卡——🧍基础资料（展示 + 修改弹窗 `openProfileEditor()`）、🥗每日目标（「修改目标」统一编辑弹窗 `openNutritionEditor()`，营养+活动量+饮水）、📌习惯管理 `habitSettingsCardHTML()` + `bindHabitSettings()`（新增/修改走弹窗 `openHabitAdder()`/`openHabitEditor()`，删除经 `confirm()` 确认后整卡刷新）、💾数据管理（📚食物库/动作库弹窗入口 `openFoodLib()`/`openExLib()` + 导出/导入/清空绑定内联 + `#st_sync` 同步状态行；食物库弹窗「＋记录」保存后 `go('diet')` 跳转饮食页）；睡眠/饮水趋势图函数 `renderSleepChart/renderWaterChart` 挂在 `renderStats()`，容器 id `st_sleep`/`st_water`；今日饮水/今日睡眠卡由概览容器 `homeCardsHTML()` 按 `state.homeOrder` 拼装（旧 `lifeTodayHTML()` 随容器化删除）+ `bindLifeToday()`（`lifeWaterCard/lifeSleepCard/bindWaterCard/bindSleepCard` 以 ctx `home`/`dlg` 双上下文复用——概览今日卡与**各自**历史弹窗 `openWaterHistory()/openSleepHistory()` 共用一套渲染与绑定；睡眠逐段新增/修改/删除走 `sleepSessionEditor(d, idx, after)`）
 - **数据接口**：公开 = `POST /api/register`、`POST /api/login`、`GET /api/health`、静态页（含 `/admin`）；登录后可用 = `GET/PUT /api/state`（**本人数树**，`{rev?, data}`——rev 过期 409、缺省盲写；服务端只取 `data.users[本人uid]` 那一份，其余键忽略，缺本人键则 400 拒绝防误清空）、`GET /api/me`、`POST /api/logout`、`GET /api/system/library`（**PUT 仅 admin**）；**后台 API（仅 admin）** = `GET /api/admin/users`（列表+数据概况）、`PUT /api/admin/role`（设/撤管理员，防"最后一个管理员"）、`PUT /api/admin/password`（重置并强制该账户下线）、`DELETE /api/admin/users`（删账户级联清数据，不可删自己）
 - **API 仍是"整树 state"风格**（粒度收窄为单账户）：细粒度 CRUD 端点留待未来按需追加，mapper 后的关系表结构已支持
 

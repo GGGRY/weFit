@@ -103,11 +103,13 @@ function replaceUser(db, uid, data, expectedRev) {
       deleteUserData(db, uid);
       db.prepare(`UPDATE users SET name = ?, avatar = ?, color = ?, activity = ?, water_target = ?,
                   profile_json = ?, goal_json = ?, nutrition_json = ?, theme = ?, onboarded = ?,
-                  foods_json = ?, exercises_json = ?, rev = ? WHERE id = ?`)
+                  foods_json = ?, exercises_json = ?, home_order_json = ?, rev = ? WHERE id = ?`)
         .run(nz(u.name), nz(u.avatar), nz(u.color), nz(u.activity), nz(u.waterTarget),
           jz(u.profile), jz(u.goal), jz(u.nutrition),
           nz(data.theme) || 'light', data.onboarded ? 1 : 0,
           jz(shared.foods || []), jz(shared.exercises || []),
+          /* jz 而非 || []：键缺失与空数组必须分别保真（composeUser 侧用 put 对称还原） */
+          jz(u.homeOrder),
           nextRev, uid);
       insertUserData(db, uid, u);
       db.exec('COMMIT');
@@ -216,6 +218,7 @@ function composeUser(db, uid) {
   put(u, 'profile', jsonParse(row.profile_json));
   put(u, 'goal', jsonParse(row.goal_json));
   put(u, 'nutrition', jsonParse(row.nutrition_json));
+  put(u, 'homeOrder', jsonParse(row.home_order_json));
   Object.assign(u, readUserData(db, uid));
 
   const data = {

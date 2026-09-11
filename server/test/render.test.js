@@ -150,6 +150,44 @@ async function main() {
      tileRow.slice(ti[2], ti[3]).includes(expWk === '--' ? '>--</div>' : '>' + expWk + '<span class="unit">项</span>'),
      'wk=' + expWk + ' tile=' + tileRow.slice(ti[2], ti[3]));
 
+  /* T1e 概览「今日卡片」可拖动排序（2026-09-11）：容器内的卡片顺序 = state.homeOrder；
+     顶部磁贴行不在容器里（固定不动）。纯函数 resolveHomeOrder/mergeOrder 直接断言 */
+  const ho = () => ev("resolveHomeOrder(state.homeOrder).join(',')");
+  ok('T1e1 默认顺序 饮食→运动→饮水→睡眠→打卡，磁贴行在容器外',
+     ho() === 'diet,workout,water,sleep,habits'
+     && view.__html.includes('<div class="home-cards" id="home_cards"><div class="card" data-hcard="diet" data-wide="1">')
+     && view.__html.indexOf('data-hcard="water"') < view.__html.indexOf('data-hcard="sleep"')
+     && view.__html.indexOf('data-hcard="sleep"') < view.__html.indexOf('data-hcard="habits"')
+     && view.__html.indexOf('<div class="row mt">') < view.__html.indexOf('id="home_cards"'),
+     'order=' + ho());
+  ok('T1e2 resolveHomeOrder：丢未知 id / 去重 / 补缺（含未来新增的卡）',
+     ev("resolveHomeOrder(['bogus','sleep']).join(',')") === 'sleep,diet,workout,water,habits'
+     && ev("resolveHomeOrder(['habits','habits','water']).join(',')") === 'habits,water,diet,workout,sleep'
+     && ev('resolveHomeOrder(null).join(",")') === 'diet,workout,water,sleep,habits',
+     ev('JSON.stringify(resolveHomeOrder(["bogus","sleep"]))'));
+  /* 隐藏卡（饮水目标=0）位次保留：以旧序里它后面第一个可见邻居为锚点插回 */
+  ok('T1e3 mergeOrder：不可见的卡按后继锚点插回，正好不动时顺序一字不变',
+     ev("mergeOrder(['diet','workout','sleep','habits'], ['diet','workout','water','sleep','habits']).join(',')") === 'diet,workout,water,sleep,habits'
+     && ev("mergeOrder(['sleep','diet','workout','habits'], ['diet','workout','water','sleep','habits']).join(',')") === 'water,sleep,diet,workout,habits'
+     && ev("mergeOrder(['diet','workout','water','sleep','habits'], ['diet','workout','water','sleep','habits']).join(',')") === 'diet,workout,water,sleep,habits'
+     && ev("mergeOrder(['habits','sleep','water','workout','diet'], ['diet','workout','water','sleep','habits']).join(',')") === 'habits,sleep,water,workout,diet',
+     ev("mergeOrder(['sleep','diet','workout','habits'], ['diet','workout','water','sleep','habits']).join(',')"));
+  /* 自定义顺序真的落到 DOM（拖动保存后下次渲染就是这个顺序），每张卡都带抓手 */
+  ev("state.homeOrder = ['habits','sleep','water','workout','diet']; renderHome()");
+  ok('T1e4 按 state.homeOrder 渲染：卡顺序跟着改，每张卡都有抓手/标识',
+     ['habits','sleep','water','workout','diet'].every((id, i, arr) =>
+       (i === 0 || view.__html.indexOf('data-hcard="' + arr[i-1] + '"') < view.__html.indexOf('data-hcard="' + id + '"')))
+     && (view.__html.match(/data-hcard-grip /g) || []).length === 5
+     && view.__html.includes('<div class="card" data-hcard="habits" data-wide="1">'),
+     view.__html.slice(view.__html.indexOf('id="home_cards"'), view.__html.indexOf('id="home_cards"') + 260));
+  /* 饮水目标=0：该卡不渲染（其余 4 张顺序不变），位次由 mergeOrder 保住 */
+  ev('state.homeOrder = ["diet","workout","water","sleep","habits"]; state.waterTarget = 0; renderHome()');
+  ok('T1e5 饮水目标设 0：不渲染饮水卡，其余 4 张保持次序且都还在',
+     !view.__html.includes('data-hcard="water"')
+     && ['diet','workout','sleep','habits'].every(id => view.__html.includes('data-hcard="' + id + '"'))
+     && (view.__html.match(/data-hcard-grip /g) || []).length === 4);
+  ev('state.waterTarget = 8; state.homeOrder = HOME_ORDER_DEFAULT.slice(); renderHome()');
+
   /* T2 六页导航冒烟(顺序放最前:后续用例会改写 state)
      2026-09-11 顶栏移除后页面不再渲染标题,当前页由侧栏(桌面)/底栏(手机)高亮项标示,
      故这里守「导航高亮跟着 curView 走」+ 每页 view 有内容,不再断言顶栏标题 */
@@ -372,8 +410,9 @@ async function main() {
   ok('T7o 名称下方小字显示大类 · 部位（力量 · 胸 / 有氧 · 全身）',
      subHTML.includes('<div class="sub">力量 · 胸</div>') && subHTML.includes('<div class="sub">有氧 · 全身</div>')
      && subHTML.includes('<div class="sub">柔韧 · 全身</div>'), 'sub=' + (subHTML.match(/<div class="sub">[^<]*<\/div>/g) || []).join(' , '));
-  ok('T7n 概览今日运动卡：卡头只有卡名，进度 chip + 「＋ 添加运动」都在卡底最后一行（对齐今日睡眠卡）',
-     homeHTML.includes('<h3><span>📋 今日运动</span></h3>')
+  ok('T7n 概览今日运动卡：卡头只有卡名（+ 拖动抓手），进度 chip + 「＋ 添加运动」都在卡底最后一行（对齐今日睡眠卡）',
+     homeHTML.includes('<div class="card" data-hcard="workout" data-wide="1"><h3><span>📋 今日运动</span>')
+     && homeHTML.includes('data-hcard-grip title="按住拖动排序"')
      && homeHTML.includes('<div class="row mt" style="align-items:center"><span class="chip">0/1</span>'
         + '<button class="btn sm ghost" data-additem="' + ev('today()') + '" style="margin-left:auto">＋ 添加运动</button></div>')
      && !homeHTML.includes('今日运动</span><span class="chip')

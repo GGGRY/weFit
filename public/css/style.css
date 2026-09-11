@@ -135,6 +135,27 @@ a{color:var(--brand-ink)}
 .tile.accent{background:linear-gradient(150deg,var(--brand-soft),var(--surface))}
 .tile.accent .val{color:var(--brand-ink)}
 
+/* ============ 概览页「今日卡片」区（可拖动排序） ============
+   顶部磁贴行不在 .home-cards 里，固定不动；卡间距交给 grid gap，故容器内的 .card margin 清零 */
+.home-cards{display:grid;gap:16px;margin-top:14px}
+.home-cards>.card{margin:0;cursor:grab}
+.home-cards>.card[data-wide]{grid-column:1/-1}   /* 宽屏整行：饮食/运动/打卡 */
+/* 抓手：鼠标悬停卡头时变明显，手机常显淡淡的（长按也能拾取，它只是把“能拖”显示出来） */
+.hcard-grip{margin-left:auto;padding:0 3px;color:var(--ink-3);opacity:.5;font-size:14px;line-height:1;
+  cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;transition:opacity .15s,color .15s}
+.home-cards .card h3:hover .hcard-grip{opacity:1}
+.hcard-grip:hover{color:var(--brand-ink)}
+/* 长按待拾取 / 已拾取（拖动中要禁掉过渡，卡片是逐帧跟手的） */
+.home-cards .card.pressing{transform:scale(.985);transition:transform .15s}
+.home-cards .card.dragging{position:relative;z-index:5;cursor:grabbing;transition:none;
+  box-shadow:0 12px 30px -10px rgba(0,0,0,.4)}
+body.hcard-dragging{cursor:grabbing;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+body.hcard-dragging input,body.hcard-dragging textarea{user-select:text;-webkit-user-select:text}
+@media(min-width:900px){
+  /* 宽屏固定两列（不用 auto-fit：1080px 宽会算出三列，只剩饮水/睡眠两张窄卡时右边空一列） */
+  .home-cards{grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-flow:row dense;align-items:start}
+}
+
 /* 大数字 hero */
 .hero{font-size:42px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-.5px}
 .hero .unit{font-size:15px;color:var(--ink-2);font-weight:600;margin-left:4px}
@@ -311,6 +332,7 @@ a{color:var(--brand-ink)}
   .main::-webkit-scrollbar{display:none;width:0;height:0}
   /* 移动端更紧凑(2026-09-11 按要求)：卡间距 16px → 12px。桌面侧保持 16px */
   .card{margin-bottom:12px}
+  .home-cards{gap:12px}
   /* 概览页顶部问候语手机端居中(2026-09-11 按要求)。只这一行居中——下方磁贴/卡片仍左对齐 */
   .home-greet{text-align:center}
   .hero{font-size:34px}

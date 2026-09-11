@@ -205,6 +205,8 @@ function migrate(db) {
   addColumn(db, 'users', 'onboarded', 'INTEGER NOT NULL DEFAULT 0');
   addColumn(db, 'users', 'foods_json', 'TEXT');
   addColumn(db, 'users', 'exercises_json', 'TEXT');
+  /* 概览页「今日卡片」的拖动顺序（5 个 card id 的 JSON 数组；NULL = 用客户端默认序） */
+  addColumn(db, 'users', 'home_order_json', 'TEXT');
   /* 系统共享库：单行 app 上整存 {foods, exercises}，管理员维护 */
   addColumn(db, 'app', 'system_json', 'TEXT');
   /* 身体数据新增「小腿围」（存量库 ALTER 补列，旧值保持 NULL） */

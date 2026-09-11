@@ -204,6 +204,32 @@ async function main() {
   r = await A.req('GET', '/api/state');
   ok('T14c A 的树里也只有自己', Object.keys(r.json.data.users).length === 1 && r.json.data.active === uidA);
 
+  /* v4.12 新增 users.home_order_json（概览卡片拖动顺序）：新列写入→读出保真；
+   * 且「键缺失 vs 空数组」都必须原样往返（replaceUser 用 jz、composeUser 用 put，不可用 || [] 之类抹平） */
+  const withHO = JSON.parse(JSON.stringify(small));
+  withHO.users[uidA].homeOrder = ['habits', 'sleep', 'water', 'workout', 'diet'];
+  let hoRev = (await A.req('GET', '/api/state')).json.rev;
+  r = await A.req('PUT', '/api/state', { rev: hoRev, data: withHO });
+  ok('T14d homeOrder 落库 → rev+1', r.status === 200 && r.json.rev === hoRev + 1, JSON.stringify(r.json).slice(0, 120));
+  r = await A.req('GET', '/api/state');
+  ok('T14e homeOrder 原序读出（新列不是只写不读）',
+     deepEq(normalizeExpected(withHO, uidA), r.json.data)
+     && JSON.stringify(r.json.data.users[uidA].homeOrder) === JSON.stringify(withHO.users[uidA].homeOrder),
+     LAST_FAIL || JSON.stringify(r.json.data.users[uidA].homeOrder));
+  const emptyHO = JSON.parse(JSON.stringify(withHO));
+  emptyHO.users[uidA].homeOrder = [];
+  r = await A.req('PUT', '/api/state', { data: emptyHO });
+  r = await A.req('GET', '/api/state');
+  ok('T14f 空数组也保真（不被 || [] 一类的写法吃掉）',
+     Array.isArray(r.json.data.users[uidA].homeOrder) && r.json.data.users[uidA].homeOrder.length === 0,
+     JSON.stringify(r.json.data.users[uidA].homeOrder));
+  const noHO = JSON.parse(JSON.stringify(withHO));
+  delete noHO.users[uidA].homeOrder;
+  r = await A.req('PUT', '/api/state', { data: noHO });
+  r = await A.req('GET', '/api/state');
+  ok('T14g 树里无 homeOrder 键 → 读回也不凭空多出该键',
+     !('homeOrder' in r.json.data.users[uidA]) && deepEq(normalizeExpected(noHO, uidA), r.json.data), LAST_FAIL);
+
   /* ============ 系统库 ============ */
   r = await anon.req('GET', '/api/system/library');
   ok('T15a 未登录读系统库→401', r.status === 401);

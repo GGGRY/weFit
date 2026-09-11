@@ -105,7 +105,11 @@ const USER_COLORS = [
   {id:'pink',   hex:'#e87ba4'},
 ];
 const USER_AVATARS = ['🙂','😊','🦁','🐱','🐶','🐼','🐯','🦊','🐸','🐰','🦄','⭐','🌱','⚡','💪','🏃','🍀','🌊','🔥','😎'];
-const DATA_FIELDS = ['profile','goal','activity','waterTarget','nutrition','meals','workouts','body','habits','sleep','water'];
+const DATA_FIELDS = ['profile','goal','activity','waterTarget','nutrition','meals','workouts','body','habits','sleep','water','homeOrder'];
+/* 概览页「今日卡片」的默认顺序（顶部磁贴行不参与拖动，见 renderHome/HOME_CARDS）。
+ * 顺序存进本人数树 state.homeOrder＝这 5 个 id 的全排列，与「当前是否显示」无关
+ * （饮水目标设 0 时卡不渲染，但它的位次保留，重新打开饮水后回到原位）。 */
+const HOME_ORDER_DEFAULT = ['diet','workout','water','sleep','habits'];
 
 function seedFoodArr(){ return SEED_FOODS.map((f,i)=>({id:'f'+i, name:f.name, per100:Object.assign({}, f.per100)})); }
 function seedExArr(){ return SEED_EXERCISES.map((e,i)=>({id:'e'+i, name:e.name, cat:e.cat, muscle:e.muscle, mode:e.mode})); }
@@ -129,6 +133,7 @@ function freshUserData(){
     habits: defaultHabits(),
     sleep:{},
     water:{},
+    homeOrder: HOME_ORDER_DEFAULT.slice(),
   };
 }
 function newUser(name, avatar, colorId){
@@ -214,6 +219,8 @@ function ensureUserIntact(u){
   });
   if(u.habits === undefined || !u.habits.length) u.habits = defaultHabits();
   normalizeWorkoutDays(u);   /* 运动：计划/记录合并后的形状清洗（见上） */
+  /* 概览卡顺序：去重/丢未知 id/补缺（缓存树/服务器树/导入树共用这一处咽喉，同 sleep 的做法） */
+  u.homeOrder = resolveHomeOrder(u.homeOrder);
   if(!u.color) u.color = 'green';
   if(!u.avatar) u.avatar = '🙂';
   if(!u.name) u.name = '未命名';
@@ -1041,11 +1048,14 @@ function bindPullToRefresh(){
   paint(0, false);
 
   el.addEventListener('touchstart', e => {
+    /* 概览卡拖动中：下拉刷新让路，否则长按下拉会同时拉起两个手势 */
+    if(homeDrag){ startY = null; paint(0, false); return; }
     if(e.touches.length !== 1 || el.scrollTop > 0 || document.querySelector('.authgate,.overlay')){ startY = null; return; }
     startY = e.touches[0].clientY; armed = false; paint(0, false);
   }, {passive:true});
 
   el.addEventListener('touchmove', e => {
+    if(homeDrag){ startY = null; paint(0, false); return; }
     if(startY === null) return;
     if(el.scrollTop > 0){ startY = null; paint(0, false); return; }   /* 已往上滚过就不再接管 */
     const dy = e.touches[0].clientY - startY;
@@ -1056,6 +1066,7 @@ function bindPullToRefresh(){
   }, {passive:false});
 
   const end = () => {
+    if(homeDrag){ startY = null; armed = false; paint(0, false); return; }
     if(startY === null) return;
     const fire = armed && dist >= THRESHOLD;
     startY = null; armed = false;
@@ -1071,6 +1082,7 @@ function bindPullToRefresh(){
   el.addEventListener('touchcancel', end, {passive:true});
 }
 function renderView(){
+  cancelHomeDrag();   /* 切页时若有拖动中的卡片，收干净（否则监听器/样式会带到下一页） */
   const map = { home:renderHome, diet:renderDiet, train:renderTrain, body:renderBody, stats:renderStats, settings:renderSettings };
   (map[curView])();
 }
@@ -1257,7 +1269,56 @@ function tileHTML(lab, val, unit, delta, deltaCls, icon, deltaColor){
     (delta ? '<div class="delta ' + (deltaCls||'') + '"' + (deltaColor ? ' style="color:' + deltaColor + '"' : '') + '>' + delta + '</div>' : '') + '</div>';
 }
 
+/* ---------- 概览「今日卡片」的排序契约 ----------
+ * 5 张卡共用 .home-cards 容器，DOM 顺序 = 用户顺序；拖动只摸 DOM + 落 state.homeOrder，
+ * 不重渲染（卡内监听器不用重绑，也不闪）。顶部磁贴行不在容器里，固定不动。
+ * HOME_CARD_WIDE：宽屏（≥900px）下整行占满的卡；其余（饮水/睡眠）可两列并排。 */
+const HOME_CARD_WIDE = { diet:1, workout:1, habits:1 };
+
+/* 只做「认识 + 去重」（不补缺）：mergeOrder 判定"当时可见"靠它，
+ * 补缺会把不在 DOM 里的卡当成可见卡 */
+function orderFilter(list){
+  const out = [];
+  (Array.isArray(list) ? list : []).forEach(id => {
+    if(HOME_ORDER_DEFAULT.indexOf(id) >= 0 && out.indexOf(id) < 0) out.push(id);
+  });
+  return out;
+}
+/* 存储顺序 → 渲染顺序：丢未知 id、去重、补齐缺的（含未来新增的卡） */
+function resolveHomeOrder(stored){
+  const out = orderFilter(stored);
+  HOME_ORDER_DEFAULT.forEach(id => { if(out.indexOf(id) < 0) out.push(id); });
+  return out;
+}
+/* 拖完只拿得到「当时可见」的顺序：把当前不显示的卡按旧序里它后面第一个可见邻居为锚点插回，
+ * 保证隐藏期间拖别的卡不会把饮水卡的位次冲掉（多张隐藏卡按旧序依次插，相对顺序不变）。 */
+function mergeOrder(visibleNew, fullOld){
+  const full = resolveHomeOrder(fullOld), vis = orderFilter(visibleNew);
+  const out = vis.slice();
+  full.forEach((id, i) => {
+    if(vis.indexOf(id) >= 0) return;
+    let succ = null;
+    for(let j = i + 1; j < full.length; j++){ if(vis.indexOf(full[j]) >= 0){ succ = full[j]; break; } }
+    out.splice(succ === null ? out.length : out.indexOf(succ), 0, id);
+  });
+  return out;
+}
+/* 卡头右端的抓手：手机长按也能拾取，抓柄只是把「能拖」显示出来
+ * （触屏下抓柄 touch-action:none，按下即拖，不用等长按） */
+function hcardGrip(){
+  return '<span class="hcard-grip" data-hcard-grip title="按住拖动排序" aria-hidden="true">⠿</span>';
+}
+/* 给卡注入 data-hcard（拖动标识）+ 抓手。5 张卡的 HTML 都以 <div class="card" 开头、
+ * 首个 </h3> 就是自己的卡头，故这两处替换是安全的 */
+function tagCard(id, html){
+  if(!html) return '';
+  return html
+    .replace(/^<div class="card"/, '<div class="card" data-hcard="' + id + '"' + (HOME_CARD_WIDE[id] ? ' data-wide="1"' : ''))
+    .replace('</h3>', hcardGrip() + '</h3>');
+}
+
 function renderHome(){
+  cancelHomeDrag();   /* 直接调 renderHome 的回调（饮水/睡眠改完重绘）不走 renderView，这里兵底 */
   const t = today();
   const T = target();
   const eat = dayTotals(t);
@@ -1268,27 +1329,8 @@ function renderHome(){
   const habToday = state.habits.filter(h => h.done[t]).length;
   const day = workoutForDate(t);
   const dn = day ? doneCount(day) : 0;
-  const all = allDone(day);
   const itemTotal = day ? day.items.length : 0;                  /* 概览磁贴「今日运动」的分母 */
   const bmiV = bmi(), bmiInfo = bmiTone(bmiV);                  /* 概览磁贴「BMI」 */
-
-  let planHTML = '';
-  if(day){
-    /* 逐项：行内打卡圆钮 + ✏️/🗑（与运动页同一套）；卡头只留卡名，
-     * 进度 chip 与「＋ 添加运动」挪到卡底最后一行（对齐今日睡眠卡：左信息 + 右按钮） */
-    planHTML =
-      '<div class="card"><h3><span>' + (all ? '✅' : '📋') + ' 今日运动</span></h3>' +
-      (day.items.length ? day.items.map(it => exRowHTML(day, it, false)).join('')
-                        : '<div class="empty" style="padding:12px">今天还没有运动项<br><span class="tiny">点「＋ 添加运动」加一项</span></div>') +
-      '<div class="row mt" style="align-items:center">' +
-        '<span class="chip' + (all ? ' ok' : '') + '">' + dn + '/' + day.items.length + '</span>' +
-        /* margin-left:auto 而非 space-between：窄卡换行时按钮仍靠右，不会跳到下一行行首 */
-        '<button class="btn sm ghost" data-additem="' + esc(day.date) + '" style="margin-left:auto">＋ 添加运动</button>' +
-      '</div>' +
-      '</div>';
-  } else {
-    planHTML = '<div class="card"><h3>📋 今日运动</h3><div class="empty"><div class="e-ic">🛋️</div>今天还没有运动项<br><button class="btn sm mt" data-additem="' + t + '">＋ 添加运动</button></div></div>';
-  }
 
   const html =
     /* 问候语：手机端居中（.home-greet，见 style.css 的 ≤899px 块）；桌面侧仍左对齐与下方内容对齐 */
@@ -1302,31 +1344,13 @@ function renderHome(){
       tileHTML('今日运动', itemTotal ? dn + '/' + itemTotal : '--', itemTotal ? '项' : '', '', '') +
       tileHTML('打卡', habToday + '/' + state.habits.length, '', '', '') +
     '</div>' +
-    '<div class="card" style="margin-top:14px"><h3>🍽️ 今日饮食</h3>' +
-      (eat.kcal === 0 ? '<div class="empty"><div class="e-ic">🍽️</div>还没有记录今天的饮食<div class="mt"><button class="btn primary sm" data-go2="diet">去记录</button></div></div>'
-        : '<div class="small">' +
-          '<div style="display:flex;justify-content:space-between;margin-bottom:5px"><span class="muted">已摄入 vs 目标 <span class="tiny" style="font-weight:400;color:' + (calPct>100?'var(--ink-2)':'var(--cat3)') + '">' + (calPct>100 ? '已超 ' + (calPct-100) + '%' : '还差 ' + (100-calPct) + '%') + '</span></span><b>' + fmtNum(eat.kcal) + ' / ' + fmtNum(T.kcal) + ' kcal</b></div>' +
-          '<div class="meter"><i style="width:' + clamp(calPct,0,100) + '%" class="' + (calPct>100?'over':'') + '"></i></div>' +
-          '</div>') +
-      /* chips 行下边带分隔线（`.lrow` 的 border-bottom 同款）：与运动/睡眠卡一样，
-       * 卡底入口行上方有一条横线，把入口与上面的内容隔开 */
-      (eat.kcal ? '<div class="row gap8" style="margin-top:10px;padding-bottom:12px;border-bottom:1px solid var(--line)">' +
-        '<span class="chip b1">蛋白 ' + eat.p + 'g / ' + T.p + 'g</span>' +
-        '<span class="chip b2">碳水 ' + eat.c + 'g / ' + T.c + 'g</span>' +
-        '<span class="chip b3">脂肪 ' + eat.f + 'g / ' + T.f + 'g</span>' +
-      '</div>' +
-      /* 有记录时的入口：与今日运动/今日睡眠卡同款同位（卡底一行、右对齐 ghost），
-       * 文案用「＋ 记录一下」而不是「去记录」——三张卡的右下按钮统一成「＋ 动宾」
-       * margin-left:auto 而非 space-between：窄卡换行时按钮仍靠右 */
-      '<div class="row mt" style="align-items:center"><button class="btn sm ghost" data-go2="diet" style="margin-left:auto">＋ 记录一下</button></div>' : '') +
-    '</div>' +
-    planHTML +
-    lifeTodayHTML() +
-    habitCardHTML();
+    /* 除顶部磁贴行外，其余「今日卡片」都进这个容器：顺序由 state.homeOrder 决定、可拖动调整 */
+    '<div class="home-cards" id="home_cards">' + homeCardsHTML(t, eat, calPct) + '</div>';
 
   $('#view').innerHTML = html;
   bindHabitEvents();
   bindLifeToday($('#view'));
+  bindHomeSort($('#home_cards'));
   const q = $('#view [data-additem]');
   if(q) q.addEventListener('click', () => openItemDlg(q.dataset.additem));
   bindItemChecks($('#view'));
@@ -1334,6 +1358,220 @@ function renderHome(){
   if(g) g.addEventListener('click', () => go('diet'));
   const gh = $('#view [data-go2="settings"]');
   if(gh) gh.addEventListener('click', () => go('settings'));
+}
+
+/* 今日饮食卡（原 renderHome 内联；与磁贴的间距交给 .home-cards 的 margin/gap，故不再内联 margin-top） */
+function homeDietCardHTML(eat, calPct){
+  const T = target();
+  return '<div class="card"><h3>🍽️ 今日饮食</h3>' +
+    (eat.kcal === 0 ? '<div class="empty"><div class="e-ic">🍽️</div>还没有记录今天的饮食<div class="mt"><button class="btn primary sm" data-go2="diet">去记录</button></div></div>'
+      : '<div class="small">' +
+        '<div style="display:flex;justify-content:space-between;margin-bottom:5px"><span class="muted">已摄入 vs 目标 <span class="tiny" style="font-weight:400;color:' + (calPct>100?'var(--ink-2)':'var(--cat3)') + '">' + (calPct>100 ? '已超 ' + (calPct-100) + '%' : '还差 ' + (100-calPct) + '%') + '</span></span><b>' + fmtNum(eat.kcal) + ' / ' + fmtNum(T.kcal) + ' kcal</b></div>' +
+        '<div class="meter"><i style="width:' + clamp(calPct,0,100) + '%" class="' + (calPct>100?'over':'') + '"></i></div>' +
+        '</div>') +
+    /* chips 行下边带分隔线（`.lrow` 的 border-bottom 同款）：与运动/睡眠卡一样，
+     * 卡底入口行上方有一条横线，把入口与上面的内容隔开 */
+    (eat.kcal ? '<div class="row gap8" style="margin-top:10px;padding-bottom:12px;border-bottom:1px solid var(--line)">' +
+      '<span class="chip b1">蛋白 ' + eat.p + 'g / ' + T.p + 'g</span>' +
+      '<span class="chip b2">碳水 ' + eat.c + 'g / ' + T.c + 'g</span>' +
+      '<span class="chip b3">脂肪 ' + eat.f + 'g / ' + T.f + 'g</span>' +
+    '</div>' +
+    /* 有记录时的入口：与今日运动/今日睡眠卡同款同位（卡底一行、右对齐 ghost），
+     * 文案用「＋ 记录一下」而不是「去记录」——三张卡的右下按钮统一成「＋ 动宾」
+     * margin-left:auto 而非 space-between：窄卡换行时按钮仍靠右 */
+    '<div class="row mt" style="align-items:center"><button class="btn sm ghost" data-go2="diet" style="margin-left:auto">＋ 记录一下</button></div>' : '') +
+    '</div>';
+}
+
+/* 今日运动卡（原 renderHome 里的 planHTML） */
+function homeWorkoutCardHTML(t, day){
+  if(!day) return '<div class="card"><h3>📋 今日运动</h3><div class="empty"><div class="e-ic">🛋️</div>今天还没有运动项<br><button class="btn sm mt" data-additem="' + t + '">＋ 添加运动</button></div></div>';
+  /* 逐项：行内打卡圆钮 + ✏️/🗑（与运动页同一套）；卡头只留卡名，
+   * 进度 chip 与「＋ 添加运动」挪到卡底最后一行（对齐今日睡眠卡：左信息 + 右按钮） */
+  const dn = doneCount(day), all = allDone(day);
+  return '<div class="card"><h3><span>' + (all ? '✅' : '📋') + ' 今日运动</span></h3>' +
+    (day.items.length ? day.items.map(it => exRowHTML(day, it, false)).join('')
+                      : '<div class="empty" style="padding:12px">今天还没有运动项<br><span class="tiny">点「＋ 添加运动」加一项</span></div>') +
+    '<div class="row mt" style="align-items:center">' +
+      '<span class="chip' + (all ? ' ok' : '') + '">' + dn + '/' + day.items.length + '</span>' +
+      /* margin-left:auto 而非 space-between：窄卡换行时按钮仍靠右，不会跳到下一行行首 */
+      '<button class="btn sm ghost" data-additem="' + esc(day.date) + '" style="margin-left:auto">＋ 添加运动</button>' +
+    '</div>' +
+    '</div>';
+}
+
+/* 概览卡片区：按 state.homeOrder 拼装；空串 = 这张卡当前不显示（饮水目标设 0） */
+function homeCardsHTML(t, eat, calPct){
+  const day = workoutForDate(t);
+  const parts = {
+    diet: homeDietCardHTML(eat, calPct),
+    workout: homeWorkoutCardHTML(t, day),
+    water: state.waterTarget ? lifeWaterCard(t, 'home') : '',
+    sleep: lifeSleepCard(t, 'home'),
+    habits: habitCardHTML(),
+  };
+  return resolveHomeOrder(state.homeOrder).map(id => tagCard(id, parts[id])).filter(Boolean).join('');
+}
+
+/* ---------- 概览卡拖动排序（零依赖手写：HTML5 DnD 在触屏上不可用） ----------
+ * 触屏：长按 250ms 拾取（期间移动 >8px 视为滚动，取消）；抓柄按下即拾取。
+ * 鼠标：按下即拾取（桌面不存在“滚动抢手势”问题）。
+ * 拖动只挪 DOM + 落 state.homeOrder，不重渲染（卡内监听器不重绑、不闪）。 */
+let homeDrag = null;                        /* 当前拖动会话；bindPullToRefresh / cancelHomeDrag 靠它 */
+const HDRAG = { LONG:250, CANCEL:8, EDGE:64, SPEED:12 };
+const raf = fn => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(fn) : setTimeout(fn, 16));
+const caf = id => { if(!id) return; if(typeof cancelAnimationFrame === 'function') cancelAnimationFrame(id); else clearTimeout(id); };
+
+function homeScrollPane(){                 /* 手机端滚动容器收在 .main，桌面滚文档 */
+  const m = document.getElementById('main');
+  return (m && m.scrollHeight > m.clientHeight + 1) ? m : null;
+}
+function cancelHomeDrag(){
+  const d = homeDrag; if(!d) return;
+  homeDrag = null;
+  if(d.timer){ clearTimeout(d.timer); d.timer = 0; }
+  caf(d.raf);
+  d.card.classList.remove('dragging', 'pressing');
+  d.card.style.transform = '';
+  document.body.classList.remove('hcard-dragging');
+  if(d.touch){
+    window.removeEventListener('touchmove', d.onMove);
+    window.removeEventListener('touchend', d.onUp);
+    window.removeEventListener('touchcancel', d.onUp);
+  } else {
+    window.removeEventListener('pointermove', d.onMove);
+    window.removeEventListener('pointerup', d.onUp);
+    window.removeEventListener('pointercancel', d.onUp);
+  }
+}
+/* 拖动结束后紧跟的那次 click 不能落到卡内按钮上（长按抬手会补一个 click） */
+function swallowNextClick(){
+  const stop = e => { e.stopPropagation(); e.preventDefault(); off(); };
+  const off = () => { document.removeEventListener('click', stop, true); clearTimeout(timer); };
+  const timer = setTimeout(off, 400);
+  document.addEventListener('click', stop, true);
+}
+
+function bindHomeSort(container){
+  if(!container || typeof container.querySelectorAll !== 'function') return;
+  const cards = () => [...container.querySelectorAll('.card[data-hcard]')];
+  if(cards().length < 2) return;                 /* 只有一张卡：拖没意义（也不该长按选中文字） */
+  const pane = homeScrollPane();
+  const pickable = el => !(el && el.closest && el.closest('button,input,a,textarea,select,label'));
+
+  /* 落位：读 DOM 顺序 → 把不显示的卡插回 → 存 */
+  function commit(){
+    const next = mergeOrder(cards().map(c => c.dataset.hcard), state.homeOrder);
+    if(next.join(',') !== resolveHomeOrder(state.homeOrder).join(',')){ state.homeOrder = next; save(); }
+  }
+  /* 跟手 + 越过邻居中线就交换 DOM；交换后用实际布局位移把起算点抵消掉，视觉上原地不动
+   * （单列交换 = 一个卡高；宽屏同排换列 ≈0；旧写法用邻居高度，同排换列时会凭空跳一截） */
+  const DEAD = 6;   /* 中线死区：同一排两张窄卡的中线几乎重合，给几像素余量免得手抖就换位 */
+  function follow(d){
+    d.dy = d.lastY - d.y0;
+    for(let guard = 0; guard < 20; guard++){
+      const card = d.card;
+      card.style.transform = d.dy ? 'translateY(' + d.dy + 'px)' : '';
+      if(!d.dy) return;
+      const list = cards(), i = list.indexOf(card);
+      if(i < 0) return;
+      const r = card.getBoundingClientRect(), mid = (r.top + r.bottom) / 2;
+      const pr = i > 0 ? list[i-1].getBoundingClientRect() : null;
+      const nr = i < list.length - 1 ? list[i+1].getBoundingClientRect() : null;
+      const up = !!pr && mid < (pr.top + pr.bottom) / 2 - DEAD;
+      const down = !up && !!nr && mid > (nr.top + nr.bottom) / 2 + DEAD;
+      if(!up && !down) return;
+      const before = card.getBoundingClientRect().top;
+      if(up) container.insertBefore(card, list[i-1]);
+      else container.insertBefore(card, list[i+1].nextSibling);
+      d.y0 += card.getBoundingClientRect().top - before;
+      d.dy = d.lastY - d.y0;
+    }
+  }
+  function moveTo(d, y){
+    d.lastY = y;
+    d.edge = y < HDRAG.EDGE ? -1 : (y > window.innerHeight - HDRAG.EDGE ? 1 : 0);
+    follow(d);
+  }
+  /* 拖到屏幕上下边缘时自动滚（不然卡长过一屏就没法跨屏搬） */
+  function tick(){
+    const d = homeDrag; if(!d) return;
+    d.raf = raf(tick);
+    if(!d.edge) return;
+    const delta = d.edge * HDRAG.SPEED;
+    if(pane) pane.scrollTop += delta; else window.scrollBy(0, delta);
+    d.y0 -= delta;                               /* 内容相对指位移了，起算点跟着挪 */
+    follow(d);
+  }
+  function start(card, y, fromTouch){
+    const d = { card, y0:y, lastY:y, dy:0, edge:0, touch:fromTouch, timer:0, raf:0 };
+    d.onUp = () => finish(d);
+    d.onMove = ev => {
+      const t = ev.touches ? ev.touches[0] : ev;
+      if(!t) return;
+      if(ev.touches && ev.cancelable) ev.preventDefault();   /* 触屏：压住滚动/回弹 */
+      moveTo(d, t.clientY);
+    };
+    if(fromTouch){
+      window.addEventListener('touchmove', d.onMove, {passive:false});   /* 非 passive 才能 preventDefault */
+      window.addEventListener('touchend', d.onUp, {passive:true});
+      window.addEventListener('touchcancel', d.onUp, {passive:true});
+    } else {
+      window.addEventListener('pointermove', d.onMove);
+      window.addEventListener('pointerup', d.onUp);
+      window.addEventListener('pointercancel', d.onUp);
+    }
+    homeDrag = d;
+    card.classList.remove('pressing');
+    card.classList.add('dragging');
+    document.body.classList.add('hcard-dragging');
+    if(navigator.vibrate){ try { navigator.vibrate(10); } catch(e){} }
+    d.raf = raf(tick);
+  }
+  function finish(d){
+    if(homeDrag !== d) return;
+    cancelHomeDrag();
+    commit();
+    swallowNextClick();
+  }
+
+  /* --- 触屏：长按拾取（抓柄按下即拾取） --- */
+  let pend = null;
+  function pendClear(){
+    if(!pend) return;
+    clearTimeout(pend.timer);
+    pend.card.classList.remove('pressing');
+    window.removeEventListener('touchmove', pend.onMove);
+    window.removeEventListener('touchend', pendClear);
+    window.removeEventListener('touchcancel', pendClear);
+    pend = null;
+  }
+  container.addEventListener('touchstart', e => {
+    if(homeDrag || pend || e.touches.length !== 1) return;
+    if(document.querySelector('.authgate,.overlay')) return;
+    const y = e.touches[0].clientY;
+    const card = e.target.closest && e.target.closest('.card[data-hcard]');
+    if(!card || !container.contains(card) || !pickable(e.target)) return;
+    if(e.target.closest('[data-hcard-grip]')){ start(card, y, true); return; }
+    pend = { card, y0:y, timer:0, onMove:null };
+    pend.onMove = ev => {
+      const t = ev.touches[0];
+      if(!t || Math.abs(t.clientY - pend.y0) > HDRAG.CANCEL) pendClear();   /* 是页面滚动，不是拖动 */
+    };
+    window.addEventListener('touchmove', pend.onMove, {passive:true});
+    window.addEventListener('touchend', pendClear, {passive:true});
+    window.addEventListener('touchcancel', pendClear, {passive:true});
+    card.classList.add('pressing');
+    pend.timer = setTimeout(() => { const c = pend.card; pendClear(); start(c, y, true); }, HDRAG.LONG);
+  }, {passive:true});
+  /* --- 鼠标：按下即拾取（只认 mouse；触屏的兼容 mouse 事件不会带 pointerType） --- */
+  container.addEventListener('pointerdown', e => {
+    if(homeDrag || e.pointerType !== 'mouse' || e.button !== 0) return;
+    const card = e.target.closest && e.target.closest('.card[data-hcard]');
+    if(!card || !container.contains(card) || !pickable(e.target)) return;
+    start(card, e.clientY, false);
+  });
+  container.addEventListener('dragstart', e => e.preventDefault());   /* 别让浏览器原生拖图/拖字抢走 */
 }
 
 /* =====================================================
@@ -2135,14 +2373,8 @@ function lifeSleepCard(d, ctx){
   '</div>';
 }
 
-/* 概览页两张"今日"卡（date 恒为今天）
- * 饮水目标设为 0（不追踪饮水）时隐藏「今日饮水」卡；.cols-2 为 auto-fit,
- * 只剩睡眠卡时自动占满整行。 */
-function lifeTodayHTML(){
-  /* 卡内置 margin-bottom:0（行内间距由 grid gap 负责），容器补 16px 下边距，
-   * 与其余 .card 的 16px 间距一致——否则手机端两卡堆叠后，睡眠卡与下方打卡卡之间是 0 间隙 */
-  return '<div class="grid cols-2 mt" style="margin-bottom:16px">' + (state.waterTarget ? lifeWaterCard(today(), 'home') : '') + lifeSleepCard(today(), 'home') + '</div>';
-}
+/* 概览页两张"今日"卡（date 恒为今天）的按钮绑定（渲染已改由 homeCardsHTML 按 state.homeOrder 拼装；
+ * 饮水目标设为 0 时那张卡本身就不渲染） */
 function bindLifeToday(v){
   bindWaterCard(v, today(), renderHome);
   bindSleepCard(v, today(), renderHome);
@@ -2362,6 +2594,9 @@ function renderSettings(){
         '<button class="btn danger ghost" id="st_wipe">🗑 清空数据</button>' +
       '</div>' +
       '<div class="tiny" id="st_sync" style="margin-top:10px;color:var(--ink-3)"></div>' +
+      /* 概览卡片拖动顺序的逃生口（只在已被改过时出现，没改过就不占地方） */
+      (resolveHomeOrder(state.homeOrder).join(',') !== HOME_ORDER_DEFAULT.join(',')
+        ? '<div class="row" style="margin-top:8px"><button class="btn sm ghost" id="st_homeorder">↺ 概览卡片顺序：恢复默认</button></div>' : '') +
       '<div class="tiny" style="margin-top:4px;color:var(--ink-3)">各设备登录同一账户，读写的就是同一份服务器数据，无需手动同步；不同账户彼此隔离。本机存储仅作当前账户的离线缓存。历史备份可在上方「导出/导入」搬运。</div>' +
       '<input type="file" id="st_file" accept=".json,application/json" style="display:none">' +
     '</div>' +
@@ -2390,6 +2625,8 @@ function renderSettings(){
   });
   $('#st_file').addEventListener('change', e => { const f = e.target.files[0]; if(f) importData(f); e.target.value = ''; });
   $('#st_wipe').addEventListener('click', () => { if(confirm('真的要清空本账户全部数据吗？此操作不可恢复（会同步清空服务器上的本人数据，不影响其他账户）。')) wipeAll(); });
+  const ho = $('#st_homeorder');
+  if(ho) ho.addEventListener('click', () => { state.homeOrder = HOME_ORDER_DEFAULT.slice(); save(); renderSettings(); toast('已恢复概览卡片默认顺序'); });
   refreshSyncStatus();
 }
 
