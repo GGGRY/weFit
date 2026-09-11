@@ -82,7 +82,7 @@ a{color:var(--brand-ink)}
 .navbtn:hover{background:var(--surface-3)}
 .navbtn.active{background:var(--brand-soft);color:var(--brand-ink);font-weight:700}
 .navbtn.active .ic{transform:scale(1.05)}
-.main{flex:1;min-width:0;padding:20px clamp(14px,3vw,32px) 40px;max-width:1080px}
+.main{flex:1;min-width:0;padding:20px clamp(12px,3vw,32px) 40px;max-width:1080px}
 .av{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-size:15px;background:var(--surface-3);flex:none}
 .av.big{width:40px;height:40px;font-size:21px}
 .avatar-ring{box-shadow:inset 0 0 0 2px var(--ring,#0e8a63)}
@@ -309,6 +309,8 @@ a{color:var(--brand-ink)}
      而手机原生本就是滚动时浮现的覆盖式滚动条。移动端隐掉,腾出宽度。 */
   .main{scrollbar-width:none}
   .main::-webkit-scrollbar{display:none;width:0;height:0}
+  /* 移动端更紧凑(2026-09-11 按要求)：卡间距 16px → 12px。桌面侧保持 16px */
+  .card{margin-bottom:12px}
   .hero{font-size:34px}
 }
 
