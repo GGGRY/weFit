@@ -708,9 +708,20 @@ function delItem(date, itemId){
 }
 
 /* ---------- 身体数据辅助 ---------- */
+/* 指标清单：身体页磁贴 / 趋势图下拉 / 记录表列 / 记录弹窗字段 / 写库白名单 都以此为准 */
+const MEASURES = [
+  {id:'weight', label:'体重', unit:'kg'},
+  {id:'chest',  label:'胸围', unit:'cm'},
+  {id:'waist',  label:'腰围', unit:'cm'},
+  {id:'hip',    label:'臀围', unit:'cm'},
+  {id:'arm',    label:'臂围', unit:'cm'},
+  {id:'thigh',  label:'大腿围', unit:'cm'},
+  {id:'calf',   label:'小腿围', unit:'cm'},
+  {id:'bf',     label:'体脂率', unit:'%'},
+];
 function upsertBody(rec){
   const patch = {};
-  ['weight','chest','waist','hip','arm','thigh','bf'].forEach(k => { if(rec[k] !== undefined && rec[k] !== '') patch[k] = num(rec[k]); });
+  MEASURES.forEach(m => { const k = m.id; if(rec[k] !== undefined && rec[k] !== '') patch[k] = num(rec[k]); });
   let exIx = -1;
   for(let i = state.body.length - 1; i >= 0; i--){ if(state.body[i].date === rec.date){ exIx = i; break; } }
   if(exIx >= 0){ Object.assign(state.body[exIx], patch); } else { state.body.push(Object.assign({date:rec.date}, patch)); }
@@ -1880,16 +1891,7 @@ function paintSysLib(body, sys){
 /* =====================================================
    身体数据
 ===================================================== */
-const MEASURES = [
-  {id:'weight', label:'体重', unit:'kg'},
-  {id:'chest',  label:'胸围', unit:'cm'},
-  {id:'waist',  label:'腰围', unit:'cm'},
-  {id:'hip',    label:'臀围', unit:'cm'},
-  {id:'arm',    label:'臂围', unit:'cm'},
-  {id:'thigh',  label:'大腿围', unit:'cm'},
-  {id:'bf',     label:'体脂率', unit:'%'},
-];
-let bodyMetric = 'weight';
+let bodyMetric = 'weight';        /* 趋势图当前选中的指标（MEASURES 里的 id） */
 
 function renderBody(){
   const lb = bodyLatest();

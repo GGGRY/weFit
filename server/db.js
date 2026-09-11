@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS body_records (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   seq INTEGER NOT NULL,
   date TEXT NOT NULL,
-  weight REAL, chest REAL, waist REAL, hip REAL, arm REAL, thigh REAL, bf REAL,
+  weight REAL, chest REAL, waist REAL, hip REAL, arm REAL, thigh REAL, calf REAL, bf REAL,
   PRIMARY KEY (user_id, seq)
 );
 /* 睡眠多段：一天可有多段（夜间/午睡/其他休息），seq 保录入顺序 */
@@ -207,6 +207,8 @@ function migrate(db) {
   addColumn(db, 'users', 'exercises_json', 'TEXT');
   /* 系统共享库：单行 app 上整存 {foods, exercises}，管理员维护 */
   addColumn(db, 'app', 'system_json', 'TEXT');
+  /* 身体数据新增「小腿围」（存量库 ALTER 补列，旧值保持 NULL） */
+  addColumn(db, 'body_records', 'calf', 'REAL');
   /* v4.12 第二步（就地补列）：完成粒度由「一天」下放到「每一项」。
    * ① 给存量库补 workout_items.done（新库已在 SCHEMA 里带上，这里是 no-op）；
    * ② 把旧的「整天已完成」下放到它的每一项——数据零丢失，不破坏性重置。

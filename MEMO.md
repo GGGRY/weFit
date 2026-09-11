@@ -57,7 +57,7 @@
 - 每次运动容量统计 Σ(重量×次数)
 
 ### 4. 身体数据 📏
-- 7 项指标：体重/胸围/腰围/臀围/臂围/大腿围/体脂率；可按任意日期补记，同日再存自动合并覆盖
+- 8 项指标：体重/胸围/腰围/臀围/臂围/大腿围/小腿围/体脂率（清单单一来源 = `MEASURES`：磁贴/趋势下拉/记录表头/记录弹窗字段/`upsertBody` 白名单都以此为准）；可按任意日期补记，同日再存自动合并覆盖
 - BMI 圆环；各指标最新值 + 7 天变化
 - 任选指标近 60 条趋势折线；历史表格 + 查看全部
 - 记录体重自动同步「当前体重」（供 BMR 计算）
@@ -135,8 +135,8 @@ weFit/
 │  ├─ test/roundtrip.test.js    #   67 项断言：鉴权 + 双账户隔离 + 系统库权限 + 形状保真（含睡眠多段、脏形状清洗与段数上限 400、静态映射）+ 规模压测 + 回归
 │  ├─ test/admin.test.js        #   44 项断言：后台 API（角色/重置密码/删号 + 护栏）+ 系统库三件套白名单
 │  ├─ test/sleep-shape.test.js  #   16 项断言：睡眠形状契约纯函数（两侧共用同一份）
-│  ├─ test/migration.test.js    #   37 项断言：破坏性迁移（sets 拍平 / 计划记录合并）+ v4.12 中间态就地补列（下放 done、rev 不变、回填只做一次）+ 非运动数据逐值完好 + 不复发
-│  ├─ test/render.test.js       #   56 项断言：前端渲染逻辑无头验证（node:vm + DOM/fetch 桩，零依赖）
+│  ├─ test/migration.test.js    #   39 项断言：破坏性迁移（sets 拍平 / 计划记录合并）+ v4.12 中间态就地补列（下放 done、rev 不变、回填只做一次）+ 非运动数据逐值完好 + 不复发
+│  ├─ test/render.test.js       #   65 项断言：前端渲染逻辑无头验证（node:vm + DOM/fetch 桩，零依赖）
 │  └─ data/jjhealth.db          #   SQLite 数据库（.gitignore 已排除）
 └─ MEMO.md
 ```
@@ -162,7 +162,7 @@ weFit/
 | `meals` | (user_id, date, slot, seq) | 饮食条目：slot=早/午/晚/加餐, item_id, name, kcal, p, c, f, g |
 | `workouts` | (user_id, date) | **运动安排**：day_id, name, seq（保数组顺序）；**一天一条**；`done` 列 v4.12 起废弃（存量库保留死列） |
 | `workout_items` | (user_id, date, seq) | 运动动作项：item_id, ex_id, ex_name, cat, muscle, reps, weight, mins, km, **done**（1 = 该项已打勾；任一打勾即算该日已运动） |
-| `body_records` | (user_id, seq) | 身体 7 项：weight/chest/waist/hip/arm/thigh/bf；主键用 seq 因同日可能多条；索引 `idx_body_date(user_id, date)` |
+| `body_records` | (user_id, seq) | 身体 8 项：weight/chest/waist/hip/arm/thigh/calf/bf（`calf` = 小腿围，存量库由 `migrate()` ALTER 补列）；主键用 seq 因同日可能多条；索引 `idx_body_date(user_id, date)` |
 | `sleep_sessions` | (user_id, date, seq) | **睡眠多段**：t(night/nap/rest), bed, wake, mins, quality(1-5)；seq = 录入顺序 |
 | `water_records` | (user_id, date) | cups |
 | `habits` | (user_id, habit_id) | 习惯定义：seq, name, icon, color |

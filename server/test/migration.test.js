@@ -158,6 +158,8 @@ function assertCommonIntact(db, label) {
   ok(label + ' 饮食逐值完好', !!meal && meal.name === '燕麦片' && meal.kcal === 367 && meal.g === 60, JSON.stringify(meal));
   const body = db.prepare('SELECT * FROM body_records WHERE user_id=?').get(UID);
   ok(label + ' 身体记录逐值完好', !!body && body.weight === 72.1 && body.waist === 88.2, JSON.stringify(body));
+  ok(label + ' 身体新增列「小腿围」已补上且旧值为 NULL',
+    cols(db, 'body_records').includes('calf') && body.calf === null, cols(db, 'body_records'));
   const slp = db.prepare('SELECT * FROM sleep_sessions WHERE user_id=?').get(UID);
   ok(label + ' 睡眠段逐值完好', !!slp && slp.mins === 490 && slp.quality === 4, JSON.stringify(slp));
   ok(label + ' 饮水/习惯/账户/会话完好',

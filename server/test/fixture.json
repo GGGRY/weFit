@@ -57,7 +57,7 @@
         { "date": "2026-08-01", "weight": 72.1, "waist": 88.2 },
         { "date": "2026-08-01", "chest": 100 },
         { "date": "2026-09-02" },
-        { "date": "2026-09-03", "weight": 71.2, "chest": 99.8, "waist": 87.5, "hip": 95, "arm": 33, "thigh": 56, "bf": 18.4 }
+        { "date": "2026-09-03", "weight": 71.2, "chest": 99.8, "waist": 87.5, "hip": 95, "arm": 33, "thigh": 56, "calf": 37.5, "bf": 18.4 }
       ],
       "habits": [
         { "id": "h_water", "name": "饮水达标", "icon": "💧", "color": "var(--cat1)", "done": { "2026-09-01": true, "2026-09-02": true } },

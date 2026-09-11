@@ -13,7 +13,8 @@
 const { normalizeSleepDay, SLEEP_MAX_SEGS } = require('../public/js/sleep-shape.js');
 
 const SLOTS = ['breakfast', 'lunch', 'dinner', 'snack'];
-const BODY_KEYS = ['weight', 'chest', 'waist', 'hip', 'arm', 'thigh', 'bf'];
+/* 身体指标列（顺序即写库列序，与前端 public/js/app.js 的 MEASURES 对位；新增指标两边同步加） */
+const BODY_KEYS = ['weight', 'chest', 'waist', 'hip', 'arm', 'thigh', 'calf', 'bf'];
 
 /* 带 user_id 外键的子表(删自己子树用;顺序无关,写事务内完成) */
 /* 睡眠子表 = sleep_sessions（多段）；删账户靠 FK CASCADE 级联清理
@@ -161,9 +162,10 @@ function insertUserData(db, uid, u) {
       nz(it.cat), nz(it.muscle), nz(it.reps), nz(it.weight), nz(it.mins), nz(it.km), it.done ? 1 : 0));
   });
 
-  /* 身体数据：date 非键（同日多条合法），指标可缺省 */
-  const bIns = db.prepare(`INSERT INTO body_records(user_id, seq, date, weight, chest, waist,
-                           hip, arm, thigh, bf) VALUES (?,?,?,?,?,?,?,?,?,?)`);
+  /* 身体数据：date 非键（同日多条合法），指标可缺省。列名/占位符都由 BODY_KEYS 生成，
+   * 避免 SQL 列清单与 BODY_KEYS 脱节（漏一列就是静默丢字段） */
+  const bIns = db.prepare(`INSERT INTO body_records(user_id, seq, date, ${BODY_KEYS.join(', ')})
+                           VALUES (?,?,?,${BODY_KEYS.map(() => '?').join(',')})`);
   const body = Array.isArray(u.body) ? u.body : [];
   body.forEach((r0, i) => {
     const r = (r0 && typeof r0 === 'object') ? r0 : {};   // 脏元素（null/标量）降级成空行，不抛 TypeError

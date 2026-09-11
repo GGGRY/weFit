@@ -476,6 +476,27 @@ async function main() {
      JSON.stringify(pure.sort) + ' ' + pure.badge);
   ok('T13e weeklyMinutes/Distances 只累计各自口径', pure.wk[0] === 45 && pure.wk[1] === 5, JSON.stringify(pure.wk));
 
+  /* T14 身体指标清单（未标版号）：新增「小腿围」= MEASURES 单一来源
+     （磁贴/趋势下拉/记录表头/记录弹窗字段/upsertBody 白名单 五处同源） */
+  ev("go('body')");
+  const bHtml = view.__html;
+  const mIds = ev('JSON.stringify(MEASURES.map(m => m.id))');
+  ok('T14a 指标清单 8 项、含 calf、体脂率仍排最后',
+     mIds === '["weight","chest","waist","hip","arm","thigh","calf","bf"]', mIds);
+  ok('T14b 身体页磁贴/趋势下拉/记录表头都有「小腿围」，且磁贴显示夹具里的 37.5',
+     (bHtml.match(/小腿围/g) || []).length >= 3 && bHtml.includes('>37.5<span class="unit">cm</span>'),
+     'n=' + (bHtml.match(/小腿围/g) || []).length + ' v=' + bHtml.includes('37.5'));
+  const hBody = dlgHTML('openBodyDialog()');
+  ok('T14c 记录弹窗有小腿围输入框（data-m="calf"），体重仍标必填',
+     !hBody.startsWith('ERR:') && hBody.includes('data-m="calf"') && hBody.includes('data-m="weight"')
+     && (hBody.match(/class="input bd"/g) || []).length === 8,
+     hBody.startsWith('ERR:') ? hBody : 'bd=' + (hBody.match(/class="input bd"/g) || []).length);
+  ok('T14d upsertBody 白名单跟着 MEASURES 走（calf 能写入，state 复原）',
+     ev("(function(){ const bak = JSON.parse(JSON.stringify(state.body)), kg = state.profile.currentKg;" +
+        " upsertBody({ date:'2030-01-01', weight:70, calf:36.5 });" +
+        " const r = state.body.find(x => x.date === '2030-01-01'); const okk = !!r && r.calf === 36.5;" +
+        " state.body = bak; state.profile.currentKg = kg; return okk; })()") === true);
+
   finish();
 }
 
