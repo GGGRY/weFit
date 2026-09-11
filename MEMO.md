@@ -108,7 +108,8 @@
 - 备份文件在 OneDrive 目录内 = 自动获得异地备份 + OneDrive 版本历史
 
 ### 10. 界面与体验
-- 响应式：手机底部 Tab / 桌面左侧分组边栏；弹窗手机端底部升起
+- 响应式：手机底部 Tab / 桌面左侧分组边栏；弹窗手机端底部升起。Tab 栏尺寸（仅 ≤899px 显示）：图标 25px + 文字 12.5px，整条约 75px 高（另加 `env(safe-area-inset-bottom)`），对应 `.main` 下内边距 106px
+- **滚动容器**：桌面滚文档（`.sidebar` 靠 `sticky` 贴边；`.topbar` `sticky;top:0` + `backdrop-filter` 毛玻璃常驻）；`≤899px` 改滚 `.main`（`html,body{height:100%;overflow:hidden}`，`.app`/`.main` 取 `100dvh`，`100vh` 仅作回退），避免移动浏览器翻页时收起地址栏改变视口高度、把 `fixed;bottom:0` 的 Tab 栏拖着上下跳。随之三处移动端专属修正：①`.topbar` 改 `position:static` 跟着滚走——`.main` 成滚动容器后 `backdrop-filter` 不可靠，固定顶栏既挡内容又透出内容，且底部 Tab 栏已标示当前页、标题冗余；②隐 `.main` 滚动条（`scrollbar-width:none` + `::-webkit-scrollbar{display:none}`），否则全局滚动条样式会让这个内层容器常驻一条占宽竖条；③原生下拉刷新随之失效（挂在根滚动器上 + `.main` 的 `overscroll-behavior-y:contain` 阻断滚动链），由手写手势 `bindPullToRefresh()` 补回——`.main` 顶部下拉 0.5 阻尼跟手、过 72px 松手整页重载（重走冷启动收敛），`#ptr` 胶囊指示器，仅 ≤899px 且无登录门/弹窗时接管。切页归顶由 `go(v)` 同时处理 `window` 与 `.main` 两处
 - **移动端适配**：`.tile` 自带 `min-width:130px` 是多列网格溢出根因，网格列一律 `minmax(0,1fr)` + 子项 `min-width:0`；每日目标五 tile 自适应收窄；概览打卡区为**一行一条习惯 + 当天圆钮**（无多日网格/横向滚动，≤560px 圆钮缩至 27px）
 - 深/浅色主题（每账户独立）；手写 SVG 图表；首次引导；Toast；危险操作二次确认
 - 开发调试钩子：`?selftest` 全视图渲染、`?ftest` 15 项功能自测、`?shot=视图名`、`?probe` 数据摘要（**三个会覆盖当前账户为演示数据**的钩子 `?selftest`/`?ftest`/`?shot` 共用同一确认门卫，确认/取消后自动从地址栏剥除钩子；`?shot` 先校验视图名再动数据；自动化场景可 URL 追加 `&devok` 跳过确认）

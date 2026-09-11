@@ -110,12 +110,24 @@ a{color:var(--brand-ink)}
 .tabbar{
   position:fixed;left:0;right:0;bottom:0;z-index:30;display:none;
   background:var(--surface);border-top:1px solid var(--line);
-  padding:6px 4px calc(6px + env(safe-area-inset-bottom));
+  padding:10px 4px calc(10px + env(safe-area-inset-bottom));
   grid-auto-flow:column;grid-auto-columns:1fr;
 }
-.tabbtn{border:0;background:transparent;color:var(--ink-3);font-size:10.5px;padding:3px 0 0;border-radius:8px}
-.tabbtn .ti{display:block;font-size:20px;margin-bottom:1px}
+.tabbtn{border:0;background:transparent;color:var(--ink-3);font-size:12.5px;padding:4px 0 0;border-radius:8px}
+.tabbtn .ti{display:block;line-height:1.15;font-size:25px;margin-bottom:3px}
 .tabbtn.active{color:var(--brand-ink);font-weight:700}
+/* 下拉刷新提示(移动端手写手势,见 app.js bindPullToRefresh)。
+   刻意不给 transform 加 transition:拖拽时要 1:1 跟手,只过渡颜色和透明度。 */
+#ptr{
+  position:fixed;left:50%;top:0;z-index:40;pointer-events:none;white-space:nowrap;
+  display:flex;align-items:center;gap:6px;padding:7px 15px;border-radius:99px;
+  background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);
+  font-size:12.5px;color:var(--ink-2);
+  transform:translate(-50%,-60px);opacity:0;transition:opacity .15s,color .15s,border-color .15s;
+}
+#ptr.ready{color:var(--brand-ink);border-color:var(--brand-line)}
+#ptr .ptr-ic{display:inline-block;font-size:15px;line-height:1;transition:transform .15s}
+#ptr.ready .ptr-ic{transform:rotate(180deg)}
 .view{animation:viewIn .18s ease}
 @keyframes viewIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 
@@ -288,7 +300,22 @@ a{color:var(--brand-ink)}
 @media(max-width:899px){
   .sidebar{display:none}
   .tabbar{display:grid}
-  .main{padding-bottom:86px;max-width:none}
+  /* 移动端把滚动容器收到 .main:文档本身不滚动,移动浏览器就不会在翻页时收起/展开地址栏,
+     底部固定 tab 栏也就不会随视口高度变化上下跳。dvh 取的是当前可见高度,避开 100vh 偏大。 */
+  html,body{height:100%;overflow:hidden}
+  .app{height:100vh;height:100dvh;min-height:0}
+  .main{
+    height:100vh;height:100dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;
+    overscroll-behavior-y:contain;padding-bottom:106px;max-width:none;
+  }
+  /* 滚动条:全局 ::-webkit-scrollbar 样式会让内层滚动容器常驻一条竖条并占宽,
+     而手机原生本就是滚动时浮现的覆盖式滚动条。移动端隐掉,腾出宽度。 */
+  .main{scrollbar-width:none}
+  .main::-webkit-scrollbar{display:none;width:0;height:0}
+  /* 顶栏:移动端不再固定。.main 成为滚动容器后 backdrop-filter 不可靠,
+     固定顶栏既挡住内容又会透出下面的内容;而手机底部 tab 栏本身已标示当前页面,
+     标题冗余,跟着页面一起滚走最省地方。半透明背景叠在 --bg 上同色,无需改。 */
+  .topbar{position:static;backdrop-filter:none;-webkit-backdrop-filter:none}
   .hero{font-size:34px}
 }
 

@@ -1002,7 +1002,68 @@ function go(v){
   curView = v;
   writeView(v);
   rebuildNav(); renderView();
+  // 桌面端滚文档,移动端滚 .main(见 style.css 响应式段),两边都归零
   window.scrollTo({top:0, behavior:'smooth'});
+  const m = document.querySelector('.main');
+  if (m && m.scrollTop) m.scrollTo({top:0, behavior:'smooth'});
+}
+/* 下拉刷新：移动端滚动容器收到 .main 后(见 style.css 响应式段)，文档不再滚动，
+ * 浏览器原生下拉刷新(挂在根滚动器上)无从触发，故手写一个等价手势。
+ * 语义与原生一致：松手整页重载，重走 init()→load() 的冷启动收敛(含脏缓存/rev 裁决)。
+ * 仅 ≤899px 且无登录门/弹窗遮挡时接管。 */
+function bindPullToRefresh(){
+  if(typeof window.matchMedia !== 'function' || !window.matchMedia('(max-width:899px)').matches) return;
+  const el = document.getElementById('main');
+  if(!el) return;
+  const THRESHOLD = 72;   /* 触发阈值(px) */
+  const MAX = 120;        /* 最大下拉距离，再拉也不动 */
+  const DAMP = 0.5;       /* 阻尼：手指走 2px，指示器走 1px */
+
+  const ind = document.createElement('div');
+  ind.id = 'ptr';
+  ind.innerHTML = '<span class="ptr-ic">↻</span><span class="ptr-tx">下拉刷新</span>';
+  document.body.appendChild(ind);
+  const tx = ind.querySelector('.ptr-tx');
+
+  let startY = null, dist = 0, armed = false;
+  const paint = (d, busy) => {
+    dist = d;
+    ind.style.transform = 'translate(-50%,' + (d - 60) + 'px)';
+    ind.style.opacity = (d > 4 || busy) ? '1' : '0';
+    ind.classList.toggle('ready', d >= THRESHOLD);
+    if(!busy) tx.textContent = d >= THRESHOLD ? '松开刷新' : '下拉刷新';
+  };
+  paint(0, false);
+
+  el.addEventListener('touchstart', e => {
+    if(e.touches.length !== 1 || el.scrollTop > 0 || document.querySelector('.authgate,.overlay')){ startY = null; return; }
+    startY = e.touches[0].clientY; armed = false; paint(0, false);
+  }, {passive:true});
+
+  el.addEventListener('touchmove', e => {
+    if(startY === null) return;
+    if(el.scrollTop > 0){ startY = null; paint(0, false); return; }   /* 已往上滚过就不再接管 */
+    const dy = e.touches[0].clientY - startY;
+    if(dy <= 0){ paint(0, false); return; }
+    armed = true;
+    paint(Math.min(MAX, dy * DAMP), false);
+    if(e.cancelable) e.preventDefault();   /* 压住浏览器自身的回弹 */
+  }, {passive:false});
+
+  const end = () => {
+    if(startY === null) return;
+    const fire = armed && dist >= THRESHOLD;
+    startY = null; armed = false;
+    if(fire){
+      tx.textContent = '正在刷新…';
+      paint(THRESHOLD, true);
+      location.reload();
+    } else {
+      paint(0, false);
+    }
+  };
+  el.addEventListener('touchend', end, {passive:true});
+  el.addEventListener('touchcancel', end, {passive:true});
 }
 function renderView(){
   const map = { home:renderHome, diet:renderDiet, train:renderTrain, body:renderBody, stats:renderStats, settings:renderSettings };
@@ -3062,4 +3123,5 @@ async function init(){
     showAuth('连不上服务器：请确认电脑上的服务窗口已开启，登录/注册需要服务器在线');
   }
 }
+bindPullToRefresh();   /* 脚本在 </body> 前、<main> 之后加载，元素已就位 */
 init();
