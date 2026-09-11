@@ -111,6 +111,9 @@ a{color:var(--brand-ink)}
 @keyframes viewIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 
 /* ============ 卡片与通用 ============ */
+/* 子页面页头(设置 → 数据管理 → 食物库/动作库):返回钮 + 标题,不做成卡片以省高度 */
+.pagehead{display:flex;align-items:center;gap:10px;margin:2px 0 14px}
+.pagehead .ph-t{font-size:17px;font-weight:800}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;
   box-shadow:var(--shadow);margin-bottom:16px}
 .card h3{display:flex;align-items:center;gap:8px;margin:0 0 12px;font-size:15px;font-weight:700}

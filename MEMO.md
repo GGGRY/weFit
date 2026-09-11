@@ -42,7 +42,7 @@
 - 营养模型：食物按 **每100g 营养 × 实际克数** 自动换算（热量/蛋白/碳水/脂肪）
 - 添加弹窗：从食物库带入 → 改克数 → 实时预览合计；可勾选「同时存入食物库」；支持编辑/删除
 - 每日汇总对比目标，超标进度条变色提醒
-- 食物库（双层）：**我的库**可增删；**系统库**由管理员维护、只读，可一键「＋我的库」挑入；管理入口在「设置」→ 💾 数据管理 的「📚 食物库」弹窗（饮食页不再挂入口，记录弹窗仍可从库选用/勾选存库）
+- 食物库（双层）：**我的库**可增删；**系统库**由管理员维护、只读，可一键「＋我的库」挑入；管理入口在「设置」→ 💾 数据管理 的「📚 食物库」按钮 → **独立子页面**「数据管理-食物库」（`renderFoodLibPage()`，页面第一行 = `‹` 返回 + 标题；`foodLibTab` 记住「我的库/系统库」分页；**「我的库」卡头一颗「＋ 添加食物」开弹窗 `openFoodAdder()`**（名称 + 四项营养，留空按 0 记，同名拒绝；添加即落库并关闭，页面列表与「我的库（n）」计数跟着刷新），页面上不再内嵌录入表单；**系统库分页里与我的库同名的食物直接标「已有」**（只读 chip，不再给「＋我的库」；与动作库同一口径，导入判重也是按名称，新加的个人食物与系统库撞名时也会即时标上）；饮食页不再挂入口，记录弹窗仍可从库选用/勾选存库）
 
 ### 3. 运动 🏋️
 - **周视图**（v4.13）：运动页是按周看的——顶部一张**周汇总卡**（`daynav` 周导航 `‹ 9月7日 – 9月13日 ›` + 周序 + 「已运动 X/7 天」进度条 + 容量/时长/距离 chips，版式同饮食页的日导航卡），下面**每天一张全宽卡竖排**（同饮食页的餐次卡）：卡头 = `周三 9月9日` + 今天/`n/N`/未完成 chip + 「＋ 添加运动」，卡内逐项打卡与行尾 ✏️（删除收在编辑弹窗里）；卡体空态为「休息日 / 未安排」。非本周时多一个「回到本周」；`setTrainWeek()` 是切周唯一入口，选中周存在 `trainMonday`，新增/修改后自动跳到那天那周。
@@ -54,7 +54,7 @@
 - **统计口径**：容量与时长只累加**已打勾的项**；还没开始的那天显示「计划 容量 …」；**力量项没填重量就只显示「14 次」**（不自造「自重」，空值仍是删键）。
 - **不再有周计划模板**：按裁定取消按星期循环（没有循环规则、也不批量生成实例）——要提前安排就选具体某一天。
 - **PR 检测**：只比最大重量（🏆），且只跟**更早、已打勾**的项比（未打勾项与未来安排都不算历史）。v4.11 已移除估算 1RM 与「PR 刷新」角标——原 Epley 公式 `重量×(1+次数/30)` 的前提是「单组次数」，而 `reps` 现在是总次数
-- **动作库**（双层：我的库 | 系统库）：27 个种子动作（力量 17 · 有氧 6 · 课程 2 · 球类 1 · 柔韧 1）以**平铺表格**展示（名称 | 分类 | 方式 | 操作；按 大类→部位→名称 排序，无分组树；我的库/系统库/选择器三处共用 `libTableHTML()`），运动中出现的新动作自动入我的库；管理入口在「设置」→ 💾 数据管理 的「📚 动作库」弹窗（`openExLib()`，运动页已无分段条）
+- **动作库**（双层：我的库 | 系统库）：27 个种子动作（力量 17 · 有氧 6 · 课程 2 · 球类 1 · 柔韧 1）以**平铺表格**展示（名称 | 分类 | 方式 | 操作；按 大类→部位→名称 排序，无分组树；我的库/系统库/选择器三处共用 `libTableHTML()`），运动中出现的新动作自动入我的库；管理入口在「设置」→ 💾 数据管理 的「📚 动作库」按钮 → **独立子页面**「数据管理-动作库」（`renderExLibPage()`，页面第一行 = `‹` 返回 + 标题；`exLibTab` 记住分页；**「我的库」卡头一颗「＋ 添加动作」开弹窗 `openExAdder()`**（名称 + 大类/部位/记录方式，换大类自动带出默认值；添加即落库并关闭，页面表格与「我的动作库（n）」计数跟着刷新），页面上不再内嵌录入表单；运动页已无分段条）
 - 每次运动容量统计 Σ(重量×次数)
 
 ### 4. 身体数据 📏
@@ -78,7 +78,7 @@
   - **🧍 基础资料卡**：性别/出生年份/身高/体重展示；「修改资料」弹窗 `openProfileEditor()` 修改（保存即 `syncNutrition()` 重算自动目标；「身体」页记录体重自动同步到这里）
   - **🥗 每日目标卡**：只显示目标值不显示当日进度——kcal hero + 蛋白/碳水/脂肪三 tile + 活动量/每日饮水两 tile；「修改目标」弹窗 = 热量倾向 + 活动量 + 饮水目标 + 四大营养素 + 自动计算勾选；**热量倾向**：减脂 −400 / 保持 / 增肌 +300 kcal，存于 `state.goal.mode`；自动档 = BMR×活动系数按倾向增减（增肌档蛋白质按 1.8g/kg），改热量倾向/活动量即时重算；饮水目标设 0 = 不追踪，隐藏概览「今日饮水」卡
   - **📌 每日打卡管理卡**：习惯的新增/修改/删除（打卡本体在概览页的今日打卡卡，两卡各自独立渲染）
-  - **💾 数据管理卡**（原 ⚙️ 设置弹窗的数据工具）：📚 食物库 / 📚 动作库 管理弹窗入口（`openFoodLib()`/`openExLib()`，自饮食页与运动页并入；按钮带库条数，弹窗关闭经 `showDialog` 的 `onClose` 回调重渲染本页刷新计数）→ 导出/导入备份、🗑 清空本账户 + 同步状态行 + 多设备说明（v4.9 移除「载入演示数据」入口，`demoData()` 仅留给调试钩子）
+  - **💾 数据管理卡**（原 ⚙️ 设置弹窗的数据工具）：📚 食物库 / 📚 动作库 按钮（带库条数）→ **各自独立子页面**（`go('foodlib')`/`go('exlib')` → `renderFoodLibPage()`/`renderExLibPage()`；页面第一行 = `‹` 返回设置 + 标题「数据管理-食物库/动作库」，返回走 `go('settings')`，本页重渲染顺带刷新按钮计数）→ 导出/导入备份、🗑 清空本账户 + 同步状态行 + 多设备说明（v4.9 移除「载入演示数据」入口，`demoData()` 仅留给调试钩子）
   - **🛠 后台管理卡**（`adminCardHTML()`，仅 admin，普通账户整卡不渲染）：一行「进入后台管理（系统库 · 用户权限）→」链接（新标签页打开 `/admin`）+ 一句权限说明；2026-09-11 由「我的档案」卡底移出，改为设置页最后一张卡
   - **⎋ 退出登录**（`#pf_logout` → `doLogout()`）：不在任何卡片里，是所有卡片之下的一颗独立 `btn danger ghost` 按钮（自带 `.row` 居中包裹）。2026-09-11 由「修改档案」弹窗移出、与「改资料」动作解耦；admin 视角排在本页末卡「后台管理」之后，普通账户排在末卡「数据管理」之后
 - 新账户/演示数据默认「减脂」档（引导弹窗不再询问）；档案保存不触碰营养目标（自动模式经 syncNutrition 重算，手动模式保留原值）
@@ -115,7 +115,7 @@
 ### 10. 界面与体验
 - 布局尺度：卡片 `padding:16px`、卡间 `margin-bottom` 桌面 16px / **手机 12px**（`≤899px` 覆盖，2026-09-11 按要求收紧；概览 `.home-cards` 容器同口径，容器内 `.card` 的 `margin` 清零、间距交给 grid `gap`）；`.main` 左右内边距 `clamp(12px,3vw,32px)`（手机上约 12px，桌面最宽 32px），上 20px / 下 40px（手机下 106px 给 Tab 栏让位）；概览页顶部问候语 `.home-greet` 手机端居中（桌面左对齐）；概览卡片容器手机单列、`≥900px` 两列（`repeat(2,minmax(0,1fr))` + `grid-auto-flow:row dense`；不用 auto-fit——1080px 宽会算出三列，只剩饮水/睡眠两张窄卡时右边空一列），带 `data-wide` 的卡（饮食/运动/打卡）`grid-column:1/-1` 整行，饮水/睡眠相邻时可并排——即旧版「三张整行 + 两张并排」的观感
 - 响应式：手机底部 Tab / 桌面左侧分组边栏；弹窗手机端底部升起。Tab 栏尺寸（仅 ≤899px 显示）：图标 25px + 文字 12.5px，整条约 75px 高（另加 `env(safe-area-inset-bottom)`），对应 `.main` 下内边距 106px
-- **滚动容器**：桌面滚文档（`.sidebar` 靠 `sticky` 贴边；2026-09-11 起无顶栏，内容直接从 `.main` 顶部开始，上内边距 20px）；`≤899px` 改滚 `.main`（`html:has(.app),body:has(.app){height:100%;overflow:hidden}`——2026-09-12 起作用域只到带 `.app` 外壳的用户端，否则后台页 `/admin`（`.adm-wrap` 直接挂 `body`、没有 `.main`）会被一起锁死而整页无法滚动；`.app`/`.main` 取 `100dvh`，`100vh` 仅作回退），避免移动浏览器翻页时收起地址栏改变视口高度、把 `fixed;bottom:0` 的 Tab 栏拖着上下跳。随之两处移动端专属修正（原「`.topbar` 改 `position:static`」一条已随顶栏整体移除作废）：①隐 `.main` 滚动条（`scrollbar-width:none` + `::-webkit-scrollbar{display:none}`），否则全局滚动条样式会让这个内层容器常驻一条占宽竖条；②原生下拉刷新随之失效（挂在根滚动器上 + `.main` 的 `overscroll-behavior-y:contain` 阻断滚动链），由手写手势 `bindPullToRefresh()` 补回——`.main` 顶部下拉 0.5 阻尼跟手、过 72px 松手整页重载（重走冷启动收敛），`#ptr` 胶囊指示器，仅 ≤899px 且无登录门/弹窗时接管。切页归顶由 `go(v)` 同时处理 `window` 与 `.main` 两处
+- **滚动容器**：桌面滚文档（`.sidebar` 靠 `sticky` 贴边；2026-09-11 起无顶栏，内容直接从 `.main` 顶部开始，上内边距 20px）；`≤899px` 改滚 `.main`（`html:has(.app),body:has(.app){height:100%;overflow:hidden}`——2026-09-12 起作用域只到带 `.app` 外壳的用户端，否则后台页 `/admin`（`.adm-wrap` 直接挂 `body`、没有 `.main`）会被一起锁死而整页无法滚动；`.app`/`.main` 取 `100dvh`，`100vh` 仅作回退），避免移动浏览器翻页时收起地址栏改变视口高度、把 `fixed;bottom:0` 的 Tab 栏拖着上下跳。随之两处移动端专属修正（原「`.topbar` 改 `position:static`」一条已随顶栏整体移除作废）：①隐 `.main` 滚动条（`scrollbar-width:none` + `::-webkit-scrollbar{display:none}`），否则全局滚动条样式会让这个内层容器常驻一条占宽竖条；②原生下拉刷新随之失效（挂在根滚动器上 + `.main` 的 `overscroll-behavior-y:contain` 阻断滚动链），由手写手势 `bindPullToRefresh()` 补回——`.main` 顶部下拉 0.5 阻尼跟手、过 72px 松手整页重载（重走冷启动收敛），`#ptr` 胶囊指示器，仅 ≤899px 且无登录门/弹窗时接管。切页归顶/回位由 `go(v)` 同时处理 `window` 与 `.main` 两处（换页回该页上次位置，见上「滚动位置记忆」）
 - **移动端适配**：`.tile` 自带 `min-width:130px` 是多列网格溢出根因，网格列一律 `minmax(0,1fr)` + 子项 `min-width:0`；每日目标五 tile 自适应收窄；概览打卡区为**一行一条习惯 + 当天圆钮**（无多日网格/横向滚动，≤560px 圆钮缩至 27px）
 - 深/浅色主题（每账户独立）；手写 SVG 图表；首次引导；Toast；危险操作二次确认
 - 开发调试钩子：`?selftest` 全视图渲染、`?ftest` 15 项功能自测、`?shot=视图名`、`?probe` 数据摘要（**三个会覆盖当前账户为演示数据**的钩子 `?selftest`/`?ftest`/`?shot` 共用同一确认门卫，确认/取消后自动从地址栏剥除钩子；`?shot` 先校验视图名再动数据；自动化场景可 URL 追加 `&devok` 跳过确认）
@@ -143,15 +143,17 @@ weFit/
 │  ├─ test/admin.test.js        #   44 项断言：后台 API（角色/重置密码/删号 + 护栏）+ 系统库三件套白名单
 │  ├─ test/sleep-shape.test.js  #   16 项断言：睡眠形状契约纯函数（两侧共用同一份）
 │  ├─ test/migration.test.js    #   39 项断言：破坏性迁移（sets 拍平 / 计划记录合并）+ v4.12 中间态就地补列（下放 done、rev 不变、回填只做一次）+ 非运动数据逐值完好 + 不复发
-│  ├─ test/render.test.js       #   65 项断言：前端渲染逻辑无头验证（node:vm + DOM/fetch 桩，零依赖）
+│  ├─ test/render.test.js       #   81 项断言：前端渲染逻辑无头验证（node:vm + DOM/fetch 桩，零依赖）
 │  └─ data/jjhealth.db          #   SQLite 数据库（.gitignore 已排除）
 └─ MEMO.md
 ```
 
 - **前端核心约定**：业务代码只读写 `state`（当前成员工作副本），`save()` = 写回成员 + localStorage + queuePush()；同步层函数集中在 `load()` 之后（fetchState / doPush / queuePush / handleConflict / refreshSyncStatus / converge）
 - **叠层弹窗**：`showDialog` 维护 `dialogStack`，`curDialog` 恒为栈顶，也只有栈顶响应 Esc（睡眠段编辑器是从概览卡/历史弹窗里再开一层）
-- **页面记忆**：视图导航收敛到 `go(v)`，同时把 `v` 写进按账户分键的 `localStorage`（`jjhealth_view:<用户名>`，与离线缓存同口径）；启动链 `startMain()` 结尾走 `go(readView())`，刷新/重开回到上次浏览的页面，非法/陌生的视图名回退 `home`。纯 UI 状态，不参与服务器同步也不进数据树
-- **页面归属**：打卡渲染与绑定 `habitCardHTML()` + `bindHabitEvents()` 由概览 `renderHome()` 调用（当天清单，仅点选）；「设置」页 = `renderSettings()` 组装四卡——🧍基础资料（展示 + 修改弹窗 `openProfileEditor()`）、🥗每日目标（「修改目标」统一编辑弹窗 `openNutritionEditor()`，营养+活动量+饮水）、📌习惯管理 `habitSettingsCardHTML()` + `bindHabitSettings()`（新增/修改走弹窗 `openHabitAdder()`/`openHabitEditor()`，删除经 `confirm()` 确认后整卡刷新）、💾数据管理（📚食物库/动作库弹窗入口 `openFoodLib()`/`openExLib()` + 导出/导入/清空绑定内联 + `#st_sync` 同步状态行；食物库弹窗「＋记录」保存后 `go('diet')` 跳转饮食页）；睡眠/饮水趋势图函数 `renderSleepChart/renderWaterChart` 挂在 `renderStats()`，容器 id `st_sleep`/`st_water`；今日饮水/今日睡眠卡由概览容器 `homeCardsHTML()` 按 `state.homeOrder` 拼装（旧 `lifeTodayHTML()` 随容器化删除）+ `bindLifeToday()`（`lifeWaterCard/lifeSleepCard/bindWaterCard/bindSleepCard` 以 ctx `home`/`dlg` 双上下文复用——概览今日卡与**各自**历史弹窗 `openWaterHistory()/openSleepHistory()` 共用一套渲染与绑定；睡眠逐段新增/修改/删除走 `sleepSessionEditor(d, idx, after)`）
+- **页面记忆**：视图导航收敛到 `go(v)`，同时把 `v` 写进按账户分键的 `localStorage`（`jjhealth_view:<用户名>`，与离线缓存同口径）；启动链 `startMain()` 结尾走 `go(readView())`，刷新/重开回到上次浏览的页面，非法/陌生的视图名回退 `home`。纯 UI 状态，不参与服务器同步也不进数据树；**每个页面自己的滚动位置也会被记住**（`viewScroll[curView]`，见下条）
+- **子页面（不在 NAV 里的视图）**：设置页「数据管理」下的食物库/动作库是独立页面而非弹窗，但**不进 `NAV`**（不占侧栏/底栏项）；`SUBVIEW = {foodlib:'settings', exlib:'settings'}` 声明父级——`rebuildNav()` 经 `navActiveId()` 用它决定高亮（停在子页面时高亮「设置」），`go()` 也按它落盘（刷新后落回设置页，而不是停在一个「返回」无处可去的半截子页）。新增同类子页面照此登记 `SUBVIEW` + `renderView()` 的 map + `runSelfTest()` 的 views 列表即可
+- **滚动位置记忆（未标版号，手机端反馈）**：`go(v)` 离开当前页前把 `readScroll()`（文档 `scrollY` + `.main` 的 `scrollTop`，桌面/手机两个滚动器都记）存进 `viewScroll[离开的页]`，渲染完新页再 `applyScroll(viewScroll[新页])` 原位恢复——从设置页进「数据管理」的食物库/动作库再点返回，不再被打回设置页顶部；没来过的页 = 顶部。**同页重入**（点当前 tab / 刷新后重渲染，`v === curView`）仍回顶部，与旧行为一致。恢复与归零一律 `behavior:'auto'`（瞬时）：旧写法是 `behavior:'smooth'` 归零，手机上进子页面时会先看到一段「往上滚」的过渡（用户反馈的「点进去会往上滚动一下」）。滚动量只存内存（`viewScroll`），不入 localStorage/数据树
+- **页面归属**：打卡渲染与绑定 `habitCardHTML()` + `bindHabitEvents()` 由概览 `renderHome()` 调用（当天清单，仅点选）；「设置」页 = `renderSettings()` 组装四卡——🧍基础资料（展示 + 修改弹窗 `openProfileEditor()`）、🥗每日目标（「修改目标」统一编辑弹窗 `openNutritionEditor()`，营养+活动量+饮水）、📌习惯管理 `habitSettingsCardHTML()` + `bindHabitSettings()`（新增/修改走弹窗 `openHabitAdder()`/`openHabitEditor()`，删除经 `confirm()` 确认后整卡刷新）、💾数据管理（📚食物库/动作库按钮 → 独立子页面 `renderFoodLibPage()`/`renderExLibPage()`，见上条「子页面」；两页的录入各自走弹窗 `openFoodAdder()`/`openExAdder()`（卡头按钮开，添加即落库并关闭，回调重绘页面计数）；导出/导入/清空绑定内联 + `#st_sync` 同步状态行；食物库页面「＋记录」保存后 `go('diet')` 跳转饮食页）；睡眠/饮水趋势图函数 `renderSleepChart/renderWaterChart` 挂在 `renderStats()`，容器 id `st_sleep`/`st_water`；今日饮水/今日睡眠卡由概览容器 `homeCardsHTML()` 按 `state.homeOrder` 拼装（旧 `lifeTodayHTML()` 随容器化删除）+ `bindLifeToday()`（`lifeWaterCard/lifeSleepCard/bindWaterCard/bindSleepCard` 以 ctx `home`/`dlg` 双上下文复用——概览今日卡与**各自**历史弹窗 `openWaterHistory()/openSleepHistory()` 共用一套渲染与绑定；睡眠逐段新增/修改/删除走 `sleepSessionEditor(d, idx, after)`）
 - **数据接口**：公开 = `POST /api/register`、`POST /api/login`、`GET /api/health`、静态页（含 `/admin`）；登录后可用 = `GET/PUT /api/state`（**本人数树**，`{rev?, data}`——rev 过期 409、缺省盲写；服务端只取 `data.users[本人uid]` 那一份，其余键忽略，缺本人键则 400 拒绝防误清空）、`GET /api/me`、`POST /api/logout`、`GET /api/system/library`（**PUT 仅 admin**）；**后台 API（仅 admin）** = `GET /api/admin/users`（列表+数据概况）、`PUT /api/admin/role`（设/撤管理员，防"最后一个管理员"）、`PUT /api/admin/password`（重置并强制该账户下线）、`DELETE /api/admin/users`（删账户级联清数据，不可删自己）
 - **API 仍是"整树 state"风格**（粒度收窄为单账户）：细粒度 CRUD 端点留待未来按需追加，mapper 后的关系表结构已支持
 

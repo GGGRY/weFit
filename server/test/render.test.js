@@ -87,6 +87,11 @@ async function fakeFetch(url, opts) {
   if (m === 'GET' && u.endsWith('/api/me'))
     return res(200, { username: 'tester', role: 'user', user: { id: 'u_alice', name: '测试者' } });
   if (m === 'GET' && u.endsWith('/api/state')) return res(200, { rev: 1, data: TREE });
+  if (m === 'GET' && u.endsWith('/system/library')) return res(200, {
+    /* 第 1 项与个人库同名（夹具里的「米饭」/「杠铃卧推」）→ 系统分页应标「已有」；第 2 项未拥有 → 给「＋我的库」按钮 */
+    foods: [{ id:'s1', name:'米饭', per100:{ kcal:116, p:2.6, c:25.9, f:0.3 } }, { id:'s2', name:'系统专属食物', per100:{ kcal:10, p:0, c:0, f:0 } }],
+    exercises: [{ id:'se1', name:'杠铃卧推', cat:'力量', muscle:'胸', mode:'reps' }, { id:'se2', name:'系统专属动作', cat:'力量', muscle:'腿', mode:'reps' }],
+  });
   if (m === 'PUT' && u.endsWith('/api/state')) return res(200, { ok: true, rev: 2 });
   return res(404, { error: 'not_found' });
 }
@@ -208,6 +213,42 @@ async function main() {
      && ev("localStorage.setItem('jjhealth_view:tester','diet'); readView()") === 'diet'
      && ev("localStorage.setItem('jjhealth_view:tester','bogus'); readView()") === 'home',
      'readView=' + ev('readView()'));
+
+  /* T2g 未标版号 数据管理子页面（食物库/动作库）的导航语义：不占侧栏/底栏项，借父级 settings 高亮，
+   * 落盘也记 settings —— 刷新后落回设置页，而不是停在一个「返回」无处可去的半截子页 */
+  ev("go('settings'); go('foodlib')");
+  const subNav = {
+    view: ev('curView') === 'foodlib',
+    hi: sidebar.__html.includes('navbtn active" data-go="settings"'),
+    tb: tabbar.__html.includes('tabbtn active" data-go="settings"'),
+    noItem: !sidebar.__html.includes('data-go="foodlib"') && !tabbar.__html.includes('data-go="foodlib"'),
+    stored: ev('localStorage.getItem(viewKey())') === 'settings',
+    read: ev('readView()') === 'settings',
+    head: view.__html.includes('id="fl_back"') && view.__html.includes('数据管理-食物库'),
+  };
+  ev("go('exlib')");
+  subNav.view2 = ev('curView') === 'exlib' && view.__html.includes('id="xl_back"') && view.__html.includes('数据管理-动作库') && view.__html.includes('<div id="xl_host">');
+  ev("go('settings')");
+  ok('T2g 数据管理子页面：不占导航项、高亮父级设置、落盘记父级', Object.values(subNav).every(Boolean), JSON.stringify(subNav));
+
+  /* T2h 滚动位置记忆（未标版号，手机端反馈）：换页记下离开那页的滚动量、回来原位恢复，
+   * 且一律瞬时（behavior:'auto'）——旧写法 smooth 归零在手机上会先看到一段「往上滚」 */
+  ev("window.scrollTo = o => { window.__scroll = o; };");
+  ev("$('.main').scrollTop = 640");
+  ev("go('foodlib')");
+  const scrollRec = {
+    saved: ev('viewScroll.settings && viewScroll.settings.main'),
+    toTop: ev('window.__scroll.top'), auto: ev("window.__scroll.behavior === 'auto'"),
+    now: ev("$('.main').scrollTop"),
+  };
+  ev("go('settings')"); scrollRec.restored = ev("$('.main').scrollTop");
+  ev("go('foodlib')"); scrollRec.firstVisitTop = ev("$('.main').scrollTop");
+  ev("go('settings'); $('.main').scrollTop = 0");
+  ok('T2h 滚动位置记忆：离开记位置、返回原位恢复（瞬时，不再 smooth 归零）',
+     scrollRec.saved === 640 && scrollRec.toTop === 0 && scrollRec.auto === true && scrollRec.now === 0
+     && scrollRec.restored === 640 && scrollRec.firstVisitTop === 0
+     && !readPub('js/app.js').includes("behavior:'smooth'"), JSON.stringify(scrollRec));
+  ev("window.scrollTo = () => {};");   /* 还原桩,免得后续用例误以为在看真实滚动 */
 
   /* T2c–T2f 顶栏移除(2026-09-11):第一行整体删除;「我的档案」「切换深色/浅色」搬进设置页 */
   ok('T2c 第一行已移除:index.html 无 #topbar 槽位,renderView 也不再写它',
@@ -474,7 +515,7 @@ async function main() {
      && fmt.sub === '力量 · 胸|有氧 · 全身|柔韧|球类', JSON.stringify(fmt));
 
   /* T12 弹窗渲染冒烟：四个对话框都渲染且文案对（桩里 $$ 恒空 → 事件不挂，只验"渲染不抛错 + 内容正确"；
-   * 这是浏览器里点得到、而其它用例覆盖不到的路径：计划编辑器 / 记录弹窗 / 动作选择器 / 动作库弹窗） */
+   * 这是浏览器里点得到、而其它用例覆盖不到的路径：计划编辑器 / 记录弹窗 / 动作选择器 / 动作库页面） */
   function dlgHTML(call){
     try { ev('closeDialog && curDialog && closeDialog()'); ev(call); return ev('curDialog.box.__html'); }
     catch (e) { return 'ERR:' + e.message; }
@@ -544,13 +585,60 @@ async function main() {
      defs.reps === 30 && defs.time === 20 && defs.keptReps === 12 && defs.keptTime === 45
      && defs.crossed[0] === false && defs.crossed[1] === 20, JSON.stringify(defs));
   const hPick = dlgHTML('openExercisePicker(function(){})');  ok('T12f 动作选择器为平铺表格', !hPick.startsWith('ERR:') && hPick.includes('<th>分类</th>') && hPick.includes('杠铃卧推'), hPick.slice(0, 140));
-  /* 动作库弹窗内容写在 #xl_host 子节点里（桩不做真实 DOM 树，内容不在 box.__html 里） */
+  /* 动作库页面（未标版号 由弹窗改独立页）：页头「返回 + 数据管理-动作库」，内容在 #xl_host → #xl_body */
   let hLib = '';
-  try { ev('closeDialog && curDialog && closeDialog()'); ev('openExLib()'); hLib = ev("$('#xl_body', $('#xl_host', curDialog.box)).__html");   /* 表格在再下一层 #xl_body */ }
+  try { ev("go('exlib')"); hLib = ev("$('#xl_body', $('#xl_host')).__html"); }
   catch (e) { hLib = 'ERR:' + e.message; }
-  ok('T12h 我的动作库弹窗渲染表格与新增表单', !hLib.startsWith('ERR:') && hLib.includes('我的动作库')
-     && hLib.includes('<th>方式</th>') && hLib.includes('nx_cat') && hLib.includes('nx_mode'), hLib.slice(0, 160));
-  ev('closeDialog && curDialog && closeDialog()');
+  ok('T12h 动作库页面：表格 + 卡头「＋ 添加动作」（录入表单已收进弹窗，页面上不再有输入框）',
+     !hLib.startsWith('ERR:') && hLib.includes('我的动作库') && hLib.includes('<th>方式</th>')
+     && hLib.includes('id="nx_open"') && !hLib.includes('id="nx_name"') && !hLib.includes('id="nx_add"'), hLib.slice(0, 160));
+  const hExAdder = dlgHTML('openExAdder()');
+  ok('T12m 添加动作弹窗：名称 + 大类/部位/方式三件套 + 取消/添加',
+     !hExAdder.startsWith('ERR:') && hExAdder.includes('id="nx_name"') && hExAdder.includes('id="nx_cat"')
+     && hExAdder.includes('id="nx_muscle"') && hExAdder.includes('id="nx_mode"')
+     && hExAdder.includes('id="nx_add"') && hExAdder.includes('data-cancel'), hExAdder.slice(0, 200));
+  /* 食物库页面：同一套页头契约（返回钮 + 标题），我的库分页有列表与逐行按钮，录入收进弹窗 */
+  let hFood = '';
+  try { ev("go('foodlib')"); hFood = ev("$('#fl_body', $('#view')).__html"); }
+  catch (e) { hFood = 'ERR:' + e.message; }
+  ok('T12k 食物库页面：页头返回 + 标题，列表 + 卡头「＋ 添加食物」', !hFood.startsWith('ERR:')
+     && view.__html.includes('id="fl_back"') && view.__html.includes('数据管理-食物库')
+     && view.__html.includes('id="fl_seg"') && hFood.includes('id="nf_open"')
+     && !hFood.includes('id="nf_name"') && !hFood.includes('id="nf_add"')
+     && hFood.includes('data-delf=') && hFood.includes('data-add='), hFood.slice(0, 160));
+  const hFoodAdder = dlgHTML('openFoodAdder()');
+  ok('T12n 添加食物弹窗：名称 + 四项营养 + 取消/添加',
+     !hFoodAdder.startsWith('ERR:') && hFoodAdder.includes('id="nf_name"') && hFoodAdder.includes('id="nf_kcal"')
+     && hFoodAdder.includes('id="nf_p"') && hFoodAdder.includes('id="nf_c"') && hFoodAdder.includes('id="nf_f"')
+     && hFoodAdder.includes('id="nf_add"') && hFoodAdder.includes('data-cancel'), hFoodAdder.slice(0, 200));
+  /* 系统分页的「已有」标记（与个人库按名称比，与动作库同一口径）——
+   * 桩不能点分页，但分页选择是页面级状态 foodLibTab/exLibTab，直接设好再进页即可。
+   * 先重置系统库缓存，否则前面用例拉过的 mock 列表会盖掉本处的断言数据 */
+  ev("invalidateSysLib(); foodLibTab = 'sys'; go('foodlib')");
+  await new Promise(r => setTimeout(r, 20));
+  const hSysF = ev("$('#fl_body', $('#view')).__html");
+  const sysCount = { owned: (hSysF.match(/>已有<\/span>/g) || []).length, add: (hSysF.match(/>＋我的库<\/button>/g) || []).length };
+  ok('T12o 食物库系统分页：与我的库同名的标「已有」，其余给「＋我的库」',
+     !hSysF.startsWith('ERR:') && sysCount.owned === 1 && sysCount.add === 1
+     && hSysF.indexOf('系统专属食物') < hSysF.indexOf('＋我的库</button>'), JSON.stringify(sysCount) + ' | ' + hSysF.slice(0, 120));
+  ev("invalidateSysLib(); exLibTab = 'sys'; go('exlib')");
+  await new Promise(r => setTimeout(r, 20));
+  const hSysE = ev("$('#xl_body', $('#xl_host')).__html");
+  const sysECount = { owned: (hSysE.match(/>已有<\/span>/g) || []).length, add: (hSysE.match(/>＋我的库<\/button>/g) || []).length };
+  ok('T12p 动作库系统分页：同名的标「已有」（与食物库同口径）',
+     sysECount.owned === 1 && sysECount.add === 1 && hSysE.indexOf('系统专属动作') < hSysE.indexOf('＋我的库</button>'), JSON.stringify(sysECount));
+  ev("foodLibTab = 'mine'; exLibTab = 'mine'; go('settings')");
+  /* 入口不再是弹窗：进入两个库页面不会往弹窗栈里加层；入口绑定直接走 go() */
+  ev("closeDialog && curDialog && closeDialog()");   /* 先清掉上面两个录入弹窗 */
+  const dlgDepth = ev('dialogStack.length');
+  ev("go('foodlib')"); const d1 = ev('dialogStack.length');
+  ev("go('exlib')"); const d2 = ev('dialogStack.length');
+  ok('T12l 数据管理两个库已是页面而非弹窗（渲染不入栈，入口绑定 go()）', d1 === dlgDepth && d2 === dlgDepth
+     && ev('curDialog === null') && ev('curView') === 'exlib'
+     && readPub('js/app.js').includes("$('#st_foodlib').addEventListener('click', () => go('foodlib'))")
+     && readPub('js/app.js').includes("$('#st_exlib').addEventListener('click', () => go('exlib'))"),
+     'depth=' + dlgDepth + '/' + d1 + '/' + d2 + ' curView=' + ev('curView'));
+  ev("go('settings')");
 
   /* T13 v4.12 纯函数契约：旧形状清洗 / 项收集（含 done 保真）/ 字段写入 / 排序 / 完成进度 / 周聚合。
    * 对话框交互（点 chip/保存）在桩里点不到，但这几个决策函数零成本可直接断言。 */

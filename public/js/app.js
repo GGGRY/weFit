@@ -983,13 +983,19 @@ function closeDialog(){ if(curDialog) curDialog.close(); }
 
 /* ---------- 导航渲染 ---------- */
 let curView = 'home';
+/* 未标版号：设置页「数据管理」里点食物库/动作库由弹窗改为独立页面。
+ * 这两个子页面不进 NAV（不占侧栏/底栏），借父级 settings 的高亮与持久化：
+ * 刷新后落回设置页，而不是停在一个「返回」无处可去的半截子页。 */
+const SUBVIEW = { foodlib:'settings', exlib:'settings' };
+function navActiveId(){ return SUBVIEW[curView] || curView; }
 function rebuildNav(){
   const group1 = ['home'];
   const group2 = ['diet','train','body'];
   const group3 = ['stats','settings'];
+  const active = navActiveId();
   const render = ids => ids.map(id => {
     const n = NAV.find(x=>x.id===id);
-    return '<div class="navbtn ' + (curView===id?'active':'') + '" data-go="' + id + '"><span class="ic">' + n.ic + '</span>' + esc(n.label) + '</div>';
+    return '<div class="navbtn ' + (active===id?'active':'') + '" data-go="' + id + '"><span class="ic">' + n.ic + '</span>' + esc(n.label) + '</div>';
   }).join('');
   $('#sidebar').innerHTML =
     '<div class="brand"><div class="logo">💪</div><div>健康管理<small>我的健身日记</small></div></div>' +
@@ -999,7 +1005,7 @@ function rebuildNav(){
     '<div style="flex:1"></div>' +
     '<div class="navbtn" data-themeclick><span class="ic">' + (state.theme==='dark'?'🌙':'☀️') + '</span>外观</div>';
   $('#tabbar').innerHTML = NAV.map(n =>
-    '<button class="tabbtn ' + (curView===n.id?'active':'') + '" data-go="' + n.id + '"><span class="ti">' + n.ic + '</span>' + esc(n.label) + '</button>').join('');
+    '<button class="tabbtn ' + (active===n.id?'active':'') + '" data-go="' + n.id + '"><span class="ti">' + n.ic + '</span>' + esc(n.label) + '</button>').join('');
   $$('[data-go]').forEach(b => b.addEventListener('click', () => go(b.dataset.go)));
   const tc = $('#sidebar [data-themeclick]'); if(tc) tc.addEventListener('click', toggleTheme);
 }
@@ -1010,14 +1016,33 @@ function readView(){
   try { const v = localStorage.getItem(viewKey()); return NAV.some(n => n.id === v) ? v : 'home'; } catch(e){ return 'home'; }
 }
 function writeView(v){ try { localStorage.setItem(viewKey(), v); } catch(e){} }
-function go(v){
-  curView = v;
-  writeView(v);
-  rebuildNav(); renderView();
-  // 桌面端滚文档,移动端滚 .main(见 style.css 响应式段),两边都归零
-  window.scrollTo({top:0, behavior:'smooth'});
+/* 滚动位置记忆（未标版号，手机端反馈）：切页时把离开那页的滚动量存起来，回来时原位恢复——
+ * 从设置页进「数据管理」的两个子页面再点返回，不再被打回设置页顶部。
+ * 桌面滚文档、手机滚 .main（见 style.css 响应式段），两个滚动量都记（存的是纯 UI 状态，不入数据树）。
+ * 恢复/归零一律 behavior:'auto'（瞬时）：旧写法是 smooth 归零，手机上会先看到一段「进页往上滚」。 */
+const viewScroll = {};
+function readScroll(){
   const m = document.querySelector('.main');
-  if (m && m.scrollTop) m.scrollTo({top:0, behavior:'smooth'});
+  return {
+    doc: window.scrollY || document.documentElement.scrollTop || 0,
+    main: (m && m.scrollTop) || 0,
+  };
+}
+function applyScroll(keep){
+  const t = keep || { doc:0, main:0 };
+  try { window.scrollTo({ top: t.doc, behavior: 'auto' }); } catch(e){ window.scrollTo(0, t.doc); }
+  const m = document.querySelector('.main'); if(!m) return;
+  if(typeof m.scrollTo === 'function') m.scrollTo({ top: t.main, behavior: 'auto' });
+  else m.scrollTop = t.main;
+}
+function go(v){
+  const same = (v === curView);
+  if(!same) viewScroll[curView] = readScroll();   /* 离开前记下当前页的滚动位置 */
+  curView = v;
+  writeView(SUBVIEW[v] || v);   /* 子页面记父级,刷新后回到设置页 */
+  rebuildNav(); renderView();
+  /* 换页 = 回该页上次的位置（没来过就顶部）；同页重入（点当前页/刷新后重渲染）= 仍回顶部与旧行为一致 */
+  applyScroll(same ? null : viewScroll[v]);
 }
 /* 下拉刷新：移动端滚动容器收到 .main 后(见 style.css 响应式段)，文档不再滚动，
  * 浏览器原生下拉刷新(挂在根滚动器上)无从触发，故手写一个等价手势。
@@ -1083,7 +1108,8 @@ function bindPullToRefresh(){
 }
 function renderView(){
   cancelHomeDrag();   /* 切页时若有拖动中的卡片，收干净（否则监听器/样式会带到下一页） */
-  const map = { home:renderHome, diet:renderDiet, train:renderTrain, body:renderBody, stats:renderStats, settings:renderSettings };
+  const map = { home:renderHome, diet:renderDiet, train:renderTrain, body:renderBody, stats:renderStats, settings:renderSettings,
+    foodlib:renderFoodLibPage, exlib:renderExLibPage };   /* 未标版号 数据管理下的两个子页面 */
   (map[curView])();
 }
 
@@ -1742,35 +1768,38 @@ function foodRowHTML(f, dataAttr){
   return '<div class="lrow" ' + dataAttr + '><div class="grow"><div class="b">' + esc(f.name) + '</div><div class="sub">' + esc(sub) + '</div></div>';
 }
 
-/* 食物库管理（设置页 → 💾 数据管理入口）：我的库（可增删）| 系统库（只读 + 挑入我的库） */
-function openFoodLib(onClose){
-  invalidateSysLib();   /* v4.4:每次打开弹窗拉一次系统库即可,弹窗内切分页不再重下 */
-  const dlg = showDialog('食物库',
-    '<div class="row" style="margin-bottom:10px"><div class="seg" id="fl_seg"></div></div>' +
-    '<div id="fl_body"><div class="tiny muted">载入中…</div></div>', { onClose });
-  const b = dlg.box;
-  let tab = 'mine';
+/* 食物库管理（设置页 → 💾 数据管理 → 本页）：我的库（可增删）| 系统库（只读 + 挑入我的库）。
+ * 未标版号：由弹窗改为独立页面——页头第一行是「返回 + 数据管理-食物库」，返回落回设置页。 */
+let foodLibTab = 'mine';   /* 页面级状态：切到系统库后再进来仍停在原分页 */
+function renderFoodLibPage(){
+  invalidateSysLib();   /* v4.4:每次进页拉一次系统库即可,页内切分页不再重下 */
+  $('#view').innerHTML =
+    '<div class="pagehead"><button class="iconbtn2" id="fl_back" title="返回设置">‹</button><div class="ph-t">数据管理-食物库</div></div>' +
+    '<div class="card">' +
+      '<div class="row" style="margin-bottom:10px"><div class="seg" id="fl_seg"></div></div>' +
+      '<div id="fl_body"><div class="tiny muted">载入中…</div></div>' +
+    '</div>';
+  $('#fl_back').addEventListener('click', () => go('settings'));
+  const b = $('#view');
+  let tab = foodLibTab;
   function paintSeg(){
     $('#fl_seg', b).innerHTML =
       '<button data-ft="mine" class="' + (tab==='mine'?'active':'') + '">我的库（' + state.foods.length + '）</button>' +
       '<button data-ft="sys" class="' + (tab==='sys'?'active':'') + '">系统库</button>';
-    $$('#fl_seg [data-ft]', b).forEach(btn => btn.addEventListener('click', () => { tab = btn.dataset.ft; paintSeg(); render(); }));
+    $$('#fl_seg [data-ft]', b).forEach(btn => btn.addEventListener('click', () => { tab = foodLibTab = btn.dataset.ft; paintSeg(); render(); }));
   }
   function renderMine(){
     const list = state.foods.map(f =>
       foodRowHTML(f, 'data-id="' + f.id + '"') +
         '<button class="btn sm ghost" data-add="' + f.id + '">＋记录</button>' +
         '<button class="iconbtn2" data-delf="' + f.id + '" style="color:var(--danger)">🗑</button></div>').join('');
+    /* 添加表单收进弹窗（卡头一颗「＋ 添加食物」），列表与计数留给页面 */
     $('#fl_body', b).innerHTML =
-      '<div class="field" style="display:flex;gap:8px"><input class="input" id="nf_name" placeholder="新食物名" style="flex:1.2"><input class="input" id="nf_kcal" type="number" placeholder="kcal/100g" style="width:96px"></div>' +
-      '<div class="field" style="display:flex;gap:8px"><input class="input" id="nf_p" type="number" placeholder="蛋白" style="flex:1"><input class="input" id="nf_c" type="number" placeholder="碳水" style="flex:1"><input class="input" id="nf_f" type="number" placeholder="脂肪" style="flex:1"><button class="btn primary" id="nf_add">添加</button></div>' +
-      '<div class="tiny muted" style="margin-bottom:8px">点 ＋记录 可直接把它记到当日加餐；「系统库」分页可挑选管理员维护的公共食物。</div>' + (list || '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">📚</div>我的食物库是空的，去「系统库」挑一些吧</div>');
-    $('#nf_add', b).addEventListener('click', () => {
-      const name = $('#nf_name', b).value.trim(); if(!name){ toast('请填名称', true); return; }
-      if(state.foods.some(x => x.name === name)){ toast('该食物已存在', true); return; }
-      state.foods.push({ id:uid(), name, per100:{ kcal:num($('#nf_kcal', b).value), p:num($('#nf_p', b).value), c:num($('#nf_c', b).value), f:num($('#nf_f', b).value) } });
-      save(); paintSeg(); renderMine();
-    });
+      '<h3><span>📚 我的食物库（' + state.foods.length + '）</span><span class="grow"></span>' +
+        '<button class="btn sm primary" id="nf_open">＋ 添加食物</button></h3>' +
+      '<div class="tiny muted" style="margin-bottom:8px">点 ＋记录 可直接把它记到当日加餐；「系统库」分页可挑选管理员维护的公共食物。</div>' +
+      (list || '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">📚</div>我的食物库是空的，去「系统库」挑一些吧</div>');
+    $('#nf_open', b).addEventListener('click', () => openFoodAdder(() => { paintSeg(); renderMine(); }));
     $$('[data-delf]', b).forEach(btn => btn.addEventListener('click', () => {
       const id = btn.dataset.delf;
       USERS.shared.foods = USERS.shared.foods.filter(f => f.id !== id);
@@ -1780,26 +1809,54 @@ function openFoodLib(onClose){
     $$('[data-add]', b).forEach(btn => btn.addEventListener('click', () => {
       const fo = mkFood(btn.dataset.add); if(!fo) return;
       addMealItem(dietDate, 'snack', mealItem(fo, 100)); save();
-      closeDialog(); go('diet'); toast('已记到' + dateCN(dietDate) + '加餐，可去修改克数');   /* 入口已从饮食页并入设置页,记完跳回饮食页需走导航刷新高亮 */
+      go('diet'); toast('已记到' + dateCN(dietDate) + '加餐，可去修改克数');   /* 入口从饮食页并入设置页,记完直接跳回饮食页(顺带重置导航高亮) */
     }));
   }
   async function renderSys(){
     $('#fl_body', b).innerHTML = '<div class="tiny muted">载入系统库…</div>';
-    const sys = await fetchSysLib();   /* v4.4:本次弹窗已失效过缓存,首拉后切分页走内存 */
+    const sys = await fetchSysLib();   /* v4.4:本次进页已失效过缓存,首拉后切分页走内存 */
     if(tab !== 'sys') return;   /* 载入期间用户切回了我的库 */
     if(!sys){ $('#fl_body', b).innerHTML = '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">🔌</div>服务器离线，暂时看不到系统库</div>'; return; }
+    /* 已在我的库（同名）= 只读标记，与动作库系统分页同一口径（导入判重也是按名称） */
+    const owned = f => USERS.shared.foods.some(x => x.name === f.name);
     $('#fl_body', b).innerHTML =
-      '<div class="tiny muted" style="margin-bottom:8px">系统共享库由管理员在后台维护，只读。点「＋我的库」把它挑进自己的食物库。</div>' +
+      '<div class="tiny muted" style="margin-bottom:8px">系统共享库由管理员在后台维护，只读。点「＋我的库」把它挑进自己的食物库；与你库里同名的直接标「已有」。</div>' +
       (sys.foods.map((f, i) =>
         foodRowHTML(f, 'data-sysf="' + i + '"') +
-        '<button class="btn sm ghost" data-impf="' + i + '">＋我的库</button></div>').join('')
+        (owned(f) ? '<span class="chip b3" style="padding:2px 9px;font-size:12px">已有</span></div>'
+                  : '<button class="btn sm ghost" data-impf="' + i + '">＋我的库</button></div>')).join('')
         || '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">🗂</div>系统库暂无食物</div>');
     $$('[data-impf]', b).forEach(btn => btn.addEventListener('click', () => {
-      if(importFoodFromSys(sys.foods[num(btn.dataset.impf)])){ btn.outerHTML = '<span class="chip b3" style="padding:2px 9px;font-size:12px">已在我的库</span>'; paintSeg(); }
+      if(importFoodFromSys(sys.foods[num(btn.dataset.impf)])){ btn.outerHTML = '<span class="chip b3" style="padding:2px 9px;font-size:12px">已有</span>'; paintSeg(); }
     }));
   }
   function render(){ if(tab === 'mine') renderMine(); else renderSys(); }
-  paintSeg(); renderMine();
+  paintSeg(); render();   /* 按 tab 渲染：foodLibTab 会被记住，再进页可能停在「系统库」 */
+}
+
+/* 添加食物弹窗（我的库）：名称必填、同名拒绝；营养值留空按 0 记。
+ * 写入本人食物库后立即落库并关闭，after() 让页面列表与「我的库（n）」计数即时刷新。 */
+function openFoodAdder(after){
+  const dlg = showDialog('添加食物',
+    '<div class="field"><label>食物名称</label><input class="input" id="nf_name" placeholder="如：鸡胸肉"></div>' +
+    '<div class="form-grid">' +
+      '<div><label>热量 kcal / 100g</label><input class="input" id="nf_kcal" type="number" min="0" inputmode="decimal"></div>' +
+      '<div><label>蛋白质 g / 100g</label><input class="input" id="nf_p" type="number" min="0" inputmode="decimal"></div>' +
+      '<div><label>碳水 g / 100g</label><input class="input" id="nf_c" type="number" min="0" inputmode="decimal"></div>' +
+      '<div><label>脂肪 g / 100g</label><input class="input" id="nf_f" type="number" min="0" inputmode="decimal"></div>' +
+    '</div>' +
+    '<div class="tiny muted" style="margin-top:10px">留空按 0 记；与库里已有的同名食物会被拒绝。</div>' +
+    '<div class="d-f"><button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="nf_add">添加</button></div>');
+  const b = dlg.box;
+  const add = () => {
+    const name = $('#nf_name', b).value.trim(); if(!name){ toast('请填名称', true); return; }
+    if(state.foods.some(x => x.name === name)){ toast('该食物已存在', true); return; }
+    state.foods.push({ id:uid(), name, per100:{ kcal:num($('#nf_kcal', b).value), p:num($('#nf_p', b).value), c:num($('#nf_c', b).value), f:num($('#nf_f', b).value) } });
+    save(); closeDialog(); if(after) after(); toast('已添加：' + name);
+  };
+  const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
+  $('#nf_add', b).addEventListener('click', add);
+  $('#nf_name', b).addEventListener('keydown', e => { if(e.key === 'Enter') add(); });   /* 桌面端回车即添加 */
 }
 
 /* =====================================================
@@ -2131,11 +2188,15 @@ function openExercisePicker(cb){
   }));
 }
 
-/* ---------- 动作库（设置页 → 💾 数据管理入口）：我的库（可增删）| 系统库（只读 + 挑入我的库） ---------- */
-function openExLib(onClose){
-  invalidateSysLib();   /* v4.4:每次打开弹窗拉一次系统库即可,弹窗内切分页不再重下 */
-  const dlg = showDialog('动作库', '<div id="xl_host"></div>', { size:'lg', onClose });
-  renderExLib($('#xl_host', dlg.box));
+/* ---------- 动作库（设置页 → 💾 数据管理 → 本页）：我的库（可增删）| 系统库（只读 + 挑入我的库） ----------
+ * 未标版号：由弹窗改为独立页面——页头第一行是「返回 + 数据管理-动作库」。 */
+function renderExLibPage(){
+  invalidateSysLib();   /* v4.4:每次进页拉一次系统库即可,页内切分页不再重下 */
+  $('#view').innerHTML =
+    '<div class="pagehead"><button class="iconbtn2" id="xl_back" title="返回设置">‹</button><div class="ph-t">数据管理-动作库</div></div>' +
+    '<div id="xl_host"></div>';
+  $('#xl_back').addEventListener('click', () => go('settings'));
+  renderExLib($('#xl_host'));
 }
 let exLibTab = 'mine';
 function renderExLib(body){
@@ -2154,26 +2215,12 @@ function renderExLibMine(body){
     ex: e,
     action: '<button class="iconbtn2" data-delx="' + esc(e.id) + '" title="删除" style="width:26px;height:26px;font-size:11px;color:var(--danger)">🗑</button>',
   }));
-  body.innerHTML = '<div class="card" style="margin-bottom:0"><h3>📚 我的动作库（' + state.exercises.length + '）</h3>' +
+  /* 添加表单收进弹窗（卡头一颗「＋ 添加动作」），页面上只留表格与计数 */
+  body.innerHTML = '<div class="card" style="margin-bottom:0"><h3><span>📚 我的动作库（' + state.exercises.length + '）</span><span class="grow"></span>' +
+    '<button class="btn sm primary" id="nx_open">＋ 添加动作</button></h3>' +
     libTableHTML(rows) +
-    '<div class="tiny muted" style="margin-top:10px">运动中保存的新动作会自动进入这里；「系统动作库」分页可挑入管理员维护的公共动作。</div>' +
-    '<div class="row gap8 mt" style="align-items:end;flex-wrap:wrap">' +
-      '<div style="flex:1;min-width:120px"><label class="tiny muted">新动作名</label><input class="input" id="nx_name" placeholder="如：窄距俯卧撑"></div>' +
-      '<div style="width:100px"><label class="tiny muted">大类</label><select class="select" id="nx_cat">' + CATS.map(c => '<option>' + c + '</option>').join('') + '</select></div>' +
-      '<div style="width:100px"><label class="tiny muted">部位</label><select class="select" id="nx_muscle">' + MUSCLES.map(m => '<option>' + m + '</option>').join('') + '</select></div>' +
-      '<div style="width:100px"><label class="tiny muted">记录方式</label><select class="select" id="nx_mode">' + MODES.map(m => '<option value="' + m + '">' + MODE_CN[m] + '</option>').join('') + '</select></div>' +
-      '<button class="btn primary" id="nx_add">添加</button></div></div>';
-  /* 换大类即把 部位/记录方式 拨到该大类的默认值（仍可手改：核心+计时 = 平板支撑） */
-  const catSel = $('#nx_cat', body), musSel = $('#nx_muscle', body), modSel = $('#nx_mode', body);
-  const syncDefaults = () => { musSel.value = defaultMuscle(catSel.value); modSel.value = defaultMode(catSel.value); };
-  catSel.addEventListener('change', syncDefaults);
-  syncDefaults();
-  $('#nx_add', body).addEventListener('click', () => {
-    const name = $('#nx_name', body).value.trim();
-    if(!name){ toast('请填写动作名', true); return; }
-    state.exercises.push({ id:uid(), name, cat:catSel.value, muscle:musSel.value, mode:modSel.value });
-    save(); renderExLib($('#xl_host')); toast('已添加');
-  });
+    '<div class="tiny muted" style="margin-top:10px">运动中保存的新动作会自动进入这里；「系统动作库」分页可挑入管理员维护的公共动作。</div></div>';
+  $('#nx_open', body).addEventListener('click', () => openExAdder(() => renderExLib($('#xl_host'))));
   $$('[data-delx]', body).forEach(b => b.addEventListener('click', () => {
     const id = b.dataset.delx;
     /* 注意:必须改 USERS.shared.exercises 本体(再重新取引用),只换 state.exercises 指向会同步不生效 */
@@ -2182,9 +2229,36 @@ function renderExLibMine(body){
     save(); renderExLib($('#xl_host'));
   }));
 }
+/* 添加动作弹窗（我的库）：名称必填；换大类即把 部位/记录方式 拨到该大类的默认值（仍可手改：核心+计时 = 平板支撑）。
+ * 写入本人动作库后立即落库并关闭，after() 让页面表格与「我的动作库（n）」计数即时刷新。 */
+function openExAdder(after){
+  const dlg = showDialog('添加动作',
+    '<div class="field"><label>动作名称</label><input class="input" id="nx_name" placeholder="如：窄距俯卧撑"></div>' +
+    '<div class="form-grid">' +
+      '<div><label>大类</label><select class="select" id="nx_cat">' + CATS.map(c => '<option>' + c + '</option>').join('') + '</select></div>' +
+      '<div><label>部位</label><select class="select" id="nx_muscle">' + MUSCLES.map(m => '<option>' + m + '</option>').join('') + '</select></div>' +
+      '<div><label>记录方式</label><select class="select" id="nx_mode">' + MODES.map(m => '<option value="' + m + '">' + MODE_CN[m] + '</option>').join('') + '</select></div>' +
+    '</div>' +
+    '<div class="tiny muted" style="margin-top:10px">换大类会自动带出该大类的默认部位与记录方式，仍可手改（如「核心 + 计时」= 平板支撑）。</div>' +
+    '<div class="d-f"><button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="nx_add">添加</button></div>');
+  const b = dlg.box;
+  const catSel = $('#nx_cat', b), musSel = $('#nx_muscle', b), modSel = $('#nx_mode', b);
+  const syncDefaults = () => { musSel.value = defaultMuscle(catSel.value); modSel.value = defaultMode(catSel.value); };
+  catSel.addEventListener('change', syncDefaults);
+  syncDefaults();
+  const add = () => {
+    const name = $('#nx_name', b).value.trim();
+    if(!name){ toast('请填写动作名', true); return; }
+    state.exercises.push({ id:uid(), name, cat:catSel.value, muscle:musSel.value, mode:modSel.value });
+    save(); closeDialog(); if(after) after(); toast('已添加：' + name);
+  };
+  const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
+  $('#nx_add', b).addEventListener('click', add);
+  $('#nx_name', b).addEventListener('keydown', e => { if(e.key === 'Enter') add(); });   /* 桌面端回车即添加 */
+}
 async function renderExLibSys(body){
   body.innerHTML = '<div class="tiny muted">载入系统库…</div>';
-  const sys = await fetchSysLib();   /* v4.4:openExLib 入口已失效缓存,本页首拉一次即可 */
+  const sys = await fetchSysLib();   /* v4.4:进页入口已失效缓存,本页首拉一次即可 */
   if(exLibTab !== 'sys') return;
   if(!sys){ body.innerHTML = '<div class="card"><div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">🔌</div>服务器离线，暂时看不到系统库</div></div>'; return; }
   paintSysLib(body, sys);
@@ -2587,7 +2661,7 @@ function renderSettings(){
         '<button class="btn ghost" id="st_foodlib" style="flex:1;max-width:240px">📚 食物库(' + state.foods.length + ')</button>' +
         '<button class="btn ghost" id="st_exlib" style="flex:1;max-width:240px">📚 动作库(' + state.exercises.length + ')</button>' +
       '</div>' +
-      '<div class="tiny muted" style="margin:8px 0 12px">在这里管理个人食物库与动作库：「我的库」可增删，也可从管理员维护的系统库挑入；饮食页记录时仍可选用食物库，训练中保存的新动作会自动进入动作库。</div>' +
+      '<div class="tiny muted" style="margin:8px 0 12px">在这里管理个人食物库与动作库：「我的库」可增删，也可从管理员维护的系统库挑入；两个库各有独立页面（页面顶部可返回本页）。饮食页记录时仍可选用食物库，训练中保存的新动作会自动进入动作库。</div>' +
       '<div class="row gap8">' +
         '<button class="btn ghost" id="st_export">⬇ 导出备份</button>' +
         '<button class="btn ghost" id="st_import">⬆ 导入备份</button>' +
@@ -2614,10 +2688,9 @@ function renderSettings(){
   $('#nut_edit').addEventListener('click', openNutritionEditor);
   bindHabitSettings();
   /* v4.8：原 ⚙️ 设置弹窗的数据工具搬进本页卡片；v4.9 起「载入演示数据」入口移除，清空/导入成功后各自跳回概览 */
-  /* 食物库/动作库管理入口自饮食页与运动页并入本卡；弹窗关闭后重渲染本页刷新按钮上的库计数 */
-  const libClosed = () => { if(curView === 'settings') renderSettings(); };
-  $('#st_foodlib').addEventListener('click', () => openFoodLib(libClosed));
-  $('#st_exlib').addEventListener('click', () => openExLib(libClosed));
+  /* 未标版号：食物库/动作库由弹窗改为子页面（页面顶部带「返回」），返回时本页重渲染、按钮上的库计数自动刷新 */
+  $('#st_foodlib').addEventListener('click', () => go('foodlib'));
+  $('#st_exlib').addEventListener('click', () => go('exlib'));
   $('#st_export').addEventListener('click', exportData);
   $('#st_import').addEventListener('click', () => {
     if(!confirm('导入会用备份中的数据覆盖本账户当前数据，是否继续？建议先「导出」留底。\n（多人备份文件只取其中"当前成员"那一份；其他成员请各自登录后再导入）')) return;
@@ -3075,7 +3148,8 @@ function runSelfTest(){
   const errs = [];
   try {
     demoData();
-    const views = ['home','diet','train','body','stats','settings'];
+    /* 未标版号：数据管理下的两个子页面也进冷渲染冒烟（它们不在 NAV 里，但同样是 go() 能到达的页） */
+    const views = ['home','diet','train','body','stats','settings','foodlib','exlib'];
     views.forEach(v => {
       try { curView = v; rebuildNav(); renderView(); errs.push(v + ':ok'); }
       catch(e){ errs.push(v + ':ERR ' + e.message); }
