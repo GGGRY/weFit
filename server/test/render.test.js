@@ -54,6 +54,11 @@ doc.head = makeNode('head');
 doc.body = makeNode('body');
 doc.createElement = t => makeNode(t);
 doc.getElementById = id => doc.querySelector('#' + id);   /* 与 $('#id') 共用同一桩节点 */
+/* documentElement 的属性存取改成真记账:applyTheme 写的 data-theme 要能在 Node 侧读回
+ * (makeNode 默认 setAttribute/getAttribute 是 no-op,验不了主题切换) */
+const rootAttrs = new Map();
+doc.documentElement.setAttribute = (k, v) => rootAttrs.set(String(k), String(v));
+doc.documentElement.getAttribute = k => (rootAttrs.has(String(k)) ? rootAttrs.get(String(k)) : null);
 
 function makeLS() {
   const m = new Map();
@@ -107,7 +112,8 @@ for (const f of ['js/seed-data.js', 'js/sleep-shape.js', 'js/app.js'])
 /* 顶层 let/const 在上下文词法环境中,后续脚本可读写;Node 侧经 ev() 进入 */
 const ev = code => vm.runInContext(code, ctx);
 const view = doc.getElementById('view');
-const topbar = doc.querySelector('#topbar');
+const sidebar = doc.querySelector('#sidebar');
+const tabbar = doc.querySelector('#tabbar');
 
 async function main() {
   /* 等启动链(init → 两次 fetch → go('home'))落地 */
@@ -116,7 +122,7 @@ async function main() {
   ok('T1a 启动冒烟:me/state → 概览渲染无异常', !!view.__html, '3s 超时:#view 始终为空');
   if (!view.__html) return finish();
   ok('T1b 概览关键块', view.__html.includes('今日热量') && view.__html.includes('🍽️ 今日饮食')
-     && topbar.__html.includes('概览'));
+     && sidebar.__html.includes('navbtn active" data-go="home"'));
   ok('T1c 登录态与单人树', ev('me.username') === 'tester' && ev('USERS.active') === 'u_alice'
      && ev('Object.keys(USERS.users).length') === 1,
      `me=${ev('JSON.stringify(me&&me.username)')} active=${ev('USERS.active')}`);
@@ -144,12 +150,16 @@ async function main() {
      tileRow.slice(ti[2], ti[3]).includes(expWk === '--' ? '>--</div>' : '>' + expWk + '<span class="unit">项</span>'),
      'wk=' + expWk + ' tile=' + tileRow.slice(ti[2], ti[3]));
 
-  /* T2 六页导航冒烟(顺序放最前:后续用例会改写 state) */
+  /* T2 六页导航冒烟(顺序放最前:后续用例会改写 state)
+     2026-09-11 顶栏移除后页面不再渲染标题,当前页由侧栏(桌面)/底栏(手机)高亮项标示,
+     故这里守「导航高亮跟着 curView 走」+ 每页 view 有内容,不再断言顶栏标题 */
   const TITLES = { home:'概览', diet:'饮食', train:'运动', body:'身体', stats:'历史', settings:'设置' };
   for (const [v, tt] of Object.entries(TITLES)) {
     let err = null;
     try { ev(`go('${v}')`); } catch (e) { err = e; }
-    ok('T2 页面冒烟 ' + v, !err && view.__html.length > 50 && topbar.__html.includes(tt),
+    ok('T2 页面冒烟 ' + v, !err && view.__html.length > 50
+       && sidebar.__html.includes('navbtn active" data-go="' + v + '"') && sidebar.__html.includes(tt)
+       && tabbar.__html.includes('tabbtn active" data-go="' + v + '"'),
        (err && err.message) || ('len=' + view.__html.length));
   }
 
@@ -160,6 +170,82 @@ async function main() {
      && ev("localStorage.setItem('jjhealth_view:tester','diet'); readView()") === 'diet'
      && ev("localStorage.setItem('jjhealth_view:tester','bogus'); readView()") === 'home',
      'readView=' + ev('readView()'));
+
+  /* T2c–T2f 顶栏移除(2026-09-11):第一行整体删除;「我的档案」「切换深色/浅色」搬进设置页 */
+  ok('T2c 第一行已移除:index.html 无 #topbar 槽位,renderView 也不再写它',
+     !readPub('index.html').includes('id="topbar"') && doc.querySelector('#topbar').__html === '',
+     'stub=' + JSON.stringify(doc.querySelector('#topbar').__html));
+  ev("go('settings')");
+  const setI = view.__html.indexOf('👤 我的档案');
+  const st = setI < 0 ? '' : view.__html.slice(setI, view.__html.indexOf('🧍 基础资料'));
+  ok('T2d 设置页首卡 = 我的档案(只读展示 + 「修改档案」入口,与基础资料卡同款)',
+     ['id="pf_edit"','👤 我的档案','登录账户','修改档案'].every(s => st.includes(s))
+     && !st.includes('id="pf_av"') && !st.includes('id="pf_save"') && !st.includes('id="pf_logout"'),
+     st.slice(0, 140));
+  /* 管理员 chip 只在 admin 下渲染,单独以 admin 重渲染一次;role 不影响后面的外观卡,故 st 仍复用 */
+  ev("me.role = 'admin'; go('settings')");
+  const stA = view.__html.slice(view.__html.indexOf('👤 我的档案'), view.__html.indexOf('🧍 基础资料'));
+  ev("me.role = 'user'; go('settings')");
+  const pfCss = readPub('css/style.css');
+  const chipRule = (pfCss.match(/^\.chip\{[^}]*\}/m) || [''])[0];   /* 只认 .chip 自身那条,文件别处的 nowrap 不算数 */
+  const pfF = {
+    top: st.includes('class="pf-top"'), id: st.includes('class="pf-id"'), noLrow: !st.includes('lrow'),
+    chip: stA.includes('class="chip ok">管理员'),
+    cssTop: pfCss.includes('.pf-top{'), cssNowrap: chipRule.includes('white-space:nowrap'),
+    /* 卡上只剩「头像 + 昵称/账户」:概况串与底部提示小字已按用户要求删掉,残留的 pf-meta / 旧提示文案 / userMetaHTML 都算回归 */
+    noMeta: !st.includes('pf-meta') && !st.includes('体重 ') && !st.includes('身体记录')
+      && !st.includes('可改头像表情') && !pfCss.includes('.pf-meta{'),
+    noDeadHelper: !readPub('js/app.js').includes('function userMetaHTML('),
+  };
+  ok('T2d3 档案卡只留头像+昵称/账户一行(概况与提示小字已删),chip 不竖排,不再复用 lrow',
+     Object.values(pfF).every(Boolean), JSON.stringify(pfF));
+  const pdlg = dlgHTML('openProfileDialog()');
+  ok('T2d2 档案修改走弹窗:头像/昵称/标识色 + 保存;退出登录已移出弹窗、后台管理链接也不在弹窗里',
+     !pdlg.startsWith('ERR:') && ['id="pf_av"','id="pf_name"','id="pf_color"','id="pf_save"']
+       .every(s => pdlg.includes(s))
+     && !pdlg.includes('id="pf_logout"') && !pdlg.includes('退出登录') && !pdlg.includes('href="/admin"'),
+     pdlg.slice(0, 140));
+  ev('closeDialog()');
+  /* 主题切换已收成档案卡头的图标钮:st 是「我的档案 → 基础资料」之间的整段,只该有一张卡的 <div class="card"> */
+  const tgIn = (h) => (h.match(/id="themeToggle"[^>]*>([^<]*)</) || [])[1] || '';
+  ok('T2e 深色/浅色收成档案卡头的太阳/月亮图标钮(#themeToggle,排在「修改档案」右边),不再单占卡',
+     st.includes('id="themeToggle"') && st.includes('aria-label="切换深色/浅色"')
+     && st.indexOf('id="pf_edit"') < st.indexOf('id="themeToggle"')      /* 图标钮在「修改档案」右侧 */
+     && tgIn(st) === (ev('curTheme()') === 'dark' ? '🌙' : '☀️')          /* 图标 = 当前档位 */
+     && (st.match(/<div class="card">/g) || []).length === 1             /* 档案卡与基础资料卡之间没有别的卡了 */
+     && !st.includes('data-theme-set') && !st.includes('pf-theme') && !view.__html.includes('🎨 外观'),
+     'theme=' + ev('curTheme()') + ' icon=' + tgIn(st) + ' cards=' + (st.match(/<div class="card">/g) || []).length);
+  ev("setTheme('dark'); go('settings')");
+  const tgDark = tgIn(view.__html);
+  const darkOK = doc.documentElement.getAttribute('data-theme') === 'dark'
+    && tgDark === '🌙' && ev("state.theme") === 'dark';
+  ev("setTheme('bogus'); go('settings')");   /* 非法档位回落 light,重渲染后图标回到太阳(顺带复位主题状态) */
+  const tgLight = tgIn(view.__html);
+  ok('T2f setTheme 翻转根 data-theme,档案卡图标钮随之切月亮/太阳;非法值回落浅色',
+     darkOK && doc.documentElement.getAttribute('data-theme') === 'light'
+     && ev("state.theme") === 'light' && tgLight === '☀️',
+     'dark=' + tgDark + ' light=' + tgLight + ' attr=' + doc.documentElement.getAttribute('data-theme') + ' theme=' + ev('state.theme'));
+
+  /* T2g 后台管理入口 = 设置页最后一张卡(仅 admin;普通账户整卡不渲染 → 保持「用户端零管理功能」) */
+  ev("me.role = 'user'; go('settings')");
+  const noAdminCard = !view.__html.includes('后台管理') && !view.__html.includes('href="/admin"');
+  /* 退出登录 = 设置页最下方那颗独立按钮：排在所有卡片(普通账户末卡=数据管理,admin 末卡=后台管理)之后 */
+  const loUserH = view.__html, loUser = loUserH.indexOf('id="pf_logout"');
+  ev("me.role = 'admin'; go('settings')");
+  const hA = view.__html, aI = hA.indexOf('🛠 后台管理'), dI = hA.indexOf('💾 数据管理');
+  const loA = hA.indexOf('id="pf_logout"');
+  const loBtn = '<button class="btn danger ghost" id="pf_logout">⎋ 退出登录</button>';
+  ok('T2g 后台管理入口独立成设置页最后一张卡(仅 admin,已从「我的档案」卡移出)',
+     noAdminCard && aI > dI && aI > 0 && (hA.match(/href="\/admin"/g) || []).length === 1
+     && hA.slice(aI).includes('进入后台管理') && hA.indexOf('href="/admin"') > dI,
+     'adminCard@' + aI + ' dataCard@' + dI);
+  ok('T2h 退出登录在设置页最下方(排在本页最后一张卡之后),两种视角都在,且自成一行不在卡内',
+     loUser > loUserH.indexOf('💾 数据管理')                       /* user 视角:排在末卡数据管理之后 */
+     && loA > aI && loA > dI                                        /* admin 视角:排在末卡后台管理之后 */
+     && hA.includes('margin:4px 0 8px">' + loBtn + '</div>')        /* 自带 .row 包裹,不是卡片内的一颗 */
+     && (hA.slice(loA).match(/<div class="card">/g) || []).length === 0,   /* 它后面再没有卡片了 */
+     'user@' + loUser + ' admin@' + loA + ' card@' + aI);
+  ev("me.role = 'user'; go('settings')");
 
   /* T3 饮食数据流:per100×克数换算 + 渲染行 */
   const x3 = JSON.parse(ev(`(() => {

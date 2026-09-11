@@ -21,7 +21,6 @@
   --shadow:0 1px 2px rgba(20,40,30,.05),0 6px 18px -8px rgba(20,40,30,.12);
   --chart-grid:#e6eae4;
   --chart-ax:#9aa49b;
-  --header-blur:rgba(242,244,241,.86);
 }
 :root[data-theme="dark"]{
   color-scheme: dark;
@@ -45,7 +44,6 @@
   --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 20px -8px rgba(0,0,0,.5);
   --chart-grid:#2a302a;
   --chart-ax:#828b82;
-  --header-blur:rgba(16,19,16,.85);
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;padding:0}
@@ -85,28 +83,9 @@ a{color:var(--brand-ink)}
 .navbtn.active{background:var(--brand-soft);color:var(--brand-ink);font-weight:700}
 .navbtn.active .ic{transform:scale(1.05)}
 .main{flex:1;min-width:0;padding:20px clamp(14px,3vw,32px) 40px;max-width:1080px}
-.topbar{
-  display:flex;align-items:center;gap:10px 14px;margin:2px 0 18px;justify-content:space-between;flex-wrap:wrap;
-  position:sticky;top:0;z-index:20;background:var(--header-blur);backdrop-filter:blur(8px);
-  border-radius:0 0 0 0;
-}
-.page-head{min-width:0}
-.page-head h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.page-head h1{font-size:22px;margin:0;font-weight:800}
-.page-head .sub{color:var(--ink-2);font-size:13px;margin-top:2px}
-.tools{display:flex;gap:8px;align-items:center}
-.userpill{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:3px 11px 3px 4px;font-weight:650;font-size:13.5px;color:var(--ink);transition:.15s;max-width:170px}
-.userpill:hover{border-color:var(--brand)}
-.userpill .upn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .av{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-size:15px;background:var(--surface-3);flex:none}
 .av.big{width:40px;height:40px;font-size:21px}
 .avatar-ring{box-shadow:inset 0 0 0 2px var(--ring,#0e8a63)}
-.iconbtn{
-  width:38px;height:38px;border-radius:11px;border:1px solid var(--line);background:var(--surface);
-  color:var(--ink-2);font-size:17px;display:grid;place-items:center;transition:.15s;
-}
-.iconbtn:hover{border-color:var(--brand);color:var(--brand-ink)}
-.iconbtn.active{background:var(--brand-soft);border-color:var(--brand-line);color:var(--brand-ink)}
 .tabbar{
   position:fixed;left:0;right:0;bottom:0;z-index:30;display:none;
   background:var(--surface);border-top:1px solid var(--line);
@@ -175,6 +154,9 @@ a{color:var(--brand-ink)}
 .btn.sm{padding:5px 10px;font-size:13px;border-radius:9px}
 .btn.block{width:100%}
 .btn:disabled{opacity:.5;cursor:not-allowed}
+/* 图标钮：方形、只放一个符号(如主题切换的 ☀️/🌙),比同排文字按钮轻。
+   定义在 .btn.sm 之后——同特异性靠源码顺序覆盖 padding */
+.btn.icon{width:30px;height:30px;padding:0;font-size:15px;line-height:1;flex:none}
 
 /* 圆形小按钮 */
 .iconbtn2{width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font-size:16px;display:inline-grid;place-items:center;flex:none}
@@ -217,7 +199,8 @@ a{color:var(--brand-ink)}
 .daynav .right{font-weight:400;color:var(--ink-2);font-size:12px;margin-left:auto}
 
 /* 标签 chip */
-.chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:99px;padding:4px 11px;font-size:13px;background:var(--surface-2)}
+/* nowrap:chip 是整体标签,容器变窄时绝不逐字换行(窄屏档案卡的「管理员」曾因此竖排成一列) */
+.chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:99px;padding:4px 11px;font-size:13px;background:var(--surface-2);white-space:nowrap}
 .chip.slot{font-size:11px;padding:2px 9px}
 .chip.b1{background:var(--cat1-soft);border-color:transparent;color:var(--cat1);font-weight:600}
 .chip.b2{background:var(--cat2-soft);border-color:transparent;color:var(--cat2);font-weight:600}
@@ -229,6 +212,11 @@ a{color:var(--brand-ink)}
 .lrow:last-child{border-bottom:0}
 .lrow .grow{flex:1;min-width:0}
 .lrow .sub{font-size:12.5px;color:var(--ink-3)}
+/* 档案卡头部：头像 + 昵称/账户 一行。原先是三栏 lrow,窄屏下概况串不缩,
+   把昵称区挤到几十像素(详见 CHANGELOG 2026-09-11)。 */
+.pf-top{display:flex;align-items:center;gap:12px}
+.pf-id{flex:1;min-width:0}
+.pf-id .sub{font-size:12.5px;color:var(--ink-3)}
 .card.today{border-color:var(--brand)}
 .thumb{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;font-size:19px;flex:none;background:var(--surface-2)}
 
@@ -312,10 +300,6 @@ a{color:var(--brand-ink)}
      而手机原生本就是滚动时浮现的覆盖式滚动条。移动端隐掉,腾出宽度。 */
   .main{scrollbar-width:none}
   .main::-webkit-scrollbar{display:none;width:0;height:0}
-  /* 顶栏:移动端不再固定。.main 成为滚动容器后 backdrop-filter 不可靠,
-     固定顶栏既挡住内容又会透出下面的内容;而手机底部 tab 栏本身已标示当前页面,
-     标题冗余,跟着页面一起滚走最省地方。半透明背景叠在 --bg 上同色,无需改。 */
-  .topbar{position:static;backdrop-filter:none;-webkit-backdrop-filter:none}
   .hero{font-size:34px}
 }
 

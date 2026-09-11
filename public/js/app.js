@@ -915,12 +915,17 @@ function upsertOn(existing, patch){
 }
 
 /* ---------- 主题 ---------- */
+function curTheme(){ return state.theme === 'dark' ? 'dark' : 'light'; }
+/* 主题有三处显示口：根属性（样式）、侧栏底部「外观」图标（桌面）、档案卡头的太阳/月亮图标钮（#themeToggle）。
+ * 三处统一由 applyTheme 刷新——否则从任意一处切换后，别处的图标会停在旧档位。 */
 function applyTheme(){
-  document.documentElement.setAttribute('data-theme', state.theme || 'light');
-  const m = $('#themeToggle'); if(m) m.textContent = (state.theme==='dark') ? '☀️' : '🌙';
-  const mc = $('#metaTheme');
+  const t = curTheme();
+  document.documentElement.setAttribute('data-theme', t);
+  const sb = $('#sidebar [data-themeclick] .ic'); if(sb) sb.textContent = (t === 'dark') ? '🌙' : '☀️';
+  const tg = $('#themeToggle'); if(tg) tg.textContent = (t === 'dark') ? '🌙' : '☀️';
 }
-function toggleTheme(){ state.theme = state.theme === 'dark' ? 'light' : 'dark'; save(); applyTheme(); }
+function setTheme(t){ state.theme = (t === 'dark') ? 'dark' : 'light'; save(); applyTheme(); }
+function toggleTheme(){ setTheme(curTheme() === 'dark' ? 'light' : 'dark'); }
 
 /* ---------- Toast ---------- */
 function toast(msg, isErr){
@@ -1067,19 +1072,6 @@ function bindPullToRefresh(){
 }
 function renderView(){
   const map = { home:renderHome, diet:renderDiet, train:renderTrain, body:renderBody, stats:renderStats, settings:renderSettings };
-  const topbar = $('#topbar');
-  const titles = { home:'概览', diet:'饮食', train:'运动', body:'身体', stats:'历史', settings:'设置' };
-  const au = activeUser();
-  topbar.innerHTML = '<div class="page-head"><h1>' + titles[curView] + '</h1></div>' +
-    '<div class="tools">' +
-      '<button class="userpill" id="userBtn" title="我的档案 / 退出登录">' +
-        '<span class="av avatar-ring" style="--ring:' + userColorHex(au.color) + '">' + esc(au.avatar || '🙂') + '</span>' +
-        '<span class="upn">' + esc(au.name) + '</span>' +
-      '</button>' +
-      '<button class="iconbtn" id="themeToggle" title="切换深色/浅色">' + (state.theme==='dark' ? '☀️' : '🌙') + '</button>' +
-    '</div>';
-  $('#userBtn').onclick = openProfile;
-  $('#themeToggle').onclick = toggleTheme;
   (map[curView])();
 }
 
@@ -1170,47 +1162,66 @@ function importData(file){
 
 /* =====================================================
    我的档案（v4：一账户一档案，成员切换/增删已退役）
+   呈现位置 = 设置页「👤 我的档案」卡（2026-09-11 顶栏移除后并入）
+   卡片只读展示，修改走 openProfileDialog() 弹窗——与基础资料/每日目标等卡片体验一致
 ===================================================== */
-function userMetaHTML(u){
-  const wc = (u.workouts || []).length;
-  const bd = (u.body || []).filter(b => b.weight !== undefined && b.weight !== null);
-  const last = bd.length ? bd[bd.length-1].weight : null;
-  return (last !== null ? '体重 ' + last + 'kg · ' : '暂无体重 · ') + '运动 ' + wc + ' 次 · 身体记录 ' + bd.length + ' 条';
-}
 function colorOpts(sel){
   const labels = {green:'绿', blue:'蓝', orange:'橙', violet:'紫', teal:'青', pink:'粉'};
   return USER_COLORS.map(c => '<option value="' + c.id + '"' + (c.id === sel ? ' selected' : '') + '>' + (labels[c.id] || c.id) + '</option>').join('');
 }
-function openProfile(){
+function profileCardHTML(){
   const u = activeUser();
   const isAdmin = !!(me && me.role === 'admin');
-  const html =
-    '<div class="lrow" style="border:0;padding-top:0">' +
+  return '<div class="card"><h3><span>👤 我的档案</span><span class="grow"></span>' +
+    '<button class="btn sm" id="pf_edit">修改档案</button>' +
+    themeToggleHTML() + '</h3>' +
+    '<div class="pf-top">' +
       '<span class="av big avatar-ring" style="--ring:' + userColorHex(u.color) + '">' + esc(u.avatar || '🙂') + '</span>' +
-      '<div class="grow"><div class="b">' + esc(u.name) + (isAdmin ? ' <span class="chip" style="background:var(--brand-soft);color:var(--brand-ink);border-color:transparent">管理员</span>' : '') + '</div>' +
+      '<div class="pf-id"><div class="b">' + esc(u.name) + (isAdmin ? ' <span class="chip ok">管理员</span>' : '') + '</div>' +
       '<div class="sub">登录账户：' + esc(me ? me.username : '（离线）') + '</div></div>' +
-      '<div class="tiny muted">' + esc(userMetaHTML(u)) + '</div>' +
     '</div>' +
-    '<div class="form-grid" style="margin-top:6px">' +
+  '</div>';
+}
+/* 档案修改走弹窗（与基础资料/每日目标等卡片「只读卡 + 弹窗编辑」一致） */
+function openProfileDialog(){
+  const u = activeUser();
+  const html =
+    '<div class="form-grid">' +
       '<div><label>头像（表情）</label><input class="input" id="pf_av" maxlength="2" value="' + esc(u.avatar || '🙂') + '"></div>' +
       '<div><label>昵称</label><input class="input" id="pf_name" value="' + esc(u.name) + '"></div>' +
       '<div class="span2"><label>标识色</label><select class="select" id="pf_color">' + colorOpts(u.color) + '</select></div>' +
     '</div>' +
-    '<div class="d-f" style="justify-content:space-between">' +
-      '<span class="row gap8">' +
-        '<button class="btn ghost" id="pf_logout">⎋ 退出登录</button>' +
-      '</span>' +
-      '<button class="btn primary" id="pf_save">保存</button>' +
-    '</div>' +
-    (isAdmin ? '<a class="btn block" style="margin-top:12px;text-decoration:none;justify-content:center" href="/admin" target="_blank" rel="noopener">🛠 进入后台管理（系统库 · 用户权限）→</a>' : '');
-  const dlg = showDialog('我的档案', html);
+    '<div class="tiny" style="margin-top:8px;color:var(--ink-3)">昵称与头像显示在「我的档案」卡片上；标识色决定头像圆环颜色。</div>' +
+    '<div class="d-f">' +   /* 退出登录已移出弹窗、挪到设置页最下方，这里只剩取消/保存（.d-f 本就右对齐） */
+      '<button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="pf_save">保存</button>' +
+    '</div>';
+  const dlg = showDialog('修改我的档案', html);
   const b = dlg.box;
   $('#pf_save', b).addEventListener('click', () => {
     const name = $('#pf_name', b).value.trim(); if(!name){ toast('昵称不能为空', true); return; }
     u.name = name; u.avatar = $('#pf_av', b).value.trim() || '🙂'; u.color = $('#pf_color', b).value;
-    save(); closeDialog(); go(curView); toast('已保存');
+    save(); closeDialog(); renderView(); toast('已保存');
   });
-  $('#pf_logout', b).addEventListener('click', doLogout);
+  const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
+}
+/* 主题切换图标钮（太阳/月亮）= 原顶栏那颗切换键，2026-09-11 从独立「🎨 外观」卡一路收到
+   档案卡头、排在「修改档案」右边。图标显示**当前**档位（☀️ 浅色 / 🌙 深色），
+   与桌面侧栏底部「外观」入口同一口径；两处图标都由 applyTheme() 统一刷新。 */
+function themeToggleHTML(){
+  return '<button class="btn sm icon" id="themeToggle" type="button" title="切换深色/浅色" aria-label="切换深色/浅色">' +
+    (curTheme() === 'dark' ? '🌙' : '☀️') + '</button>';
+}
+function bindThemeToggle(){
+  const b = $('#themeToggle'); if(b) b.addEventListener('click', toggleTheme);
+}
+/* 后台管理入口卡（仅 admin，普通账户不渲染 → 保持「用户端零管理功能」）
+ * 2026-09-11 由「我的档案」卡底移出，改为设置页最后一张卡 */
+function adminCardHTML(){
+  if(!(me && me.role === 'admin')) return '';
+  return '<div class="card"><h3><span>🛠 后台管理</span></h3>' +
+    '<a class="btn block" style="text-decoration:none;justify-content:center" href="/admin" target="_blank" rel="noopener">进入后台管理（系统库 · 用户权限）→</a>' +
+    '<div class="tiny muted mt">管理员专属：维护系统共享的食物库/动作库，以及账户权限（设为/撤销管理员、重置密码、删除账户）。在新标签页打开。</div>' +
+  '</div>';
 }
 async function doLogout(){
   /* v4.3：退出必须拿到服务器确认再清本地——旧版吞掉网络错误直接 reload，
@@ -2285,7 +2296,11 @@ function renderWaterChart(){
 ===================================================== */
 /* =====================================================
    设置页（v4.8：原「目标 · 打卡」页与 ⚙️ 设置弹窗合并，排在历史页之后）
-   卡片顺序：基础资料 → 每日目标 → 每日打卡管理 → 数据管理
+   卡片顺序：我的档案 → 基础资料 → 每日目标 → 每日打卡管理 → 数据管理
+   （末卡 = 后台管理，仅 admin 渲染；普通账户看不到任何管理入口）
+   （所有卡片之下还有一颗独立的「⎋ 退出登录」，2026-09-11 由「修改档案」弹窗移出）
+   （我的档案 = 2026-09-11 顶栏移除后并入；原顶栏胶囊弹窗改为内嵌卡。
+     深色/浅色切换当时独立成一张「🎨 外观」卡，同日收进档案卡底部省纵向空间 → 原外观卡已删）
 ===================================================== */
 function renderSettings(){
   const p = state.profile;
@@ -2296,6 +2311,7 @@ function renderSettings(){
   const T = target();
   const actLabel = (ACTIVITIES.find(a => String(a.v) === String(state.activity)) || {}).label || state.activity;
   const html =
+    profileCardHTML() +
     '<div class="card"><h3><span>🧍 基础资料</span><span class="grow"></span><button class="btn sm" id="pr_edit">修改资料</button></h3>' +
     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">' +
       pTile('性别', genderLabel) +
@@ -2339,8 +2355,16 @@ function renderSettings(){
       '<div class="tiny" id="st_sync" style="margin-top:10px;color:var(--ink-3)"></div>' +
       '<div class="tiny" style="margin-top:4px;color:var(--ink-3)">各设备登录同一账户，读写的就是同一份服务器数据，无需手动同步；不同账户彼此隔离。本机存储仅作当前账户的离线缓存。历史备份可在上方「导出/导入」搬运。</div>' +
       '<input type="file" id="st_file" accept=".json,application/json" style="display:none">' +
+    '</div>' +
+    adminCardHTML() +
+    /* 退出登录：设置页最下方独立一颗（2026-09-11 由「修改档案」弹窗移出，与「修改」动作解耦） */
+    '<div class="row" style="justify-content:center;margin:4px 0 8px">' +
+      '<button class="btn danger ghost" id="pf_logout">⎋ 退出登录</button>' +
     '</div>';
   $('#view').innerHTML = html;
+  bindThemeToggle();
+  $('#pf_edit').addEventListener('click', openProfileDialog);
+  $('#pf_logout').addEventListener('click', doLogout);
   $('#pr_edit').addEventListener('click', openProfileEditor);
   $('#nut_edit').addEventListener('click', openNutritionEditor);
   bindHabitSettings();
