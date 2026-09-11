@@ -166,29 +166,78 @@ async function main() {
   ok('T6 打卡卡渲染习惯名与「🔥 连续 2 天」',
      view.__html.includes('背单词') && view.__html.includes('🔥 连续 2 天'));
 
-  /* T7 v4.12 运动页 = 单一日程列表：每项一个打卡圆钮，卡头 n/N，勾过的行变暗
+  /* T7 v4.14 运动页 = 周视图：一周七卡（周一→周日），周切换改的是展示区间
    * 注意：运动页正文写进 #tabBody（桩里是独立节点），不在 view.__html 里 */
-  ev("renderTrain()");
-  const trainHTML = doc.getElementById('tabBody').__html;
-  ok('T7a 力量行「32 次 @70kg」', trainHTML.includes('32 次 @70kg'), 'n=' + ev('state.workouts.length') + ' html=' + trainHTML.slice(0, 300));
-  ok('T7b 计时行「32.5 分钟 · 5.2 km」', trainHTML.includes('32.5 分钟 · 5.2 km'));
-  ok('T7c 全完成那天卡头显示实际容量「容量 2240 kg」（只算已打勾项）', trainHTML.includes('容量 2240 kg'));
-  ok('T7d 每项都有独立打卡圆钮：已完成的带 on、未打勾的不带',
-     trainHTML.includes('class="hab-dot on" data-itemdone="w1" data-item="wi1"')
-     && trainHTML.includes('class="hab-dot " data-itemdone="w5" data-item="wi7"'));
-  ok('T7e 部分完成那天卡头显示 1/2，且容量只算已打勾项（1 项 @70kg×32）',
-     trainHTML.includes('>1/2<') && trainHTML.includes('>2/2<'),
-     'html=' + trainHTML.slice(0, 500));
-  ok('T7f 未开始的那天显示计划量「计划 容量 2880 kg」', trainHTML.includes('计划 容量 2880 kg'));
-  ok('T7g PR 只跟更早、已打勾的项比：全列表只有 w1 一个 🏆', (trainHTML.match(/🏆/g) || []).length === 1);
-  ok('T7h 一键按钮：未完成的是「✔ 全部完成」，全完成的是「↺ 全部取消」',
-     trainHTML.includes('✔ 全部完成') && trainHTML.includes('↺ 全部取消'));
+  ev("setTrainWeek(null); renderTrain()");
+  let trainHTML = doc.getElementById('tabBody').__html;
+  ok('T7a 一周七卡（含无安排的空白日）', (trainHTML.match(/data-daycard=/g) || []).length === 7,
+     'n=' + (trainHTML.match(/data-daycard=/g) || []).length);
+  ok('T7b 每张日卡卡头都有「＋ 添加运动」（逐项入口，页头无全局按钮）',
+     (trainHTML.match(/data-additem=/g) || []).length === 7 && trainHTML.includes('＋ 添加运动')
+     && !view.__html.includes('tr_add') && !view.__html.includes('＋ 安排运动'),
+     'view=' + view.__html.slice(0, 200));
+  ok('T7c 今天那张卡带「今天」标记（默认页就是本周）', trainHTML.includes('>今天<'));
+  ok('T7d 周头显示区间/周序/周汇总', view.__html.includes('本周')
+     && view.__html.includes(ev('dateCN(mondayOf(today()))') + ' – ' + ev("dateCN(addDays(mondayOf(today()),6))") )
+     && view.__html.includes('已运动 '));
 
-  /* T8 列表按日期倒序：最上是最新/未来的安排，历史往下排 */
-  ok('T8 单列表按日期倒序（9/9 腿日 在 8/30 推日 之前），不再有「计划/记录」分段',
-     trainHTML.indexOf('腿日') < trainHTML.indexOf('推日') && trainHTML.includes('腿日') && trainHTML.includes('推日')
-     && !view.__html.includes('📒 记录') && view.__html.includes('＋ 安排运动'),
-     'i腿=' + trainHTML.indexOf('腿日') + ' i推=' + trainHTML.indexOf('推日'));
+  /* 切到 w5（2026-09-09 腿日，90kg×32 一项未勾）那周：显示计划量、圆钮不带 on */
+  ev("setTrainWeek(mondayOf('2026-09-09'))");
+  trainHTML = doc.getElementById('tabBody').__html;
+  ok('T7e 未开始的那天显示计划量「计划 容量 2880 kg」', trainHTML.includes('计划 容量 2880 kg'),
+     'html=' + trainHTML.slice(0, 300));
+  ok('T7f 未打勾的项圆钮不带 on', trainHTML.includes('class="hab-dot " data-itemdone="w5" data-item="wi7"'));
+  ok('T7g 周序文案纯函数：本周/上周/下周/更远各档',
+     JSON.parse(ev("JSON.stringify([weekLabel(thisMonday()), weekLabel(addDays(thisMonday(),-7)), weekLabel(addDays(thisMonday(),7)), weekLabel(addDays(thisMonday(),-21)), weekLabel(addDays(thisMonday(),14))])")).join(',') === '本周,上周,下周,3 周前,2 周后');
+
+  /* 切到 w2/w3/w4 那周（2026-08-31 起）：力量行 / 计时行 / 部分完成 / 全完成 / 一键按钮 */
+  ev("setTrainWeek(mondayOf('2026-09-05'))");
+  trainHTML = doc.getElementById('tabBody').__html;
+  ok('T7h 力量行「32 次 @70kg」', trainHTML.includes('32 次 @70kg'));
+  ok('T7i 计时行「32.5 分钟 · 5.2 km」', trainHTML.includes('32.5 分钟 · 5.2 km'));
+  ok('T7j 部分完成那天卡头 1/2，且容量只算已打勾项（2240 kg）',
+     trainHTML.includes('>1/2<') && trainHTML.includes('容量 2240 kg'));
+  ok('T7k 全完成那天卡头 2/2', trainHTML.includes('>2/2<'));
+  ok('T7l 每项都有独立打卡圆钮：已完成的带 on、未打勾的不带',
+     trainHTML.includes('class="hab-dot on" data-itemdone="w4" data-item="wi5"')
+     && trainHTML.includes('class="hab-dot " data-itemdone="w4" data-item="wi6"'));
+  ok('T7m 逐项操作：行尾有 ✏️/🗑，卡片上不再有「全部完成/取消」与整天级按钮',
+     trainHTML.includes('data-itemedit="2026-09-05" data-item="wi6"')
+     && trainHTML.includes('data-itemdel="2026-09-05" data-item="wi6"')
+     && !trainHTML.includes('data-allday') && !trainHTML.includes('data-wedit') && !trainHTML.includes('data-wdel')
+     && !trainHTML.includes('✔ 全部完成') && !trainHTML.includes('↺ 全部取消'));
+
+  /* 概览「今日运动」卡与运动页同一套逐项交互：卡头 ＋ 添加、行尾 ✏️/🗑 */
+  ev("state.workouts.push({ id:'w_home', date:today(), name:'', items:[{ id:'wh1', exName:'自测深蹲', cat:'力量', muscle:'腿', reps:10 }] }); renderHome()");
+  const homeHTML = view.__html;
+  ev("setTrainWeek(mondayOf('2026-09-05'))");
+  const subHTML = doc.getElementById('tabBody').__html;
+  ok('T7o 名称下方小字显示大类 · 部位（力量 · 胸 / 有氧 · 全身）',
+     subHTML.includes('<div class="sub">力量 · 胸</div>') && subHTML.includes('<div class="sub">有氧 · 全身</div>')
+     && subHTML.includes('<div class="sub">柔韧 · 全身</div>'), 'sub=' + (subHTML.match(/<div class="sub">[^<]*<\/div>/g) || []).join(' , '));
+  ok('T7n 概览今日运动卡：卡头「＋ 添加运动」+ 行尾逐项 ✏️/🗑，且无「全部完成」',
+     homeHTML.includes('data-additem="' + ev('today()') + '"')
+     && homeHTML.includes('data-itemedit="' + ev('today()') + '" data-item="wh1"')
+     && homeHTML.includes('data-itemdel="' + ev('today()') + '" data-item="wh1"')
+     && homeHTML.includes('<div class="sub">力量 · 腿</div>')
+     && !homeHTML.includes('data-allday') && !homeHTML.includes('全部完成'));
+  ev("state.workouts = state.workouts.filter(x => x.id !== 'w_home')");
+
+  /* T8 周视图只渲染当周 + 周汇总口径（切周看历史，不再是全量倒序列表） */
+  ev("setTrainWeek(mondayOf('2026-09-05'))");
+  const wk831 = view.__html + doc.getElementById('tabBody').__html;
+  ev("setTrainWeek(mondayOf('2026-09-07'))");
+  const wk907 = view.__html + doc.getElementById('tabBody').__html;
+  ok('T8a 区间随周切换：8月31日 – 9月6日 / 9月7日 – 9月13日',
+     wk831.includes('8月31日 – 9月6日') && wk907.includes('9月7日 – 9月13日'));
+  ok('T8b 周汇总按「项」算：8/31 那周已运动 3/7 天，9/7 那周 0/7 天',
+     wk831.includes('已运动 3/7 天') && wk907.includes('已运动 0/7 天'));
+  ok('T8c 周视图只渲染当周：9/7 那周没有 8月30日 的卡，切到那周才出现',
+     !wk907.includes('data-daycard="2026-08-30"') && wk831.includes('data-daycard="2026-08-30"') === false
+     && ev("setTrainWeek(mondayOf('2026-08-30')); document.getElementById('tabBody').__html").includes('data-daycard="2026-08-30"'));
+  ok('T8d PR 只跟更早、已打勾的项比：8/30 那周只有 w1 一个 🏆',
+     (doc.getElementById('tabBody').__html.match(/🏆/g) || []).length === 1);
+  ev("setTrainWeek(null)");   /* 复位，别影响后续用例 */
 
   /* T9 v4.11 历史页新增「每周运动时长」图（容量图之外的独立口径） */
   ev("go('stats')");
@@ -202,15 +251,19 @@ async function main() {
      && libTbl.includes('<th>方式</th>') && libTbl.includes('力量 · 胸') && libTbl.includes('计次'),
      libTbl.slice(0, 160));
 
-  /* T11 项文案契约（力量/自重/计时/秒级四条分支） */
+  /* T11 项文案契约（力量有重量/力量无重量/计时/秒级四条分支） */
   const fmt = JSON.parse(ev(`JSON.stringify({
     w: fmtItem({ reps:32, weight:60 }), self: fmtItem({ reps:30 }),
     t: fmtItem({ mins:30, km:5 }), sec: fmtItem({ mins:1.5 }),
     mode: itemMode({ mins:30 }) + '/' + itemMode({ reps:10 }),
-    vol: itemVolume({ mins:30, km:5 }) })`));
-  ok('T11 项文案与计数口径', fmt.w === '32 次 @60kg' && fmt.self === '30 次 · 自重'
+    vol: itemVolume({ mins:30, km:5 }),
+    sub: itemSub({ cat:'力量', muscle:'胸' }) + '|' + itemSub({ cat:'有氧', muscle:'全身' })
+       + '|' + itemSub({ cat:'柔韧', muscle:'柔韧' }) + '|' + itemSub({ cat:'球类' }) })`));
+  ok('T11 项文案与计数口径（重量不填就不显示「自重」；小字 = 大类 · 部位，重复只留一个）',
+     fmt.w === '32 次 @60kg' && fmt.self === '30 次'
      && fmt.t === '30 分钟 · 5 km' && fmt.sec === '1.5 分钟'
-     && fmt.mode === 'time/reps' && fmt.vol === 0, JSON.stringify(fmt));
+     && fmt.mode === 'time/reps' && fmt.vol === 0
+     && fmt.sub === '力量 · 胸|有氧 · 全身|柔韧|球类', JSON.stringify(fmt));
 
   /* T12 弹窗渲染冒烟：四个对话框都渲染且文案对（桩里 $$ 恒空 → 事件不挂，只验"渲染不抛错 + 内容正确"；
    * 这是浏览器里点得到、而其它用例覆盖不到的路径：计划编辑器 / 记录弹窗 / 动作选择器 / 动作库弹窗） */
@@ -218,31 +271,76 @@ async function main() {
     try { ev('closeDialog && curDialog && closeDialog()'); ev(call); return ev('curDialog.box.__html'); }
     catch (e) { return 'ERR:' + e.message; }
   }
-  const hPlan = dlgHTML("openWorkoutDlg(today())");   /* 安排弹窗：日期 + 复制已有安排 + 三档添加 */
-  ok('T12a 安排弹窗：日期选择 + 复制已有安排 + 三档添加，且无天级完成勾选框', !hPlan.startsWith('ERR:')
-     && hPlan.includes('wl_date') && hPlan.includes('复制已有安排') && !hPlan.includes('wl_done')
-     && hPlan.includes('＋ 徒手/自重') && hPlan.includes('＋ 计时运动') && hPlan.includes('保存安排'),
-     hPlan.startsWith('ERR:') ? hPlan : hPlan.slice(0, 160));
-  /* w4 跑日：第一项（卧推）已打勾、第二项（跑步）未打勾 → 行内应预填 30 分钟 / 5 km，圆钮一对一 */
-  const hWk = dlgHTML("openWorkoutDlg(null, 'w4')");
-  ok('T12b 编辑弹窗：计时行预填 30 分钟 / 5 km，行首圆钮反映项级完成', !hWk.startsWith('ERR:')
-     && hWk.includes('wl_mins') && hWk.includes('wl_km') && hWk.includes('value="30"') && hWk.includes('value="5"')
-     && hWk.includes('class="hab-dot on" data-wtoggle="0"') && hWk.includes('class="hab-dot " data-wtoggle="1"'),
-     hWk.startsWith('ERR:') ? hWk : hWk.slice(0, 260));
-  /* 全完成的那天：弹窗里每一项的圆钮都应已勾上 */
-  const hDone = dlgHTML("openWorkoutDlg(null, 'w1')");
-  ok('T12c 编辑已完成的记录：该项圆钮为 on 状态', !hDone.startsWith('ERR:') && hDone.includes('class="hab-dot on" data-wtoggle="0"'),
-     hDone.startsWith('ERR:') ? hDone : hDone.slice(0, 200));
-  /* 计时快捷档：15/30/45/60 四个 chip（方案 §5.2） */
-  ok('T12e 计时行有 15/30/45/60 快捷档', [15, 30, 45, 60].every(m => hWk.includes('data-min="' + m + '"')),
-     hWk.startsWith('ERR:') ? hWk : hWk.slice(0, 400));
-  const hPick = dlgHTML('openExercisePicker(function(){})');
-  ok('T12f 动作选择器为平铺表格', !hPick.startsWith('ERR:') && hPick.includes('<th>分类</th>') && hPick.includes('杠铃卧推'), hPick.slice(0, 140));
+  /* 逐项弹窗：一次只编辑一个动作（数值区在 #it_body 里，桩不建真实 DOM 树 → 要单独读子节点） */
+  const itemFields = call => {
+    try { ev('closeDialog && curDialog && closeDialog()'); ev(call); return ev("$('#it_body', curDialog.box).__html"); }
+    catch (e) { return 'ERR:' + e.message; }
+  };
+  const hItem = dlgHTML("openItemDlg(today())");
+  ok('T12a 逐项弹窗：无手填动作名、无力量/计时切换（方式由动作库条目决定），无整天级编辑器',
+     !hItem.startsWith('ERR:') && !hItem.includes('id="it_name"') && !hItem.includes('data-mode=')
+     && !hItem.includes('wl_date') && !hItem.includes('wl_name') && !hItem.includes('复制已有安排')
+     && hItem.includes('新增一项') && hItem.includes('it_save'),
+     hItem.startsWith('ERR:') ? hItem : hItem.slice(0, 200));
+  /* 新建：未选动作前只给选择入口，不先摆出数值框 */
+  const fNew = itemFields('openItemDlg(today())');
+  ok('T12b 新建态：只有「选择动作」入口 + 提示，无动作名输入框与数值框', !fNew.startsWith('ERR:')
+     && fNew.includes('it_pick') && fNew.includes('先从动作库选一个动作')
+     && !fNew.includes('由它自动决定')
+     && !fNew.includes('it_reps') && !fNew.includes('it_w'),
+     fNew.startsWith('ERR:') ? fNew : fNew.slice(0, 240));
+  /* 编辑 w3 第二项（拉伸 10 分钟，已完成）：计时形态 + 预填 + 15/30/45/60 快捷档 */
+  const fTime = itemFields("openItemDlg('2026-09-03', 'wi4')");
+  ok('T12c 编辑计时项：计时形态（自动）+ 预填 10 分钟 + 时长框自绘「常用时长」下拉', !fTime.startsWith('ERR:')
+     && fTime.includes('⏱ 计时') && fTime.includes('value="10"') && fTime.includes('it_km')
+     && fTime.includes('id="it_mins"') && fTime.includes('id="it_mins_btn"') && fTime.includes('id="it_mins_menu"')
+     && fTime.includes('class="mins-wrap"') && fTime.includes('class="mins-menu"')
+     && [15, 20, 30, 45, 60].every(n => fTime.includes('data-min="' + n + '">' + n + ' 分钟</button>'))
+     && !fTime.includes('<datalist') && !fTime.includes('it_quick'),
+     fTime.startsWith('ERR:') ? fTime : fTime.slice(0, 320));
+  /* 编辑 w4 第一项（杠铃卧推 32 次 @70kg，已勾）：力量形态预填 + 选中态 + 更换动作入口 */
+  const fReps = itemFields("openItemDlg('2026-09-05', 'wi5')");
+  ok('T12d 编辑力量项：选中动作名回显 + 预填 32 次 / 70 kg，无计时字段', !fReps.startsWith('ERR:')
+     && fReps.includes('杠铃卧推') && fReps.includes('🔄 更换动作') && fReps.includes('🏋 力量')
+     && fReps.includes('value="32"') && fReps.includes('value="70"') && !fReps.includes('it_mins'),
+     fReps.startsWith('ERR:') ? fReps : fReps.slice(0, 240));
+  const hEdit = dlgHTML("openItemDlg('2026-09-05', 'wi5')");
+  ok('T12e 编辑态：带「删除这一项」，无天级完成勾选框',
+     !hEdit.startsWith('ERR:') && hEdit.includes('修改这一项')
+     && hEdit.includes('it_del') && hEdit.includes('删除这一项') && !hEdit.includes('wl_done'),
+     hEdit.startsWith('ERR:') ? hEdit : hEdit.slice(0, 200));
+  /* 预览行：打开即按模型渲染（编辑时立刻显示合计），不靠用户先敲一下 */
+  const prevHTML = (() => {
+    try { ev('closeDialog && curDialog && closeDialog()'); ev("openItemDlg('2026-09-05', 'wi5')"); return ev("$('#it_prev', curDialog.box).__html"); }
+    catch (e) { return 'ERR:' + e.message; }
+  })();
+  ok('T12g 弹窗预览打开即显示合计', prevHTML === '合计：32 次 @70kg · 力量 · 胸 · 容量 2240 kg', prevHTML);
+  /* 重量可选：引体向上（14 次，无 weight）→ 重量框空着、文案只有「14 次」，不自造「自重」 */
+  const fNoW = itemFields("openItemDlg('2026-09-02', 'wi2')");
+  const prevNoW = (() => {
+    try { ev('closeDialog && curDialog && closeDialog()'); ev("openItemDlg('2026-09-02', 'wi2')"); return ev("$('#it_prev', curDialog.box).__html"); }
+    catch (e) { return 'ERR:' + e.message; }
+  })();
+  ok('T12i 重量可选：无重量项预填空值、预览「14 次 · 力量 · 背」且无「自重」', !fNoW.startsWith('ERR:')
+     && fNoW.includes('id="it_w"') && fNoW.includes('value=""') && fNoW.includes('重量 kg（可选')
+     && prevNoW === '合计：14 次 · 力量 · 背', fNoW.slice(0, 200) + ' | ' + prevNoW);
+  /* 添加起步值：力量 30 次 / 计时 20 分钟；已有值不被覆盖 */
+  const defs = JSON.parse(ev(`JSON.stringify({
+    reps: defaultForMode({ _mode:'reps' }).reps,
+    time: defaultForMode({ _mode:'time' }).mins,
+    keptReps: defaultForMode({ _mode:'reps', reps:12, weight:60 }).reps,
+    keptTime: defaultForMode({ _mode:'time', mins:45 }).mins,
+    crossed: (function(){ const m = { _mode:'reps', reps:30, weight:60 }; setItemMode(m, 'time'); defaultForMode(m); return [Object.prototype.hasOwnProperty.call(m,'reps'), m.mins]; })()
+  })`));
+  ok('T12j 添加起步值：力量 30 次 / 计时 20 分钟，且不覆盖已有值、切方式后重新给值',
+     defs.reps === 30 && defs.time === 20 && defs.keptReps === 12 && defs.keptTime === 45
+     && defs.crossed[0] === false && defs.crossed[1] === 20, JSON.stringify(defs));
+  const hPick = dlgHTML('openExercisePicker(function(){})');  ok('T12f 动作选择器为平铺表格', !hPick.startsWith('ERR:') && hPick.includes('<th>分类</th>') && hPick.includes('杠铃卧推'), hPick.slice(0, 140));
   /* 动作库弹窗内容写在 #xl_host 子节点里（桩不做真实 DOM 树，内容不在 box.__html 里） */
   let hLib = '';
   try { ev('closeDialog && curDialog && closeDialog()'); ev('openExLib()'); hLib = ev("$('#xl_body', $('#xl_host', curDialog.box)).__html");   /* 表格在再下一层 #xl_body */ }
   catch (e) { hLib = 'ERR:' + e.message; }
-  ok('T12d 我的动作库弹窗渲染表格与新增表单', !hLib.startsWith('ERR:') && hLib.includes('我的动作库')
+  ok('T12h 我的动作库弹窗渲染表格与新增表单', !hLib.startsWith('ERR:') && hLib.includes('我的动作库')
      && hLib.includes('<th>方式</th>') && hLib.includes('nx_cat') && hLib.includes('nx_mode'), hLib.slice(0, 160));
   ev('closeDialog && curDialog && closeDialog()');
 

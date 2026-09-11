@@ -179,6 +179,17 @@ a{color:var(--brand-ink)}
 .input[type=number]{font-variant-numeric:tabular-nums}
 .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px}
 .form-grid .span2{grid-column:1/-1}
+/* 时长的常用值下拉（自绘：原生 datalist 在各浏览器点不开，这里保证 ▾ 一定能点） */
+.mins-wrap{position:relative}
+.mins-wrap .mins-toggle{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;
+  color:var(--ink-3);font-size:12px;line-height:1;padding:2px 5px;cursor:pointer}
+.mins-wrap .mins-toggle:hover{color:var(--brand-ink)}
+.mins-menu{display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:30;background:var(--surface);
+  border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);overflow:hidden}
+.mins-menu.open{display:block}
+.mins-menu button{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--ink);
+  padding:8px 12px;font-size:13.5px;cursor:pointer}
+.mins-menu button:hover{background:var(--surface-3)}
 .form-grid label{font-size:12px;color:var(--ink-2);display:block;margin-bottom:4px;font-weight:550}
 .chkline{display:flex;align-items:center;gap:8px;font-size:14px}
 
@@ -206,6 +217,7 @@ a{color:var(--brand-ink)}
 .lrow:last-child{border-bottom:0}
 .lrow .grow{flex:1;min-width:0}
 .lrow .sub{font-size:12.5px;color:var(--ink-3)}
+.card.today{border-color:var(--brand)}
 .thumb{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;font-size:19px;flex:none;background:var(--surface-2)}
 
 /* 迷你营养棒 */

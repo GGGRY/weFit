@@ -37,7 +37,7 @@ const SEED_FOODS = [
   {name:'花生酱', per100:{kcal:600, p:25, c:20, f:50}},
   {name:'乳清蛋白粉', per100:{kcal:400, p:80, c:6, f:7}},
 ];
-/* mode='reps'：记录 总次数（+ 可选重量，留空 = 自重）
+/* mode='reps'：记录 总次数（+ 可选重量，不填就留空——不自造「自重」）
    mode='time'：记录 总时长（分钟，可含小数）+ 可选距离 km */
 const SEED_EXERCISES = [
   /* ── 力量 · 计次 ── */
