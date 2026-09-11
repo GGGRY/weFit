@@ -2539,7 +2539,7 @@ function barChartSVG(o){
     const barW = Math.min(bw, 20);
     s += '<rect x="' + (cx - barW/2) + '" y="' + (y0 - h) + '" width="' + barW + '" height="' + Math.max(h, p.y>0?2:0) + '" rx="3" fill="' + o.color + '">' +
       '<title>' + esc(p.tip || (p.x + ' · ' + (o.fmtVal || (v=>String(Math.round(v))))(p.y))) + '</title></rect>';
-    if(i % step === 0) s += '<text x="' + cx + '" y="' + (CHART_H - 10) + '" text-anchor="middle" font-size="10.5" fill="' + CX.ax + '">' + esc((o.fmtX || (x=>x))(p.x)) + '</text>';
+    if(i % step === 0) s += '<text x="' + cx + '" y="' + (CHART_H - 10) + '" text-anchor="middle" font-size="10.5" fill="' + CX.ax + '">' + esc((o.fmtX || (x=>x))(p.x, p)) + '</text>';   /* 第二参传整点，周图等需要 p.wk */
   });
   if(o.target){
     const yy = yAt(o.target, 0, mx);
@@ -2643,7 +2643,8 @@ function renderStats(){
     '<div>' + c3 + '</div>' +
     '<div>' + c4 + '</div>' +
     '<div>' + c4b + '</div>' +
-    '<div class="grid cols-2">' + c5 + c6 + '</div>';
+    '<div>' + c5 + '</div>' +
+    '<div>' + c6 + '</div>';
 
   $('#view').innerHTML = html;
 
@@ -2685,7 +2686,7 @@ function renderStats(){
   $('#st_vol').innerHTML = barChartSVG({
     points: vol, color: CX.c3,
     fmtTick: v => v >= 1000 ? (v/1000).toFixed(1)+'k' : String(v),
-    fmtVal: v => v + ' kg', fmtX: x => 'W' + x.wk,
+    fmtVal: v => v + ' kg', fmtX: (d, p) => p.wk,
   });
 
   // 每周运动时长（柱 = Σ分钟；计时段不进容量图，两张口径互不污染）
@@ -2693,7 +2694,7 @@ function renderStats(){
   wmins.forEach((p, i) => { const k = wkms[i] && wkms[i].y; if(k) p.tip = p.x + ' · ' + p.y + ' 分钟 · ' + k + ' km'; });
   $('#st_mins').innerHTML = barChartSVG({
     points: wmins, color: CX.c2,
-    fmtVal: v => v + ' 分钟', fmtX: x => 'W' + x.wk,
+    fmtVal: v => v + ' 分钟', fmtX: (d, p) => p.wk,
   });
 
   // 睡眠时长 & 每日饮水

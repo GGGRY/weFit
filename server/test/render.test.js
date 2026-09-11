@@ -285,6 +285,15 @@ async function main() {
   const minsSVG = doc.getElementById('st_mins').__html;
   ok('T9 历史页「每周运动时长」卡与图', view.__html.includes('每周运动时长') && minsSVG.includes('<svg'),
      'card=' + view.__html.includes('每周运动时长') + ' svg=' + minsSVG.length);
+  const volSVG = doc.getElementById('st_vol').__html;
+  ok('T9b 周图横轴为 W1…W12（不得出现 Wundefined）',
+     /\>W\d+</.test(volSVG) && /\>W\d+</.test(minsSVG) && !volSVG.includes('undefined') && !minsSVG.includes('undefined'),
+     'volX=' + (volSVG.match(/\>W\w*</g) || []).join(','));
+  const stI = view.__html.indexOf('id="st_sleep"'), waI = view.__html.indexOf('id="st_water"');
+  const gap = (stI > -1 && waI > stI) ? view.__html.slice(stI, waI) : '';
+  ok('T9c 历史页睡眠/饮水卡各自独占一行（不再共用一个 cols-2 网格）',
+     gap.includes('><div><div class="chart-card') && !gap.includes('grid cols-2'),
+     'between=' + (gap ? gap.slice(-70) : '未找到两张图'));
 
   /* T10 v4.11 动作库平铺表格：大类/部位/方式三列，不再有分组树 */
   const libTbl = ev("libTableHTML(state.exercises.slice(0,2).map(e => ({ ex:e, action:'<button>选</button>' })))");
