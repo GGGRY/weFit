@@ -319,8 +319,11 @@ body.hcard-dragging input,body.hcard-dragging textarea{user-select:text;-webkit-
   .sidebar{display:none}
   .tabbar{display:grid}
   /* 移动端把滚动容器收到 .main:文档本身不滚动,移动浏览器就不会在翻页时收起/展开地址栏,
-     底部固定 tab 栏也就不会随视口高度变化上下跳。dvh 取的是当前可见高度,避开 100vh 偏大。 */
-  html,body{height:100%;overflow:hidden}
+     底部固定 tab 栏也就不会随视口高度变化上下跳。dvh 取的是当前可见高度,避开 100vh 偏大。
+     锁文档这一条只对带 .app 外壳的用户端(index.html)生效——后台页 /admin 复用本样式表、
+     却没有 .main 这个滚动容器,如果一起锁死,手机端整页就完全不响应滑动。
+     用 :has() 按外壳作用域;老浏览器不支持该选择器时整条规则被丢弃,退化成文档滚动(仍可用)。 */
+  html:has(.app),body:has(.app){height:100%;overflow:hidden}
   .app{height:100vh;height:100dvh;min-height:0}
   .main{
     height:100vh;height:100dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;
