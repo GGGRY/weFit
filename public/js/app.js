@@ -1162,8 +1162,10 @@ function importData(file){
 
 /* =====================================================
    我的档案（v4：一账户一档案，成员切换/增删已退役）
-   呈现位置 = 设置页「👤 我的档案」卡（2026-09-11 顶栏移除后并入）
-   卡片只读展示，修改走 openProfileDialog() 弹窗——与基础资料/每日目标等卡片体验一致
+   呈现位置 = 设置页首卡（2026-09-11 顶栏移除后并入）
+   卡片只读展示：整块「头像 + 昵称/账户」即修改入口，走 openProfileDialog() 弹窗
+   ——与基础资料/每日目标等卡片体验一致
+   （2026-09-11 同日再改：按要求删掉卡头行与「修改档案」按钮；主题图标钮 #themeToggle 移到本行右侧）
 ===================================================== */
 function colorOpts(sel){
   const labels = {green:'绿', blue:'蓝', orange:'橙', violet:'紫', teal:'青', pink:'粉'};
@@ -1172,13 +1174,16 @@ function colorOpts(sel){
 function profileCardHTML(){
   const u = activeUser();
   const isAdmin = !!(me && me.role === 'admin');
-  return '<div class="card"><h3><span>👤 我的档案</span><span class="grow"></span>' +
-    '<button class="btn sm" id="pf_edit">修改档案</button>' +
-    themeToggleHTML() + '</h3>' +
+  return '<div class="card">' +
     '<div class="pf-top">' +
-      '<span class="av big avatar-ring" style="--ring:' + userColorHex(u.color) + '">' + esc(u.avatar || '🙂') + '</span>' +
-      '<div class="pf-id"><div class="b">' + esc(u.name) + (isAdmin ? ' <span class="chip ok">管理员</span>' : '') + '</div>' +
-      '<div class="sub">登录账户：' + esc(me ? me.username : '（离线）') + '</div></div>' +
+      /* 整块「头像 + 昵称/账户」= 修改档案入口（.pf-hit 占满本行剩余宽度，右侧只留主题图标钮）。
+         两行文字用 span 承载——button 内不能放 div，block 化交给 .pf-hit 的 CSS。 */
+      '<button class="pf-hit" id="pf_edit" type="button" title="修改我的档案" aria-label="修改我的档案">' +
+        '<span class="av big avatar-ring" style="--ring:' + userColorHex(u.color) + '">' + esc(u.avatar || '🙂') + '</span>' +
+        '<span class="pf-id"><span class="b">' + esc(u.name) + (isAdmin ? ' <span class="chip ok">管理员</span>' : '') + '</span>' +
+        '<span class="sub">登录账户：' + esc(me ? me.username : '（离线）') + '</span></span>' +
+      '</button>' +
+      themeToggleHTML() +
     '</div>' +
   '</div>';
 }
@@ -1205,8 +1210,9 @@ function openProfileDialog(){
   const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
 }
 /* 主题切换图标钮（太阳/月亮）= 原顶栏那颗切换键，2026-09-11 从独立「🎨 外观」卡一路收到
-   档案卡头、排在「修改档案」右边。图标显示**当前**档位（☀️ 浅色 / 🌙 深色），
-   与桌面侧栏底部「外观」入口同一口径；两处图标都由 applyTheme() 统一刷新。 */
+   档案卡、排在「修改档案」右边；2026-09-11 同日再改：随卡头行一起改挂到「头像 + 昵称/账户」那一行的右端。
+   图标显示**当前**档位（☀️ 浅色 / 🌙 深色），与桌面侧栏底部「外观」入口同一口径；
+   两处图标都由 applyTheme() 统一刷新。 */
 function themeToggleHTML(){
   return '<button class="btn sm icon" id="themeToggle" type="button" title="切换深色/浅色" aria-label="切换深色/浅色">' +
     (curTheme() === 'dark' ? '🌙' : '☀️') + '</button>';
@@ -2300,7 +2306,9 @@ function renderWaterChart(){
    （末卡 = 后台管理，仅 admin 渲染；普通账户看不到任何管理入口）
    （所有卡片之下还有一颗独立的「⎋ 退出登录」，2026-09-11 由「修改档案」弹窗移出）
    （我的档案 = 2026-09-11 顶栏移除后并入；原顶栏胶囊弹窗改为内嵌卡。
-     深色/浅色切换当时独立成一张「🎨 外观」卡，同日收进档案卡底部省纵向空间 → 原外观卡已删）
+     深色/浅色切换当时独立成一张「🎨 外观」卡，同日收进档案卡省纵向空间 → 原外观卡已删。
+     2026-09-11 同日再改：该卡的卡头行与「修改档案」按钮删除，只留「头像 + 昵称/账户」一行
+     ——整行即修改入口（#pf_edit → openProfileDialog()），主题图标钮挂在本行右端）
 ===================================================== */
 function renderSettings(){
   const p = state.profile;
@@ -2363,6 +2371,7 @@ function renderSettings(){
     '</div>';
   $('#view').innerHTML = html;
   bindThemeToggle();
+  /* 修改档案的入口 = 档案卡上「头像 + 昵称/账户」那一整块（卡头按钮已删） */
   $('#pf_edit').addEventListener('click', openProfileDialog);
   $('#pf_logout').addEventListener('click', doLogout);
   $('#pr_edit').addEventListener('click', openProfileEditor);

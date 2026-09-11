@@ -212,11 +212,20 @@ a{color:var(--brand-ink)}
 .lrow:last-child{border-bottom:0}
 .lrow .grow{flex:1;min-width:0}
 .lrow .sub{font-size:12.5px;color:var(--ink-3)}
-/* 档案卡头部：头像 + 昵称/账户 一行。原先是三栏 lrow,窄屏下概况串不缩,
-   把昵称区挤到几十像素(详见 CHANGELOG 2026-09-11)。 */
+/* 档案卡：头像 + 昵称/账户 一行。原先是三栏 lrow,窄屏下概况串不缩,
+   把昵称区挤到几十像素(详见 CHANGELOG 2026-09-11)。
+   2026-09-11 同日再改：起卡头行与「修改档案」按钮已删,整行 = 修改入口 + 右侧主题图标钮。 */
 .pf-top{display:flex;align-items:center;gap:12px}
 .pf-id{flex:1;min-width:0}
 .pf-id .sub{font-size:12.5px;color:var(--ink-3)}
+/* 档案卡的修改入口(.pf-hit):铺满本行剩余宽度,点击开 openProfileDialog()。
+   负外边距抵消自身内边距 → 头像/文字位置与从前一致,但热区更大、悬停有底色。
+   按钮内用 span 承载昵称/账户两行,这里显式 block 化。 */
+.pf-hit{flex:1;min-width:0;display:flex;align-items:center;gap:12px;padding:6px 8px;margin:-6px -8px;
+  background:transparent;border:0;border-radius:12px;font:inherit;color:inherit;text-align:left;cursor:pointer}
+.pf-hit:hover{background:var(--surface-2)}
+.pf-hit:active{background:var(--surface-3)}
+.pf-hit .pf-id,.pf-hit .pf-id .b,.pf-hit .pf-id .sub{display:block}
 .card.today{border-color:var(--brand)}
 .thumb{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;font-size:19px;flex:none;background:var(--surface-2)}
 

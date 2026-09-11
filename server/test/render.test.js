@@ -176,15 +176,19 @@ async function main() {
      !readPub('index.html').includes('id="topbar"') && doc.querySelector('#topbar').__html === '',
      'stub=' + JSON.stringify(doc.querySelector('#topbar').__html));
   ev("go('settings')");
-  const setI = view.__html.indexOf('👤 我的档案');
-  const st = setI < 0 ? '' : view.__html.slice(setI, view.__html.indexOf('🧍 基础资料'));
-  ok('T2d 设置页首卡 = 我的档案(只读展示 + 「修改档案」入口,与基础资料卡同款)',
-     ['id="pf_edit"','👤 我的档案','登录账户','修改档案'].every(s => st.includes(s))
+  /* 档案卡 = 设置页首卡（2026-09-11 同日再改：起卡头行已删，卡上只剩「头像+昵称/账户」一行），
+     取「基础资料」卡开头之前的那段：截到它前面最近的一个 <div class="card"> 为止，
+     这样 st 里恰好只有档案卡自己 */
+  const beforeBase = () => view.__html.lastIndexOf('<div class="card">', view.__html.indexOf('🧍 基础资料'));
+  const st = view.__html.slice(0, beforeBase());
+  ok('T2d 设置页首卡 = 我的档案(只读展示;卡头行与「修改档案」按钮已删,整块头像+昵称/账户即入口)',
+     ['id="pf_edit"','登录账户','title="修改我的档案"','class="pf-hit"'].every(s => st.includes(s))
+     && !st.includes('👤 我的档案') && !st.includes('<h3>') && !/>修改档案</.test(st)
      && !st.includes('id="pf_av"') && !st.includes('id="pf_save"') && !st.includes('id="pf_logout"'),
      st.slice(0, 140));
-  /* 管理员 chip 只在 admin 下渲染,单独以 admin 重渲染一次;role 不影响后面的外观卡,故 st 仍复用 */
+  /* 管理员 chip 只在 admin 下渲染,单独以 admin 重渲染一次;role 不影响后面的外观钮,故 st 仍复用 */
   ev("me.role = 'admin'; go('settings')");
-  const stA = view.__html.slice(view.__html.indexOf('👤 我的档案'), view.__html.indexOf('🧍 基础资料'));
+  const stA = view.__html.slice(0, beforeBase());
   ev("me.role = 'user'; go('settings')");
   const pfCss = readPub('css/style.css');
   const chipRule = (pfCss.match(/^\.chip\{[^}]*\}/m) || [''])[0];   /* 只认 .chip 自身那条,文件别处的 nowrap 不算数 */
@@ -192,6 +196,9 @@ async function main() {
     top: st.includes('class="pf-top"'), id: st.includes('class="pf-id"'), noLrow: !st.includes('lrow'),
     chip: stA.includes('class="chip ok">管理员'),
     cssTop: pfCss.includes('.pf-top{'), cssNowrap: chipRule.includes('white-space:nowrap'),
+    /* 入口用 span 承载两行文字(button 内不能放 div),block 化必须有对应 CSS 兜底 */
+    cssHit: pfCss.includes('.pf-hit{') && pfCss.includes('.pf-hit .pf-id,'),
+    clickable: ['type="button"','aria-label="修改我的档案"'].every(s => st.includes(s)),
     /* 卡上只剩「头像 + 昵称/账户」:概况串与底部提示小字已按用户要求删掉,残留的 pf-meta / 旧提示文案 / userMetaHTML 都算回归 */
     noMeta: !st.includes('pf-meta') && !st.includes('体重 ') && !st.includes('身体记录')
       && !st.includes('可改头像表情') && !pfCss.includes('.pf-meta{'),
@@ -206,13 +213,16 @@ async function main() {
      && !pdlg.includes('id="pf_logout"') && !pdlg.includes('退出登录') && !pdlg.includes('href="/admin"'),
      pdlg.slice(0, 140));
   ev('closeDialog()');
-  /* 主题切换已收成档案卡头的图标钮:st 是「我的档案 → 基础资料」之间的整段,只该有一张卡的 <div class="card"> */
+  /* 主题切换 = 档案卡首行右端的图标钮:st 现在整段就是这张卡,先切出 .pf-top 那一行 */
+  const rowS = st.indexOf('class="pf-top"');
+  const pfRow = st.slice(rowS, st.indexOf('</div>', rowS));
   const tgIn = (h) => (h.match(/id="themeToggle"[^>]*>([^<]*)</) || [])[1] || '';
-  ok('T2e 深色/浅色收成档案卡头的太阳/月亮图标钮(#themeToggle,排在「修改档案」右边),不再单占卡',
-     st.includes('id="themeToggle"') && st.includes('aria-label="切换深色/浅色"')
-     && st.indexOf('id="pf_edit"') < st.indexOf('id="themeToggle"')      /* 图标钮在「修改档案」右侧 */
+  ok('T2e 深色/浅色 = 档案卡「头像+昵称/账户」同一行右端的太阳/月亮图标钮(#themeToggle,排在 pf_edit 右侧)',
+     pfRow.includes('id="themeToggle"') && st.includes('aria-label="切换深色/浅色"')
+     && pfRow.indexOf('id="pf_edit"') < pfRow.indexOf('id="themeToggle"')      /* 图标钮在修改入口右侧 */
      && tgIn(st) === (ev('curTheme()') === 'dark' ? '🌙' : '☀️')          /* 图标 = 当前档位 */
      && (st.match(/<div class="card">/g) || []).length === 1             /* 档案卡与基础资料卡之间没有别的卡了 */
+     && (st.match(/id="themeToggle"/g) || []).length === 1              /* 卡上只有这一颗主题钮 */
      && !st.includes('data-theme-set') && !st.includes('pf-theme') && !view.__html.includes('🎨 外观'),
      'theme=' + ev('curTheme()') + ' icon=' + tgIn(st) + ' cards=' + (st.match(/<div class="card">/g) || []).length);
   ev("setTheme('dark'); go('settings')");
