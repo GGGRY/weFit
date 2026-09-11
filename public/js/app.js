@@ -1466,14 +1466,12 @@ function exRowHTML(w, it, showPR){
     (itemSub(it) ? '<div class="sub">' + esc(itemSub(it)) + '</div>' : '') + '</div>' +
     (pr.wPR ? '<span style="color:var(--cat3)" title="最大重量纪录">🏆</span>' : '') +
     '<div class="tiny" style="white-space:nowrap">' + esc(fmtItem(it)) + '</div>' +
-    '<button class="iconbtn2" data-itemedit="' + esc(w.date) + '" data-item="' + esc(it.id) + '" title="修改">✏️</button>' +
-    '<button class="iconbtn2" data-itemdel="' + esc(w.date) + '" data-item="' + esc(it.id) + '" style="color:var(--danger)" title="删除">🗑</button></div>';
+    '<button class="iconbtn2" data-itemedit="' + esc(w.date) + '" data-item="' + esc(it.id) + '" title="修改">✏️</button></div>';
 }
-/* 行内三件事：打卡圆钮（本项直接生效）+ 逐项修改 / 逐项删除（不在弹窗里改整天） */
+/* 行内两件事：打卡圆钮（本项直接生效）+ 逐项修改（删除在编辑弹窗里，行尾不再放 🗑） */
 function bindItemChecks(root){
   $$('[data-itemdone]', root).forEach(b => b.addEventListener('click', () => toggleItemDone(b.dataset.itemdone, b.dataset.item)));
   $$('[data-itemedit]', root).forEach(b => b.addEventListener('click', () => openItemDlg(b.dataset.itemedit, b.dataset.item)));
-  $$('[data-itemdel]', root).forEach(b => b.addEventListener('click', () => delItem(b.dataset.itemdel, b.dataset.item)));
 }
 
 /* 周视图：顶部一张周汇总卡（周导航 + 进度条 + 汇总 chips），下面每天一张全宽卡竖排——
@@ -2350,7 +2348,7 @@ function habitCardHTML(){
   }).join('') : '';
   const body = rows || '<div class="empty" style="padding:14px 4px"><div class="e-ic">📌</div>还没有习惯<br><button class="btn primary sm mt" data-go2="settings">去「设置」页添加</button></div>';
 
-  return '<div class="card"><h3>📌 今日打卡 <span class="hint">点圆圈切换当天完成</span></h3>' + body + '</div>';
+  return '<div class="card"><h3>📌 今日打卡</h3>' + body + '</div>';
 }
 function bindHabitEvents(){
   const v = $('#view');

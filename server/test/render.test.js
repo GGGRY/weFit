@@ -230,13 +230,14 @@ async function main() {
   ok('T7l 每项都有独立打卡圆钮：已完成的带 on、未打勾的不带',
      trainHTML.includes('class="hab-dot on" data-itemdone="w4" data-item="wi5"')
      && trainHTML.includes('class="hab-dot " data-itemdone="w4" data-item="wi6"'));
-  ok('T7m 逐项操作：行尾有 ✏️/🗑，卡片上不再有「全部完成/取消」与整天级按钮',
+  ok('T7m 逐项操作：行尾只有 ✏️（删除收进编辑弹窗），卡片上不再有 🗑 与「全部完成/取消」与整天级按钮',
      trainHTML.includes('data-itemedit="2026-09-05" data-item="wi6"')
-     && trainHTML.includes('data-itemdel="2026-09-05" data-item="wi6"')
+     && !trainHTML.includes('data-itemdel')
+     && !trainHTML.includes('title="删除">🗑')
      && !trainHTML.includes('data-allday') && !trainHTML.includes('data-wedit') && !trainHTML.includes('data-wdel')
      && !trainHTML.includes('✔ 全部完成') && !trainHTML.includes('↺ 全部取消'));
 
-  /* 概览「今日运动」卡与运动页同一套逐项交互：卡头 ＋ 添加、行尾 ✏️/🗑 */
+  /* 概览「今日运动」卡与运动页同一套逐项交互：卡头 ＋ 添加、行尾 ✏️（删除在编辑弹窗里） */
   ev("state.workouts.push({ id:'w_home', date:today(), name:'', items:[{ id:'wh1', exName:'自测深蹲', cat:'力量', muscle:'腿', reps:10 }] }); renderHome()");
   const homeHTML = view.__html;
   ev("setTrainWeek(mondayOf('2026-09-05'))");
@@ -250,7 +251,7 @@ async function main() {
         + '<button class="btn sm ghost" data-additem="' + ev('today()') + '" style="margin-left:auto">＋ 添加运动</button></div>')
      && !homeHTML.includes('今日运动</span><span class="chip')
      && homeHTML.includes('data-itemedit="' + ev('today()') + '" data-item="wh1"')
-     && homeHTML.includes('data-itemdel="' + ev('today()') + '" data-item="wh1"')
+     && !homeHTML.includes('data-itemdel')
      && homeHTML.includes('<div class="sub">力量 · 腿</div>')
      && !homeHTML.includes('data-allday') && !homeHTML.includes('全部完成'));
   ev("state.workouts = state.workouts.filter(x => x.id !== 'w_home')");
