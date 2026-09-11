@@ -32,7 +32,8 @@
 /* =====================================================
    weFit 管理后台(v4.1)
    - 三态:未登录登录卡 / 已登录非管理员无权限页 / 管理员工作台
-   - 分页:系统共享库编辑(PUT /api/system/library)+ 用户管理(/api/admin/*)
+   - 分页:用户管理(/api/admin/*)+ 系统共享库编辑(PUT /api/system/library);
+     系统库内部再分「食物库 / 动作库」两个子分页(2026-09-11),增删都走弹窗
    - 危险操作二次确认(按钮变红再点);鉴权靠服务端,本页只呈现
    ===================================================== */
 const $ = s => document.querySelector(s);
@@ -57,7 +58,8 @@ function toast(msg, isErr){
 
 let me = null;          /* {username, role} */
 let tab = 'users';      /* users | lib */
-let libDraft = null;    /* 系统库编辑草稿 */
+let libDraft = null;    /* 系统库编辑草稿(食物+动作整份,跨子分页共用) */
+let libSub = 'foods';   /* 系统库子分页:foods=食物库 | exercises=动作库 */
 const OFFLINE_MSG = '连不上服务器：请确认电脑上的服务窗口已开启';
 /* v4.4:统一网络/鉴权守卫——连不上(0)/会话失效(401)/被撤权(403)归一收口并返回 false。
  * 三个用户操作按钮曾各自手抄三连判断、同一状态三种文案,renderLib 的保存还漏了 status 0;
@@ -148,7 +150,10 @@ function renderShell(){
   $('#thBtn').textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️ 浅色' : '🌙 深色';
   $('#thBtn').addEventListener('click', toggleTheme);
   $('#outBtn').addEventListener('click', doLogout);
-  $$('.adm-tabs button').forEach(b => b.addEventListener('click', () => { tab = b.dataset.t; paintTabs(); renderTab(); }));
+  $$('.adm-tabs button').forEach(b => b.addEventListener('click', () => {
+    if (curDialog) curDialog.close();   /* 顶部分页切走时关掉可能开着的添加弹窗（否则弹窗留在 body 上、加完还会把分页重绘错） */
+    tab = b.dataset.t; paintTabs(); renderTab();
+  }));
   paintTabs();
 }
 function paintTabs(){ $$('.adm-tabs button').forEach(b => b.classList.toggle('active', b.dataset.t === tab)); }
@@ -255,46 +260,140 @@ async function renderLib(){
   if (!libDraft) libDraft = { foods: j.foods, exercises: j.exercises };  /* 切分页保留未保存的草稿；「放弃修改并重载」显式重置 */
   paintLib();
 }
+/* 通用单层弹窗(样式复用用户端 style.css 的 .overlay/.dialog) */
+let curDialog = null;
+function showDialog(title, html, onOpen){
+  const ov = document.createElement('div'); ov.className = 'overlay';
+  const d = document.createElement('div'); d.className = 'dialog';
+  d.innerHTML = '<div class="d-h"><div class="d-t">' + esc(title) + '</div><button class="d-x" type="button">✕</button></div><div class="d-b"></div>';
+  const box = d.querySelector('.d-b');
+  box.insertAdjacentHTML('beforeend', html);
+  ov.appendChild(d);
+  const entry = {};
+  entry.box = box;
+  entry.close = function(){
+    ov.remove();
+    document.removeEventListener('keydown', esk);
+    if (curDialog === entry) curDialog = null;
+  };
+  function esk(e){ if (e.key === 'Escape') entry.close(); }
+  document.addEventListener('keydown', esk);
+  ov.addEventListener('mousedown', e => { if (e.target === ov) entry.close(); });
+  d.querySelector('.d-x').addEventListener('click', entry.close);
+  document.body.appendChild(ov);
+  curDialog = entry;
+  if (onOpen) onOpen(box, entry.close);
+  return entry;
+}
+
+/* 2026-09-11：食物库 / 动作库拆成两个子分页（原「两卡竖排」已删）；
+ * 增删一律走弹窗（原先内联的「＋食物 / ＋动作」表单已删）。
+ * 两个子分页共用一份草稿 libDraft 和底部「放弃修改并重载 / 保存系统库」，切分页不丢草稿。 */
+function libSegHTML(){
+  const b = (k, label) => '<button data-lt="' + k + '" class="' + (libSub === k ? 'active' : '') + '">' + label + '</button>';
+  return '<div class="seg" id="libSeg">' + b('foods', '🥗 食物库（' + libDraft.foods.length + '）') + b('exercises', '🏋️ 动作库（' + libDraft.exercises.length + '）') + '</div>';
+}
+function foodPanelHTML(){
+  const rows = libDraft.foods.length
+    ? libDraft.foods.map((f, i) =>
+      '<div class="lrow"><div class="grow"><div class="b small">' + esc(f.name) + '</div>' +
+      '<div class="sub">' + (f.per100 ? ('每100g：' + Math.round(f.per100.kcal || 0) + ' kcal · P' + (f.per100.p || 0) + ' C' + (f.per100.c || 0) + ' F' + (f.per100.f || 0)) : '无营养表') + '</div></div>' +
+      '<button class="iconbtn2" data-df="' + i + '" title="删除" style="color:var(--danger)">🗑</button></div>').join('')
+    : '<div class="empty"><div class="e-ic">🥗</div>系统库暂无食物</div>';
+  return '<div class="card"><h3><span>🥗 食物库</span><span class="grow"></span>' +
+    '<button class="btn sm primary" id="lf_new">＋ 添加食物</button></h3>' + rows + '</div>';
+}
+function exPanelHTML(){
+  const rows = libDraft.exercises.length
+    ? '<div style="overflow-x:auto"><table class="libtable"><thead><tr><th>名称</th><th>分类</th><th>方式</th><th></th></tr></thead><tbody>' +
+      libDraft.exercises.map((e, i) =>
+        '<tr><td>' + esc(e.name) + '</td><td class="tiny muted">' + esc([e.cat, e.muscle].filter(Boolean).join(' · ') || '—') + '</td>' +
+        '<td class="tiny muted">' + esc(SEED_MODE_CN[e.mode] || '—') + '</td>' +
+        '<td class="ta-r"><button class="iconbtn2" data-dx="' + i + '" title="删除" style="color:var(--danger)">🗑</button></td></tr>').join('') +
+      '</tbody></table></div>'
+    : '<div class="empty"><div class="e-ic">🏋️</div>系统库暂无动作</div>';
+  return '<div class="card"><h3><span>🏋️ 动作库</span><span class="grow"></span>' +
+    '<button class="btn sm primary" id="lx_new">＋ 添加动作</button></h3>' + rows + '</div>';
+}
 function paintLib(){
   const box = $('#tabBody');
   box.innerHTML =
-    '<div class="card"><h3><span>🥗 食物库（' + libDraft.foods.length + '）</span></h3>' +
-      libDraft.foods.map((f, i) =>
-        '<div class="lrow"><div class="grow"><div class="b small">' + esc(f.name) + '</div>' +
-        '<div class="sub">' + (f.per100 ? ('每100g：' + Math.round(f.per100.kcal || 0) + ' kcal · P' + (f.per100.p || 0) + ' C' + (f.per100.c || 0) + ' F' + (f.per100.f || 0)) : '无营养表') + '</div></div>' +
-        '<button class="iconbtn2" data-df="' + i + '" style="color:var(--danger)">🗑</button></div>').join('') +
-      '<div class="field" style="display:flex;gap:8px;margin-top:8px"><input class="input" id="lf_n" placeholder="新食物名" style="flex:1.2"><input class="input" id="lf_k" type="number" placeholder="kcal/100g" style="width:100px"></div>' +
-      '<div class="field" style="display:flex;gap:8px"><input class="input" id="lf_p" type="number" placeholder="蛋白 g" style="flex:1"><input class="input" id="lf_c" type="number" placeholder="碳水 g" style="flex:1"><input class="input" id="lf_f" type="number" placeholder="脂肪 g" style="flex:1"><button class="btn primary" id="lf_add">＋ 食物</button></div>' +
+    '<div style="margin-bottom:12px">' + libSegHTML() + '</div>' +
+    (libSub === 'foods' ? foodPanelHTML() : exPanelHTML()) +
+    '<div class="row" style="justify-content:flex-end"><button class="btn ghost" id="lib_reload">放弃修改并重载</button><button class="btn primary" id="lib_save">保存系统库</button></div>' +
+    '<div class="tiny muted" style="margin-top:8px">保存后对所有用户立即可见（用户端「系统库」分页）。已注册用户已有的个人库不会被追溯改动，用户可自行从系统库挑入新条目。</div>';
+  bindLib();
+}
+/* 添加弹窗：加完不关（连续录入多条），只清空并聚焦回名称；后面分页即时重绘刷新计数 */
+function refreshLibPanel(){ if (tab === 'lib' && libDraft) paintLib(); }
+function openFoodDialog(){
+  showDialog('添加食物（系统库）',
+    '<div class="field"><label>食物名称</label><input class="input" id="fd_n" placeholder="如：鸡胸肉"></div>' +
+    '<div class="form-grid">' +
+      '<div><label>热量 kcal / 100g</label><input class="input" id="fd_k" type="number" min="0" inputmode="decimal"></div>' +
+      '<div><label>蛋白质 g / 100g</label><input class="input" id="fd_p" type="number" min="0" inputmode="decimal"></div>' +
+      '<div><label>碳水 g / 100g</label><input class="input" id="fd_c" type="number" min="0" inputmode="decimal"></div>' +
+      '<div><label>脂肪 g / 100g</label><input class="input" id="fd_f" type="number" min="0" inputmode="decimal"></div>' +
     '</div>' +
-    '<div class="card"><h3><span>🏋️ 动作库（' + libDraft.exercises.length + '）</span></h3>' +
-      '<table class="libtable"><thead><tr><th>名称</th><th>分类</th><th>方式</th><th></th></tr></thead><tbody>' +
-      (libDraft.exercises.length ? libDraft.exercises.map((e, i) =>
-        '<tr><td>' + esc(e.name) + '</td><td class="tiny muted">' + esc([e.cat, e.muscle].filter(Boolean).join(' · ') || '—') + '</td>' +
-        '<td class="tiny muted">' + esc(SEED_MODE_CN[e.mode] || '—') + '</td>' +
-        '<td class="ta-r"><button class="iconbtn2" data-dx="' + i + '" style="color:var(--danger)">🗑</button></td></tr>').join('')
-        : '<tr><td colspan="4" class="tiny muted" style="text-align:center;padding:14px">暂无动作</td></tr>') +
-      '</tbody></table>' +
-      '<div class="field" style="display:flex;gap:8px;margin-top:8px;align-items:end;flex-wrap:wrap"><div style="flex:1.4;min-width:120px"><label class="tiny muted">名称</label><input class="input" id="lx_n" placeholder="新动作名"></div><div style="width:104px"><label class="tiny muted">大类</label><select class="select" id="lx_c">' + SEED_CATS.map(c => '<option>' + c + '</option>').join('') + '</select></div><div style="width:104px"><label class="tiny muted">部位</label><select class="select" id="lx_m">' + SEED_MUSCLES.map(m => '<option>' + m + '</option>').join('') + '</select></div><div style="width:104px"><label class="tiny muted">记录方式</label><select class="select" id="lx_md">' + SEED_MODES.map(m => '<option value="' + m + '">' + (m === 'time' ? '计时' : '计次') + '</option>').join('') + '</select></div><button class="btn primary" id="lx_add">＋ 动作</button></div>' +   /* v4.11:三件套枚举与用户端同源(seed-data.js),不再各抄一份 */
+    '<div class="tiny muted" style="margin-top:10px">营养值留空按 0 记。添加只改本页草稿，点「保存系统库」才写入服务器。</div>' +
+    '<div class="d-f"><button class="btn ghost" id="fd_done">完成</button><button class="btn primary" id="fd_ok">添加</button></div>',
+    (b, close) => {
+      const q = s => b.querySelector(s);
+      const add = () => {
+        const name = q('#fd_n').value.trim();
+        if (!name) return toast('请填写食物名称', true);
+        if (libDraft.foods.some(f => f.name === name)) return toast('系统库里已有同名食物', true);
+        libDraft.foods.push({ name, per100: { kcal: +q('#fd_k').value || 0, p: +q('#fd_p').value || 0, c: +q('#fd_c').value || 0, f: +q('#fd_f').value || 0 } });
+        refreshLibPanel();   /* 弹窗挂在 body 上，重绘分页不影响它 */
+        toast('已加入草稿：' + name + '（记得「保存系统库」）');
+        ['#fd_n', '#fd_k', '#fd_p', '#fd_c', '#fd_f'].forEach(s => { q(s).value = ''; });
+        q('#fd_n').focus();
+      };
+      q('#fd_ok').addEventListener('click', add);
+      q('#fd_done').addEventListener('click', close);
+      q('#fd_n').addEventListener('keydown', e => { if (e.key === 'Enter') add(); });
+      q('#fd_n').focus();
+    });
+}
+function openExDialog(){
+  showDialog('添加动作（系统库）',
+    '<div class="field"><label>动作名称</label><input class="input" id="xd_n" placeholder="如：杠铃卧推"></div>' +
+    '<div class="form-grid">' +
+      '<div><label>大类</label><select class="select" id="xd_c">' + SEED_CATS.map(c => '<option>' + c + '</option>').join('') + '</select></div>' +
+      '<div><label>部位</label><select class="select" id="xd_m">' + SEED_MUSCLES.map(m => '<option>' + m + '</option>').join('') + '</select></div>' +
+      '<div><label>记录方式</label><select class="select" id="xd_md">' + SEED_MODES.map(m => '<option value="' + m + '">' + SEED_MODE_CN[m] + '</option>').join('') + '</select></div>' +
     '</div>' +
-    '<div class="d-f" style="position:static"><button class="btn ghost" id="lib_reload">放弃修改并重载</button><button class="btn primary" id="lib_save">保存系统库</button></div>' +
-    '<div class="tiny muted" style="margin-top:8px">保存后对所有用户立即可见（用户端「系统库」页）。已注册用户已有的个人库不会被追溯改动，用户可自行从系统库挑入新条目。</div>';
+    '<div class="tiny muted" style="margin-top:10px">三件套与用户端同源（seed-data.js）；换大类会自动带出该大类的默认部位与记录方式，仍可手改（如「核心 + 计时」= 平板支撑）。添加只改本页草稿。</div>' +
+    '<div class="d-f"><button class="btn ghost" id="xd_done">完成</button><button class="btn primary" id="xd_ok">添加</button></div>',
+    (b, close) => {
+      const q = s => b.querySelector(s);
+      const cat = q('#xd_c'), mus = q('#xd_m'), mod = q('#xd_md');
+      const sync = () => { mus.value = muscleDefault(cat.value); mod.value = modeDefault(cat.value); };
+      cat.addEventListener('change', sync);
+      sync();
+      const add = () => {
+        const name = q('#xd_n').value.trim();
+        if (!name) return toast('请填写动作名称', true);
+        if (libDraft.exercises.some(e => e.name === name)) return toast('系统库里已有同名动作', true);
+        libDraft.exercises.push({ name, cat: cat.value, muscle: mus.value, mode: mod.value });
+        refreshLibPanel();
+        toast('已加入草稿：' + name + '（记得「保存系统库」）');
+        q('#xd_n').value = '';
+        q('#xd_n').focus();
+      };
+      q('#xd_ok').addEventListener('click', add);
+      q('#xd_done').addEventListener('click', close);
+      q('#xd_n').addEventListener('keydown', e => { if (e.key === 'Enter') add(); });
+      q('#xd_n').focus();
+    });
+}
+function bindLib(){
+  const box = $('#tabBody');
+  $$('#libSeg [data-lt]').forEach(b => b.addEventListener('click', () => { libSub = b.dataset.lt; paintLib(); }));
   $$('[data-df]', box).forEach(b => b.addEventListener('click', () => { libDraft.foods.splice(+b.dataset.df, 1); paintLib(); }));
   $$('[data-dx]', box).forEach(b => b.addEventListener('click', () => { libDraft.exercises.splice(+b.dataset.dx, 1); paintLib(); }));
-  $('#lf_add').addEventListener('click', () => {
-    const name = $('#lf_n').value.trim(); if (!name) return toast('请填写食物名', true);
-    libDraft.foods.push({ name, per100: { kcal: +$('#lf_k').value || 0, p: +$('#lf_p').value || 0, c: +$('#lf_c').value || 0, f: +$('#lf_f').value || 0 } });
-    paintLib();
-  });
-  /* 换大类即把 部位/记录方式 拨到该大类的默认值（v4.11；仍可手改：核心+计时 = 平板支撑） */
-  const lxCat = $('#lx_c'), lxMus = $('#lx_m'), lxMod = $('#lx_md');
-  function lxSyncDefaults(){ lxMus.value = muscleDefault(lxCat.value); lxMod.value = modeDefault(lxCat.value); }
-  lxCat.addEventListener('change', lxSyncDefaults);
-  lxSyncDefaults();
-  $('#lx_add').addEventListener('click', () => {
-    const name = $('#lx_n').value.trim(); if (!name) return toast('请填写动作名', true);
-    libDraft.exercises.push({ name, cat: lxCat.value, muscle: lxMus.value, mode: lxMod.value });
-    paintLib();
-  });
+  const fnew = $('#lf_new'); if (fnew) fnew.addEventListener('click', openFoodDialog);
+  const xnew = $('#lx_new'); if (xnew) xnew.addEventListener('click', openExDialog);
   $('#lib_reload').addEventListener('click', () => { libDraft = null; renderLib(); });
   $('#lib_save').addEventListener('click', async () => {
     const body = { foods: libDraft.foods, exercises: libDraft.exercises };
