@@ -122,13 +122,21 @@ async function main() {
      `me=${ev('JSON.stringify(me&&me.username)')} active=${ev('USERS.active')}`);
 
   /* T2 六页导航冒烟(顺序放最前:后续用例会改写 state) */
-  const TITLES = { home:'概览', diet:'饮食记录', train:'运动', body:'身体数据', stats:'历史', settings:'设置' };
+  const TITLES = { home:'概览', diet:'饮食', train:'运动', body:'身体', stats:'历史', settings:'设置' };
   for (const [v, tt] of Object.entries(TITLES)) {
     let err = null;
     try { ev(`go('${v}')`); } catch (e) { err = e; }
     ok('T2 页面冒烟 ' + v, !err && view.__html.length > 50 && topbar.__html.includes(tt),
        (err && err.message) || ('len=' + view.__html.length));
   }
+
+  /* T2b 页面记忆(未标版号):go() 落盘上次页面;readView() 校验非法值回退概览。
+   * 刷新保持页面的真实路径 = startMain 结尾 go(readView()),此处验纯函数与键名口径 */
+  ok('T2b 导航落盘 + readView 还原(非法值回退概览)',
+     ev('readView()') === 'settings' && ev('localStorage.getItem(viewKey())') === 'settings'
+     && ev("localStorage.setItem('jjhealth_view:tester','diet'); readView()") === 'diet'
+     && ev("localStorage.setItem('jjhealth_view:tester','bogus'); readView()") === 'home',
+     'readView=' + ev('readView()'));
 
   /* T3 饮食数据流:per100×克数换算 + 渲染行 */
   const x3 = JSON.parse(ev(`(() => {

@@ -972,15 +972,23 @@ function rebuildNav(){
   $$('[data-go]').forEach(b => b.addEventListener('click', () => go(b.dataset.go)));
   const tc = $('#sidebar [data-themeclick]'); if(tc) tc.addEventListener('click', toggleTheme);
 }
+/* 记住当前页面（未标版号）：刷新后回到上次浏览的页面而不是总回概览。
+ * 键名按账户隔离，与离线缓存同一口径；只存 UI 状态，不参与服务器同步。 */
+function viewKey(){ return 'jjhealth_view:' + storeWho(); }
+function readView(){
+  try { const v = localStorage.getItem(viewKey()); return NAV.some(n => n.id === v) ? v : 'home'; } catch(e){ return 'home'; }
+}
+function writeView(v){ try { localStorage.setItem(viewKey(), v); } catch(e){} }
 function go(v){
   curView = v;
+  writeView(v);
   rebuildNav(); renderView();
   window.scrollTo({top:0, behavior:'smooth'});
 }
 function renderView(){
   const map = { home:renderHome, diet:renderDiet, train:renderTrain, body:renderBody, stats:renderStats, settings:renderSettings };
   const topbar = $('#topbar');
-  const titles = { home:'概览', diet:'饮食记录', train:'运动', body:'身体数据', stats:'历史', settings:'设置' };
+  const titles = { home:'概览', diet:'饮食', train:'运动', body:'身体', stats:'历史', settings:'设置' };
   const au = activeUser();
   topbar.innerHTML = '<div class="page-head"><h1>' + titles[curView] + '</h1></div>' +
     '<div class="tools">' +
@@ -3003,7 +3011,7 @@ async function startMain(offlineBoot){
     dropQs();
     if(offlineBoot){ srv.online = false; toast('服务器离线：正显示本机缓存，恢复后自动补同步', true); }
     if(!USERS.onboarded){ showOnboard(); }
-    go('home');
+    go(readView());
     return;
   }
   if(isDevUrl){
@@ -3014,7 +3022,7 @@ async function startMain(offlineBoot){
       dropQs();
       if(offlineBoot){ srv.online = false; toast('服务器离线：正显示本机缓存，恢复后自动补同步', true); }
       if(!USERS.onboarded){ showOnboard(); }
-      go('home');
+      go(readView());
       return;
     } else {
       demoData(); go(shotView);
@@ -3024,7 +3032,7 @@ async function startMain(offlineBoot){
   }
   if(offlineBoot){ srv.online = false; toast('服务器离线：正显示本机缓存，恢复后自动补同步', true); }
   if(!USERS.onboarded){ showOnboard(); }
-  go('home');
+  go(readView());
 }
 async function init(){
   const st = await apiMe();
