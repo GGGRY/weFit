@@ -1167,14 +1167,17 @@ function renderHome(){
 
   let planHTML = '';
   if(day){
-    /* 逐项：行内打卡圆钮 + ✏️/🗑（与运动页同一套），卡头只留一个「＋ 添加运动」 */
+    /* 逐项：行内打卡圆钮 + ✏️/🗑（与运动页同一套）；卡头只留卡名，
+     * 进度 chip 与「＋ 添加运动」挪到卡底最后一行（对齐今日睡眠卡：左信息 + 右按钮） */
     planHTML =
-      '<div class="card"><h3><span>' + (all ? '✅' : '📋') + ' 今日运动</span>' +
-      '<span class="chip' + (all ? ' ok' : '') + '">' + dn + '/' + day.items.length + '</span><span class="grow"></span>' +
-      '<button class="btn sm" data-additem="' + esc(day.date) + '">＋ 添加运动</button>' +
-      '</h3>' +
+      '<div class="card"><h3><span>' + (all ? '✅' : '📋') + ' 今日运动</span></h3>' +
       (day.items.length ? day.items.map(it => exRowHTML(day, it, false)).join('')
                         : '<div class="empty" style="padding:12px">今天还没有运动项<br><span class="tiny">点「＋ 添加运动」加一项</span></div>') +
+      '<div class="row mt" style="align-items:center">' +
+        '<span class="chip' + (all ? ' ok' : '') + '">' + dn + '/' + day.items.length + '</span>' +
+        /* margin-left:auto 而非 space-between：窄卡换行时按钮仍靠右，不会跳到下一行行首 */
+        '<button class="btn sm ghost" data-additem="' + esc(day.date) + '" style="margin-left:auto">＋ 添加运动</button>' +
+      '</div>' +
       '</div>';
   } else {
     planHTML = '<div class="card"><h3>📋 今日运动</h3><div class="empty"><div class="e-ic">🛋️</div>今天还没有运动项<br><button class="btn sm mt" data-additem="' + t + '">＋ 添加运动</button></div></div>';
@@ -1192,13 +1195,17 @@ function renderHome(){
           '<div style="display:flex;justify-content:space-between;margin-bottom:5px"><span class="muted">已摄入 vs 目标 <span class="tiny" style="font-weight:400;color:' + (calPct>100?'var(--ink-2)':'var(--cat3)') + '">' + (calPct>100 ? '已超 ' + (calPct-100) + '%' : '还差 ' + (100-calPct) + '%') + '</span></span><b>' + fmtNum(eat.kcal) + ' / ' + fmtNum(T.kcal) + ' kcal</b></div>' +
           '<div class="meter"><i style="width:' + clamp(calPct,0,100) + '%" class="' + (calPct>100?'over':'') + '"></i></div>' +
           '</div>') +
-      (eat.kcal ? '<div class="row gap8" style="margin-top:10px">' +
+      /* chips 行下边带分隔线（`.lrow` 的 border-bottom 同款）：与运动/睡眠卡一样，
+       * 卡底入口行上方有一条横线，把入口与上面的内容隔开 */
+      (eat.kcal ? '<div class="row gap8" style="margin-top:10px;padding-bottom:12px;border-bottom:1px solid var(--line)">' +
         '<span class="chip b1">蛋白 ' + eat.p + 'g / ' + T.p + 'g</span>' +
         '<span class="chip b2">碳水 ' + eat.c + 'g / ' + T.c + 'g</span>' +
         '<span class="chip b3">脂肪 ' + eat.f + 'g / ' + T.f + 'g</span>' +
       '</div>' +
-      /* 有记录时也留入口（未标版号用户要求）：卡底右对齐，样式对齐睡眠卡的「＋ 记录一段」 */
-      '<div class="row mt" style="justify-content:flex-end"><button class="btn sm ghost" data-go2="diet">去记录</button></div>' : '') +
+      /* 有记录时的入口：与今日运动/今日睡眠卡同款同位（卡底一行、右对齐 ghost），
+       * 文案用「＋ 记录一下」而不是「去记录」——三张卡的右下按钮统一成「＋ 动宾」
+       * margin-left:auto 而非 space-between：窄卡换行时按钮仍靠右 */
+      '<div class="row mt" style="align-items:center"><button class="btn sm ghost" data-go2="diet" style="margin-left:auto">＋ 记录一下</button></div>' : '') +
     '</div>' +
     planHTML +
     lifeTodayHTML() +

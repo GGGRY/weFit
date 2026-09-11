@@ -144,15 +144,28 @@ async function main() {
   ok('T3b 饮食页渲染食物行(名称/克数/kcal)',
      view.__html.includes(x3.name) && view.__html.includes('150g') && view.__html.includes(String(x3.expKcal)));
 
-  /* T3c 概览「今日饮食」卡：有记录时也保留「去记录」入口（未标版号用户要求；
-   * 绑定用单元素 querySelector,同页必须恰好一个 data-go2="diet"） */
+  /* T3c 概览「今日饮食」卡：有记录时卡底右对齐一个「＋ 记录一下」（与运动/睡眠卡同款同位；
+   * 空态仍是卡体内居中的 primary「去记录」；绑定用单元素 querySelector,同页恰好一个 data-go2="diet"） */
   ev('renderHome()');
   const dietI = view.__html.indexOf('🍽️ 今日饮食');
   const dietCard = dietI < 0 ? '' : view.__html.slice(dietI, dietI + 1600);
-  ok('T3c 有记录时卡底仍有一个「去记录」按钮',
-     dietCard.includes('kcal') && dietCard.includes('data-go2="diet"')
+  ok('T3c 有记录时卡底是「＋ 记录一下」（ghost + margin-left:auto，同运动/睡眠卡），上方有分隔线',
+     dietCard.includes('kcal')
+     && dietCard.includes('border-bottom:1px solid var(--line)"')   /* chips 行带分隔线 = 入口行上方的横线 */
+     && dietCard.includes('<div class="row mt" style="align-items:center"><button class="btn sm ghost" data-go2="diet" style="margin-left:auto">＋ 记录一下</button></div>')
+     && !dietCard.includes('>去记录<')
      && (view.__html.match(/data-go2="diet"/g) || []).length === 1,
      'n=' + (view.__html.match(/data-go2="diet"/g) || []).length);
+
+  /* T3d 空态不变：卡体内居中的 primary「去记录」，不走卡底行 */
+  const dietBackup = ev('JSON.stringify(state.meals[today()])');
+  ev('state.meals[today()] = { breakfast:[], lunch:[], dinner:[], snack:[] }; renderHome()');
+  ok('T3d 空态仍是居中 primary「去记录」',
+     view.__html.includes('<button class="btn primary sm" data-go2="diet">去记录</button>')
+     && !view.__html.includes('＋ 记录一下')
+     && (view.__html.match(/data-go2="diet"/g) || []).length === 1,
+     'n=' + (view.__html.match(/data-go2="diet"/g) || []).length);
+  ev('state.meals[today()] = ' + dietBackup + '; renderHome()');
 
   /* T4 饮水卡显隐(PLANS/MEMO 记载的「目标 0 隐藏」契约) */
   ev('state.waterTarget = 0; renderHome()');
@@ -231,8 +244,11 @@ async function main() {
   ok('T7o 名称下方小字显示大类 · 部位（力量 · 胸 / 有氧 · 全身）',
      subHTML.includes('<div class="sub">力量 · 胸</div>') && subHTML.includes('<div class="sub">有氧 · 全身</div>')
      && subHTML.includes('<div class="sub">柔韧 · 全身</div>'), 'sub=' + (subHTML.match(/<div class="sub">[^<]*<\/div>/g) || []).join(' , '));
-  ok('T7n 概览今日运动卡：卡头「＋ 添加运动」+ 行尾逐项 ✏️/🗑，且无「全部完成」',
-     homeHTML.includes('data-additem="' + ev('today()') + '"')
+  ok('T7n 概览今日运动卡：卡头只有卡名，进度 chip + 「＋ 添加运动」都在卡底最后一行（对齐今日睡眠卡）',
+     homeHTML.includes('<h3><span>📋 今日运动</span></h3>')
+     && homeHTML.includes('<div class="row mt" style="align-items:center"><span class="chip">0/1</span>'
+        + '<button class="btn sm ghost" data-additem="' + ev('today()') + '" style="margin-left:auto">＋ 添加运动</button></div>')
+     && !homeHTML.includes('今日运动</span><span class="chip')
      && homeHTML.includes('data-itemedit="' + ev('today()') + '" data-item="wh1"')
      && homeHTML.includes('data-itemdel="' + ev('today()') + '" data-item="wh1"')
      && homeHTML.includes('<div class="sub">力量 · 腿</div>')
