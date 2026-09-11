@@ -121,6 +121,29 @@ async function main() {
      && ev('Object.keys(USERS.users).length') === 1,
      `me=${ev('JSON.stringify(me&&me.username)')} active=${ev('USERS.active')}`);
 
+  /* T1d 概览磁贴：今日热量 → BMI → 今日运动 → 打卡（BMI/运动为本轮新增） */
+  const rowStart = view.__html.indexOf('<div class="row mt">');
+  const tileRow = rowStart < 0 ? '' : view.__html.slice(rowStart, view.__html.indexOf('🍽️ 今日饮食'));
+  const ti = ['今日热量','BMI','今日运动','打卡'].map(l => tileRow.indexOf('>' + l + '</span></div>'));
+  ok('T1d 概览磁贴四张，顺序为 今日热量 → BMI → 今日运动 → 打卡',
+     ti.every((i, k) => i >= 0 && (k === 0 || i > ti[k - 1])), 'idx=' + ti.join(','));
+  const bmiV = ev('bmi()');
+  /* 这里故意用测试侧独立阈值再算一遍，防渲染/色号写错（不对 bmiTone 自证） */
+  const expTone = bmiV === null ? { t:'记录体重后查看', c:'' }
+    : bmiV < 18.5 ? { t:'⚠ 偏瘦', c:'var(--cat1)' }
+    : bmiV < 24   ? { t:'✓ 正常', c:'var(--brand)' }
+    : bmiV < 28   ? { t:'⚠ 超重', c:'var(--warn)' }
+    :               { t:'⚠ 肥胖', c:'var(--danger)' };
+  const bmiTile = ti[1] < 0 ? '' : tileRow.slice(ti[1] - 40, ti[2]);
+  ok('T1d BMI 磁贴 = 分档数值 + 分档文案/颜色（与身体页 bmiTone 同源）',
+     bmiTile.includes('>' + (bmiV === null ? '--' : bmiV) + '</div>') && bmiTile.includes('>' + expTone.t + '</div>')
+     && (!expTone.c || bmiTile.includes('color:' + expTone.c)),
+     'bmi=' + bmiV + ' tone=' + expTone.t + '/' + expTone.c + ' tile=' + bmiTile);
+  const expWk = ev("(function(){const d=workoutForDate(today());return d&&d.items.length?doneCount(d)+'/'+d.items.length:'--';})()");
+  ok('T1d 今日运动磁贴 = 当日已打勾项/全部项（今天没安排显示 --）',
+     tileRow.slice(ti[2], ti[3]).includes(expWk === '--' ? '>--</div>' : '>' + expWk + '<span class="unit">项</span>'),
+     'wk=' + expWk + ' tile=' + tileRow.slice(ti[2], ti[3]));
+
   /* T2 六页导航冒烟(顺序放最前:后续用例会改写 state) */
   const TITLES = { home:'概览', diet:'饮食', train:'运动', body:'身体', stats:'历史', settings:'设置' };
   for (const [v, tt] of Object.entries(TITLES)) {

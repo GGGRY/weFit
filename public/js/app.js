@@ -729,6 +729,14 @@ function bodyVal(metric, date){
 }
 function latestVal(metric){ return bodyVal(metric, today()); }
 function bmi(){ const w = latestVal('weight'); if(!w || !state.profile.height) return null; return round(w / Math.pow(state.profile.height/100, 2), 1); }
+/* BMI 分档：偏瘦(<18.5)/正常(<24)/超重(<28)/肥胖——颜色与判定的单一来源，身体页与概览磁贴共用 */
+function bmiTone(v){
+  if(v === null || v === undefined) return null;
+  return v < 18.5 ? { c:'var(--cat1)',   ok:false, tag:'偏瘦' }
+       : v < 24   ? { c:'var(--brand)',  ok:true,  tag:'正常' }
+       : v < 28   ? { c:'var(--warn)',   ok:false, tag:'超重' }
+       :            { c:'var(--danger)', ok:false, tag:'肥胖' };
+}
 
 /* ---------- 睡眠饮水辅助（v4.6 睡眠多段：一天 = 段数组 [{t,bed,wake,mins,quality}]） ----------
  * 类型枚举 / 时长计算 / 形状归一化都在 js/sleep-shape.js（服务端 mapper 共用同一份）：
@@ -1155,9 +1163,9 @@ async function doLogout(){
 /* =====================================================
    概览首页
 ===================================================== */
-function tileHTML(lab, val, unit, delta, deltaCls, icon){
+function tileHTML(lab, val, unit, delta, deltaCls, icon, deltaColor){
   return '<div class="tile"><div class="lab"><span>' + esc(lab) + '</span></div><div class="val">' + val + (unit ? '<span class="unit">' + unit + '</span>' : '') + '</div>' +
-    (delta ? '<div class="delta ' + (deltaCls||'') + '">' + delta + '</div>' : '') + '</div>';
+    (delta ? '<div class="delta ' + (deltaCls||'') + '"' + (deltaColor ? ' style="color:' + deltaColor + '"' : '') + '>' + delta + '</div>' : '') + '</div>';
 }
 
 function renderHome(){
@@ -1172,6 +1180,8 @@ function renderHome(){
   const day = workoutForDate(t);
   const dn = day ? doneCount(day) : 0;
   const all = allDone(day);
+  const itemTotal = day ? day.items.length : 0;                  /* 概览磁贴「今日运动」的分母 */
+  const bmiV = bmi(), bmiInfo = bmiTone(bmiV);                  /* 概览磁贴「BMI」 */
 
   let planHTML = '';
   if(day){
@@ -1195,6 +1205,11 @@ function renderHome(){
     '<div class="muted">' + esc(greet) + '，<b>' + esc(activeUser().name) + '</b> · ' + dateCNW(t) + '</div>' +
     '<div class="row mt">' +
       tileHTML('今日热量', fmtNum(eat.kcal), '/ ' + fmtNum(T.kcal) + ' kcal', '', '') +
+      /* BMI 磁贴：数值 + 分档小字，颜色同身体页（bmiTone 单一来源）；无体重/身高时给提示文案 */
+      tileHTML('BMI', bmiV === null ? '--' : bmiV, '',
+        bmiInfo ? (bmiInfo.ok ? '✓ 正常' : '⚠ ' + bmiInfo.tag) : '记录体重后查看', '', '', bmiInfo ? bmiInfo.c : '') +
+      /* 今日运动磁贴：当天已打勾项 / 全部项；今天没安排（或安排为空）显示 -- */
+      tileHTML('今日运动', itemTotal ? dn + '/' + itemTotal : '--', itemTotal ? '项' : '', '', '') +
       tileHTML('打卡', habToday + '/' + state.habits.length, '', '', '') +
     '</div>' +
     '<div class="card" style="margin-top:14px"><h3>🍽️ 今日饮食</h3>' +
@@ -1904,11 +1919,8 @@ function renderBody(){
     '<div class="card" style="padding:6px 12px 12px"><div style="overflow:auto"><table class="tbl"><thead><tr><th>日期</th>' + MEASURES.map(m => '<th>' + m.label + '</th>').join('') + '</tr></thead><tbody>' + rows + '</tbody></table></div></div>'
     : '';
 
-  /* BMI 显示数值本身，颜色按分档自动选取（18.5/24/28 → 偏瘦蓝/正常绿/超重橙/肥胖红），小字注明正常范围 */
-  const bmiInfo = bmiV === null ? null : {
-    c: bmiV < 18.5 ? 'var(--cat1)' : bmiV < 24 ? 'var(--brand)' : bmiV < 28 ? 'var(--warn)' : 'var(--danger)',
-    ok: bmiV >= 18.5 && bmiV < 24
-  };
+  /* BMI 显示数值本身，颜色按分档自动选取（bmiTone：18.5/24/28 → 偏瘦蓝/正常绿/超重橙/肥胖红），小字注明正常范围 */
+  const bmiInfo = bmiTone(bmiV);
 
   const html =
     '<div class="card">' +
