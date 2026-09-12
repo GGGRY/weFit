@@ -9,7 +9,7 @@
    ===================================================== */
 
 const {
-  SEED_FOODS, SEED_EXERCISES, SEED_CATS, SEED_MUSCLES, SEED_MODES,
+  SEED_FOODS, SEED_EXERCISES, SEED_CATS, SEED_MUSCLES, SEED_MODES, FOOD_SRC_SYS, FOOD_SRC_USER,
 } = require('../public/js/seed-data.js');
 
 /* per100 只保留这 4 个营养键(v4.4:server.js 的 sanitizeLibrary 同一白名单,
@@ -17,10 +17,11 @@ const {
 const FOOD_NUM_KEYS = ['kcal', 'p', 'c', 'f'];
 
 /* 系统库形状与个人库一致：
- * {foods:[{id,name,per100}], exercises:[{id,name,cat,muscle,mode}]} */
+ * {foods:[{id,name,per100,src}], exercises:[{id,name,cat,muscle,mode}]}
+ * src = 食物条目的营养来源（系统库种子来自 USDA，见 seed-data.js 的 FOOD_SRC_SYS） */
 function seedLibrary() {
   return {
-    foods: SEED_FOODS.map((f, i) => ({ id: 'sf' + i, name: f.name, per100: Object.assign({}, f.per100) })),
+    foods: SEED_FOODS.map((f, i) => ({ id: 'sf' + i, name: f.name, per100: Object.assign({}, f.per100), src: f.src || FOOD_SRC_SYS })),
     exercises: SEED_EXERCISES.map((e, i) => ({ id: 'se' + i, name: e.name, cat: e.cat, muscle: e.muscle, mode: e.mode })),
   };
 }
@@ -38,21 +39,22 @@ function copyLibrary(lib) {
     })),
   };
   out.foods.forEach((fo, i) => {
-    const src = (lib.foods || [])[i];
-    if (src && src.per100) {
+    const sysFood = (lib.foods || [])[i];
+    fo.src = (sysFood && sysFood.src) || FOOD_SRC_SYS;   /* 来源随条目一起拷贝：从系统库挑进来的仍算 USDA */
+    if (sysFood && sysFood.per100) {
       const per = {};
-      FOOD_NUM_KEYS.forEach(k => { if (src.per100[k] !== undefined && src.per100[k] !== null) per[k] = src.per100[k]; });
+      FOOD_NUM_KEYS.forEach(k => { if (sysFood.per100[k] !== undefined && sysFood.per100[k] !== null) per[k] = sysFood.per100[k]; });
       if (Object.keys(per).length) fo.per100 = per;
     }
   });
   out.exercises.forEach((ex, i) => {
-    const src = (lib.exercises || [])[i];
-    if (!src) return;
-    if (src.cat) ex.cat = src.cat;
-    if (src.muscle) ex.muscle = src.muscle;
-    if (src.mode) ex.mode = src.mode;
+    const sysEx = (lib.exercises || [])[i];
+    if (!sysEx) return;
+    if (sysEx.cat) ex.cat = sysEx.cat;
+    if (sysEx.muscle) ex.muscle = sysEx.muscle;
+    if (sysEx.mode) ex.mode = sysEx.mode;
   });
   return out;
 }
 
-module.exports = { seedLibrary, copyLibrary, FOOD_NUM_KEYS, SEED_CATS, SEED_MUSCLES, SEED_MODES };
+module.exports = { seedLibrary, copyLibrary, FOOD_NUM_KEYS, SEED_CATS, SEED_MUSCLES, SEED_MODES, FOOD_SRC_SYS, FOOD_SRC_USER };

@@ -293,10 +293,14 @@ function libSegHTML(){
   const b = (k, label) => '<button data-lt="' + k + '" class="' + (libSub === k ? 'active' : '') + '">' + label + '</button>';
   return '<div class="seg" id="libSeg">' + b('foods', '🥗 食物库（' + libDraft.foods.length + '）') + b('exercises', '🏋️ 动作库（' + libDraft.exercises.length + '）') + '</div>';
 }
+/* 营养来源小签（与用户端食物库同一口径：缺 src 的存量条目按系统库来源 USDA 兜底） */
+function srcChip(f){
+  return '<span class="chip slot" style="margin-left:6px;font-weight:600">' + esc(f.src || FOOD_SRC_SYS) + '</span>';
+}
 function foodPanelHTML(){
   const rows = libDraft.foods.length
     ? libDraft.foods.map((f, i) =>
-      '<div class="lrow"><div class="grow"><div class="b small">' + esc(f.name) + '</div>' +
+      '<div class="lrow"><div class="grow"><div class="b small">' + esc(f.name) + srcChip(f) + '</div>' +
       '<div class="sub">' + (f.per100 ? ('每100g：' + Math.round(f.per100.kcal || 0) + ' kcal · P' + (f.per100.p || 0) + ' C' + (f.per100.c || 0) + ' F' + (f.per100.f || 0)) : '无营养表') + '</div></div>' +
       '<button class="iconbtn2" data-df="' + i + '" title="删除" style="color:var(--danger)">🗑</button></div>').join('')
     : '<div class="empty"><div class="e-ic">🥗</div>系统库暂无食物</div>';
@@ -329,13 +333,14 @@ function refreshLibPanel(){ if (tab === 'lib' && libDraft) paintLib(); }
 function openFoodDialog(){
   showDialog('添加食物（系统库）',
     '<div class="field"><label>食物名称</label><input class="input" id="fd_n" placeholder="如：鸡胸肉"></div>' +
+    '<div class="field"><label>营养来源</label><input class="input" id="fd_s" value="' + FOOD_SRC_SYS + '" placeholder="如：USDA / 中国食物成分表"></div>' +
     '<div class="form-grid">' +
       '<div><label>热量 kcal / 100g</label><input class="input" id="fd_k" type="number" min="0" inputmode="decimal"></div>' +
       '<div><label>蛋白质 g / 100g</label><input class="input" id="fd_p" type="number" min="0" inputmode="decimal"></div>' +
       '<div><label>碳水 g / 100g</label><input class="input" id="fd_c" type="number" min="0" inputmode="decimal"></div>' +
       '<div><label>脂肪 g / 100g</label><input class="input" id="fd_f" type="number" min="0" inputmode="decimal"></div>' +
     '</div>' +
-    '<div class="tiny muted" style="margin-top:10px">营养值留空按 0 记。添加只改本页草稿，点「保存系统库」才写入服务器。</div>' +
+    '<div class="tiny muted" style="margin-top:10px">营养值留空按 0 记；来源是这条营养数据的出处（用户端食物库每行会显示）。添加只改本页草稿，点「保存系统库」才写入服务器。</div>' +
     '<div class="d-f"><button class="btn ghost" id="fd_done">完成</button><button class="btn primary" id="fd_ok">添加</button></div>',
     (b, close) => {
       const q = s => b.querySelector(s);
@@ -343,10 +348,10 @@ function openFoodDialog(){
         const name = q('#fd_n').value.trim();
         if (!name) return toast('请填写食物名称', true);
         if (libDraft.foods.some(f => f.name === name)) return toast('系统库里已有同名食物', true);
-        libDraft.foods.push({ name, per100: { kcal: +q('#fd_k').value || 0, p: +q('#fd_p').value || 0, c: +q('#fd_c').value || 0, f: +q('#fd_f').value || 0 } });
+        libDraft.foods.push({ name, src: q('#fd_s').value.trim() || FOOD_SRC_SYS, per100: { kcal: +q('#fd_k').value || 0, p: +q('#fd_p').value || 0, c: +q('#fd_c').value || 0, f: +q('#fd_f').value || 0 } });
         refreshLibPanel();   /* 弹窗挂在 body 上，重绘分页不影响它 */
         toast('已加入草稿：' + name + '（记得「保存系统库」）');
-        ['#fd_n', '#fd_k', '#fd_p', '#fd_c', '#fd_f'].forEach(s => { q(s).value = ''; });
+        ['#fd_n', '#fd_k', '#fd_p', '#fd_c', '#fd_f'].forEach(s => { q(s).value = ''; });   /* 来源保留上次填的，连续录入同一来源不用重填 */
         q('#fd_n').focus();
       };
       q('#fd_ok').addEventListener('click', add);

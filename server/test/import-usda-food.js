@@ -16,6 +16,7 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..', '..');
 const SEED_PATH = path.join(ROOT, 'public', 'js', 'seed-data.json');
 const ZH_PATH = path.join(__dirname, 'seed-food-zh.json');
+const { FOOD_SRC_SYS } = require('../../public/js/seed-data.js');
 const USDA_DIRS = [path.join(ROOT, 'resources'), ROOT];
 
 function findUsda() {
@@ -69,7 +70,7 @@ function main() {
     const name = zhMap.get(norm(food.description)) || norm(food.description);
     if (!zhMap.has(norm(food.description))) untranslated++;
     if (seen.has(name)) { skippedDuplicate++; continue; }
-    foods.push({ name, per100 });
+    foods.push({ name, per100, src: FOOD_SRC_SYS });
     seen.add(name);
     added++;
   }

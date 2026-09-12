@@ -72,11 +72,11 @@ async function main() {
    * 且只比对名字：当年两份拷贝的香蕉/苹果 f 数值漂移正是漏网形态） */
   const seedData = require(path.join(__dirname, '..', '..', 'public', 'js', 'seed-data.js'));
   r = await A.req('GET', '/api/system/library');
-  const foodEq = seedData.SEED_FOODS.map(f => ({ name: f.name, per100: f.per100 }));
+  const foodEq = seedData.SEED_FOODS.map(f => ({ name: f.name, per100: f.per100, src: seedData.FOOD_SRC_SYS }));
   const exEq = seedData.SEED_EXERCISES.map(e => ({ name: e.name, cat: e.cat, muscle: e.muscle, mode: e.mode }));
-  const foodGot = r.json.foods.map(f => ({ name: f.name, per100: f.per100 }));
+  const foodGot = r.json.foods.map(f => ({ name: f.name, per100: f.per100, src: f.src }));
   const exGot = r.json.exercises.map(e => ({ name: e.name, cat: e.cat, muscle: e.muscle, mode: e.mode }));
-  ok('T3.5 系统库种子与 seed-data.js 一致(名称+营养值+三件套)',
+  ok('T3.5 系统库种子与 seed-data.js 一致(名称+营养值+来源 src+三件套)',
     r.status === 200 && JSON.stringify(foodEq) === JSON.stringify(foodGot)
       && JSON.stringify(exEq) === JSON.stringify(exGot),
     'foods ' + foodGot.length + ' vs ' + foodEq.length + ' / ex ' + exGot.length + ' vs ' + exEq.length);
@@ -95,10 +95,16 @@ async function main() {
   ok('T3.6d 缺三件套→键全缺(不凭空补默认值)', !!sEx[2] && !('cat' in sEx[2]) && !('muscle' in sEx[2]) && !('mode' in sEx[2]), JSON.stringify(sEx[2]));
   /* 还原系统库，避免污染后续断言 */
   r = await A.req('PUT', '/api/system/library', {
-    foods: seedData.SEED_FOODS.map((f, i) => ({ id: 'sf' + i, name: f.name, per100: f.per100 })),
+    foods: seedData.SEED_FOODS.map((f, i) => ({ id: 'sf' + i, name: f.name, per100: f.per100, src: seedData.FOOD_SRC_SYS })),
     exercises: seedData.SEED_EXERCISES.map((e, i) => ({ id: 'se' + i, name: e.name, cat: e.cat, muscle: e.muscle, mode: e.mode })),
   });
   ok('T3.6e 系统库已还原', r.status === 200);
+  /* 食物「营养来源」src 随系统库往返：喂进去的 src 原样落库（与 per100 同走 sanitizeLibrary 白名单） */
+  r = await A.req('GET', '/api/system/library');
+  const sF = (r.json && r.json.foods) || [];
+  ok('T3.7 系统库保存往返保留食物来源 src',
+    sF.length === seedData.SEED_FOODS.length && sF.every(f => f.src === seedData.FOOD_SRC_SYS),
+    JSON.stringify(sF[0] || null));
 
   /* T4 列表与附加信息 */
   r = await A.req('GET', '/api/admin/users');

@@ -129,6 +129,8 @@ function sanitizeLibrary(body) {
       FOOD_NUM_KEYS.forEach(k => { const n = Number(f.per100[k]); if (Number.isFinite(n) && n >= 0) per[k] = n; });   /* 负数营养值丢弃 */
     }
     if (Object.keys(per).length) o.per100 = per;
+    /* 营养来源(src)：展示用自由文本（当前系统库全为 USDA，用户自录为「用户」），限长防灌库 */
+    if (typeof f.src === 'string' && f.src.trim()) o.src = f.src.trim().slice(0, 24);
     foods.push(o);
   }
   const exercises = [];

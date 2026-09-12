@@ -22,6 +22,12 @@ const SEED_MUSCLE_DEFAULT = {'力量':'胸'};           // 其余大类默认 '�
 function muscleDefault(cat){ return SEED_MUSCLE_DEFAULT[cat] || '全身'; }
 function modeDefault(cat){ return SEED_MODE_DEFAULT[cat] || 'reps'; }
 
+/* 食物条目的营养来源(src)——展示在「数据管理-食物库」每行的名称旁:
+ * 系统库(种子/USDA 导入)记 'USDA';用户自己「＋ 添加食物」录入的记 '用户';
+ * 从系统库「＋我的库」导入时沿用源条目的 src。前端与 server/seed.js 同源取这两个常量。 */
+const FOOD_SRC_SYS = 'USDA';
+const FOOD_SRC_USER = '用户';
+
 /* 数据本体统一从 seed-data.json 读取：
  * Node 侧 require JSON（缺失/坏 JSON 直接抛错、服务起不来——不静默变空库）；
  * 浏览器侧同步 XHR（同源、index.html 先加载本文件，无构建）。
@@ -61,5 +67,5 @@ const SEED_EXERCISES = _SEED.exercises;
 /* Node 侧（server/seed.js）经 CommonJS 取用；浏览器里这几行是无害空操作 */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { SEED_FOODS, SEED_EXERCISES, SEED_CATS, SEED_MUSCLES, SEED_MODES, SEED_MODE_CN,
-    SEED_MODE_DEFAULT, SEED_MUSCLE_DEFAULT, muscleDefault, modeDefault };
+    SEED_MODE_DEFAULT, SEED_MUSCLE_DEFAULT, muscleDefault, modeDefault, FOOD_SRC_SYS, FOOD_SRC_USER };
 }

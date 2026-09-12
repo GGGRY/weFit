@@ -111,7 +111,7 @@ const DATA_FIELDS = ['profile','goal','activity','waterTarget','nutrition','meal
  * （饮水目标设 0 时卡不渲染，但它的位次保留，重新打开饮水后回到原位）。 */
 const HOME_ORDER_DEFAULT = ['diet','workout','water','sleep','habits'];
 
-function seedFoodArr(){ return SEED_FOODS.map((f,i)=>({id:'f'+i, name:f.name, per100:Object.assign({}, f.per100)})); }
+function seedFoodArr(){ return SEED_FOODS.map((f,i)=>({id:'f'+i, name:f.name, per100:Object.assign({}, f.per100), src:f.src||FOOD_SRC_SYS})); }
 function seedExArr(){ return SEED_EXERCISES.map((e,i)=>({id:'e'+i, name:e.name, cat:e.cat, muscle:e.muscle, mode:e.mode})); }
 function freshShared(){ return { foods: seedFoodArr(), exercises: seedExArr() }; }
 function defaultHabits(){ return [
@@ -1741,7 +1741,7 @@ function addMealDialog(date, slot, itemId){
     const g = num($('#mi_g', b).value); if(!g){ toast('请填写克数', true); return; }
     const per100 = { kcal:f.kcal, p:f.p, c:f.c, f:f.f };
     if($('#mi_savefood', b).checked && !state.foods.some(x => x.name === f.name)){
-      const nf = { id:uid(), name:f.name, per100 };
+      const nf = { id:uid(), name:f.name, src:FOOD_SRC_USER, per100 };
       state.foods.push(nf); toast('已加入食物库');
     }
     if(editing){
@@ -1776,7 +1776,7 @@ function invalidateSysLib(){ SYS_LIB = null; }
 function importFoodFromSys(fo){
   if(!fo || !fo.name) return false;
   if(USERS.shared.foods.some(x => x.name === fo.name)){ toast('我的库已有「' + fo.name + '」', true); return false; }
-  const nf = { id: uid(), name: fo.name };
+  const nf = { id: uid(), name: fo.name, src: fo.src || FOOD_SRC_SYS };   /* 来源随条目一起挑进来 */
   if(fo.per100) nf.per100 = Object.assign({}, fo.per100);
   USERS.shared.foods.push(nf); save();
   return true;
@@ -1791,9 +1791,14 @@ function importExerciseFromSys(e){
   USERS.shared.exercises.push(ne); save();
   return true;
 }
-function foodRowHTML(f, dataAttr){
+/* 行内 = 名称 + 营养来源小签 + 每100g 一行。srcFallback 兜老条目缺 src 的情况
+ * （我的库缺字段 = 用户自录 → 「用户」；系统库缺字段 = 系统种子 → USDA）。 */
+function foodRowHTML(f, dataAttr, srcFallback){
   const sub = f.per100 ? ('每100g：' + Math.round(f.per100.kcal||0) + ' kcal · P' + (f.per100.p||0) + ' C' + (f.per100.c||0) + ' F' + (f.per100.f||0)) : '无营养表';
-  return '<div class="lrow" ' + dataAttr + '><div class="grow"><div class="b">' + esc(f.name) + '</div><div class="sub">' + esc(sub) + '</div></div>';
+  const src = f.src || srcFallback;
+  return '<div class="lrow" ' + dataAttr + '><div class="grow"><div class="b">' + esc(f.name) +
+    (src ? '<span class="chip slot" style="margin-left:6px;font-weight:600">' + esc(src) + '</span>' : '') +
+    '</div><div class="sub">' + esc(sub) + '</div></div>';
 }
 
 /* 食物库管理（设置页 → 💾 数据管理 → 本页）：我的库（可增删）| 系统库（只读 + 挑入我的库）。
@@ -1852,7 +1857,7 @@ function renderFoodLibPage(){
   function renderMine(){
     const hits = state.foods.filter(f => matchName(f.name));
     const list = pageSlice(hits).map(f =>
-      foodRowHTML(f, 'data-id="' + f.id + '"') +
+      foodRowHTML(f, 'data-id="' + f.id + '"', FOOD_SRC_USER) +
         '<button class="iconbtn2" data-delf="' + f.id + '" style="color:var(--danger)">🗑</button></div>').join('');
     /* 添加表单收进弹窗（卡头一颗「＋ 添加食物」），列表与计数留给页面 */
     $('#fl_body', b).innerHTML =
@@ -1884,7 +1889,7 @@ function renderFoodLibPage(){
     const ownedNames = new Set(USERS.shared.foods.map(x => x.name));
     const all = sysFoods.map((f, i) => ({ f, i })).filter(x => matchName(x.f.name));
     const rows = pageSlice(all).map(x =>
-      foodRowHTML(x.f, 'data-sysf="' + x.i + '"') +
+      foodRowHTML(x.f, 'data-sysf="' + x.i + '"', FOOD_SRC_SYS) +
       (ownedNames.has(x.f.name)
         ? '<span class="chip b3" style="padding:2px 9px;font-size:12px">已有</span></div>'
         : '<button class="btn sm ghost" data-impf="' + x.i + '">＋我的库</button></div>')).join('');
@@ -1919,7 +1924,7 @@ function openFoodAdder(after){
   const add = () => {
     const name = $('#nf_name', b).value.trim(); if(!name){ toast('请填名称', true); return; }
     if(state.foods.some(x => x.name === name)){ toast('该食物已存在', true); return; }
-    state.foods.push({ id:uid(), name, per100:{ kcal:num($('#nf_kcal', b).value), p:num($('#nf_p', b).value), c:num($('#nf_c', b).value), f:num($('#nf_f', b).value) } });
+    state.foods.push({ id:uid(), name, src:FOOD_SRC_USER, per100:{ kcal:num($('#nf_kcal', b).value), p:num($('#nf_p', b).value), c:num($('#nf_c', b).value), f:num($('#nf_f', b).value) } });
     save(); closeDialog(); if(after) after(); toast('已添加：' + name);
   };
   const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);

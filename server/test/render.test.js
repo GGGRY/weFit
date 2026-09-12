@@ -89,7 +89,7 @@ async function fakeFetch(url, opts) {
   if (m === 'GET' && u.endsWith('/api/state')) return res(200, { rev: 1, data: TREE });
   if (m === 'GET' && u.endsWith('/system/library')) return res(200, {
     /* 第 1 项与个人库同名（夹具里的「米饭」/「杠铃卧推」）→ 系统分页应标「已有」；第 2 项未拥有 → 给「＋我的库」按钮 */
-    foods: [{ id:'s1', name:'米饭', per100:{ kcal:116, p:2.6, c:25.9, f:0.3 } }, { id:'s2', name:'系统专属食物', per100:{ kcal:10, p:0, c:0, f:0 } }],
+    foods: [{ id:'s1', name:'米饭', per100:{ kcal:116, p:2.6, c:25.9, f:0.3 }, src:'USDA' }, { id:'s2', name:'系统专属食物', per100:{ kcal:10, p:0, c:0, f:0 } }],
     exercises: [{ id:'se1', name:'杠铃卧推', cat:'力量', muscle:'胸', mode:'reps' }, { id:'se2', name:'系统专属动作', cat:'力量', muscle:'腿', mode:'reps' }],
   });
   if (m === 'PUT' && u.endsWith('/api/state')) return res(200, { ok: true, rev: 2 });
@@ -697,6 +697,27 @@ async function main() {
   ok('T12o 食物库系统分页：与我的库同名的标「已有」，其余给「＋我的库」',
      !hSysF.startsWith('ERR:') && sysCount.owned === 1 && sysCount.add === 1
      && hSysF.indexOf('系统专属食物') < hSysF.indexOf('＋我的库</button>'), JSON.stringify(sysCount) + ' | ' + hSysF.slice(0, 120));
+  /* 营养来源(src)：我的库每行名称旁显示来源小签（夹具条目无 src → 兜「用户」）；系统库条目为 USDA
+   * （s1 是条目自带 src，s2 缺字段走 FOOD_SRC_SYS 兜底，两条都要显出来） */
+  const chipRe = t => new RegExp('class="chip slot" style="margin-left:6px;font-weight:600">' + t + '<\\/span>', 'g');
+  const mineUser = (hFood.match(chipRe('用户')) || []).length;
+  const mineUsda = (hFood.match(chipRe('USDA')) || []).length;
+  const sysChips = (hSysF.match(chipRe('USDA')) || []).length;
+  ok('T12t 食物库行显示「营养来源」小签：条目自带 src 优先（米饭=USDA）、缺字段按所在库兜（我的库→用户、系统库→USDA）',
+     mineUser === 2 && mineUsda === 1 && sysChips === 2,
+     'mine用户=' + mineUser + ' mineUSDA=' + mineUsda + ' sysUSDA=' + sysChips);
+  /* 从系统库挑进个人库：来源随条目一起过来（缺 src 的源条目按 USDA 兜底） */
+  const srcKept = ev("(function(){ const n0 = state.foods.length;" +
+    " importFoodFromSys({ name:'来源测试·显式', per100:{kcal:1,p:0,c:0,f:0}, src:'USDA' });" +
+    " const a = state.foods[state.foods.length-1].src;" +
+    " importFoodFromSys({ name:'来源测试·兜底', per100:{kcal:1,p:0,c:0,f:0} });" +
+    " const b = state.foods[state.foods.length-1].src;" +
+    " while(state.foods.length > n0) USERS.shared.foods.pop(); save(); return a + '/' + b; })()");
+  ok('T12u 从系统库挑入：来源随条目一起进个人库（源条目缺 src 时按 USDA 兜底）', srcKept === 'USDA/USDA', srcKept);
+  const appSrcTxt = readPub('js/app.js');
+  ok('T12v 用户自录食物写来源「用户」（添加食物弹窗 + 记录饮食弹窗的「同时加入食物库」）',
+     (appSrcTxt.match(/src:FOOD_SRC_USER/g) || []).length === 2,
+     String((appSrcTxt.match(/src:FOOD_SRC_USER/g) || []).length));
   ev("invalidateSysLib(); exLibTab = 'sys'; go('exlib')");
   await new Promise(r => setTimeout(r, 20));
   const hSysE = ev("$('#xl_body', $('#xl_host')).__html");
