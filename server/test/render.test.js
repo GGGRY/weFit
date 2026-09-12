@@ -334,6 +334,66 @@ async function main() {
      && hA.includes('margin:4px 0 8px">' + loBtn + '</div>')        /* 自带 .row 包裹,不是卡片内的一颗 */
      && (hA.slice(loA).match(/<div class="card">/g) || []).length === 0,   /* 它后面再没有卡片了 */
      'user@' + loUser + ' admin@' + loA + ' card@' + aI);
+  /* T2i 设置页小字瘦身(2026-09-12 用户要求):去掉与按钮并排、纯属重复的「点『X』可…」指引,
+     及各卡提示尾部的操作说明;提示正文(用途/口径说明)保留 */
+  const hints = loUserH + hA;
+  const gone = ['点「修改资料」', '点「修改目标」', '在新标签页打开', '各设备登录同一账户'].filter(x => hints.includes(x));
+  const dataCard = loUserH.slice(loUserH.indexOf('💾 数据管理'), loUserH.indexOf('id="pf_logout"'));
+  ok('T2i 设置页小字瘦身(去「点『X』可…」与卡底多设备说明,保留用途正文与状态行)',
+     gone.length === 0
+     && loUserH.includes('用于估算每日营养目标') && loUserH.includes('；在「身体」页记录体重后会同步到这里。</div>')
+     /* 正文里的口径说明仍在 */
+     && loUserH.includes('饮水目标用于概览页「今日饮水」卡的达标判断，设为 0（不追踪）时概览页不再显示该卡。</div>')
+     /* 数据管理卡：多设备说明已删，功能件与同步状态行仍在 */
+     && dataCard.includes('id="st_sync"') && dataCard.includes('id="st_foodlib"') && dataCard.includes('id="st_wipe"')
+     && dataCard.includes('在这里管理个人食物库与动作库')
+     && !dataCard.includes('无需手动同步') && !dataCard.includes('历史备份可在上方')
+     && hA.includes('管理员专属') && hA.includes('删除账户）。</div>'),
+     'residual=' + JSON.stringify(gone) + ' dataCardLen=' + dataCard.length);
+  /* T2j 设置页「每日目标」卡改名「营养目标」，并在卡内展示热量倾向档位
+     （值取自 GOAL_MODE 单一来源 → 改档即刷新；未知档位回落「—」而不是 undefined） */
+  const modeTile = () => ((view.__html.match(/<div class="lab">热量倾向<\/div><div class="val"[^>]*>([^<]*)<\/div>/) || [])[1] || '');
+  const origMode = ev('state.goal.mode');
+  ev("go('settings')");
+  const nutTop = view.__html.indexOf('🥗 营养目标'), habitTop = view.__html.indexOf('📌 每日打卡');
+  const nutCard = view.__html.slice(nutTop, habitTop);
+  ev("state.goal.mode = 'cut'; go('settings')");       const mCut = modeTile();
+  ev("state.goal.mode = 'maintain'; go('settings')");  const mKeep = modeTile();
+  ev("state.goal.mode = 'bulk'; go('settings')");      const mBulk = modeTile();
+  ev("state.goal.mode = 'bogus'; go('settings')");     const mBad = modeTile();
+  ev("state.goal.mode = " + JSON.stringify(String(origMode)) + "; go('settings')");
+  ev('closeDialog && curDialog && closeDialog()');
+  ev('openNutritionEditor()');
+  const nutDlg = ev('curDialog.el.__html');   /* 标题在 .d-h 里,不在 box(.d-b) 内 */
+  ev('closeDialog()');
+  ok('T2j 设置页卡改名「营养目标」并在卡内展示热量倾向（改档即刷新、未知档位回落 —）',
+     nutTop > -1 && habitTop > nutTop
+     && nutCard.includes('id="nut_edit"') && nutCard.includes('<div class="lab">热量倾向</div>')
+     && nutCard.includes('<div class="lab">活动量</div>') && nutCard.includes('<div class="lab">每日饮水</div>')
+     && !view.__html.includes('每日目标')                            /* 旧卡名零残留 */
+     && mCut === '减脂' && mKeep === '保持' && mBulk === '增肌' && mBad === '—'
+     && !nutDlg.startsWith('ERR:') && nutDlg.includes('修改营养目标'),   /* 编辑弹窗标题同步 */
+     JSON.stringify({ mCut, mKeep, mBulk, mBad, dlg: nutDlg.slice(0, 60) }));
+
+  /* T2j2 活动量 tile：档位名与括号里的补充说明拆两行——主行 19px，注行 tiny muted 小字（2026-09-12） */
+  const actTile = () => {
+    const i = view.__html.indexOf('<div class="lab">活动量</div>');
+    const j = view.__html.indexOf('<div class="lab">热量倾向</div>');
+    return (i < 0 || j < i) ? '' : view.__html.slice(i, j);
+  };
+  const origAct = ev('state.activity');
+  ev("state.activity = 1.375; go('settings')"); const actMid = actTile();
+  ev("state.activity = 1.725; go('settings')"); const actHigh = actTile();
+  ev("state.activity = 9.9; go('settings')");   const actBad = actTile();
+  ev("state.activity = " + JSON.stringify(Number(origAct)) + "; go('settings')");
+  const actCard = view.__html.slice(view.__html.indexOf('🥗 营养目标'), view.__html.indexOf('📌 每日打卡'));
+  ok('T2j2 活动量 tile 括号说明换行小字（主行 19px + tiny 注行），无括号的值不产生空注行',
+     actMid.includes('>轻度<div class="tiny muted"') && actMid.includes('每周运动1-3次')
+     && !actMid.includes('（') && actMid.includes('font-size:19px') && actMid.includes('font-weight:400')
+     && actHigh.includes('>很高<div class="tiny muted"') && actHigh.includes('体力劳动/每日两练')
+     && !actBad.includes('tiny muted') && actBad.includes('9.9')
+     && !actCard.includes('（很少运动）'),           /* 卡上不再出现带括号的整串标签 */
+     JSON.stringify({ mid: actMid.slice(0, 190), bad: actBad.slice(0, 130) }));
   ev("me.role = 'user'; go('settings')");
 
   /* T3 饮食数据流:per100×克数换算 + 渲染行 */

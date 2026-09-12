@@ -33,7 +33,7 @@ const ACTIVITIES = [
   {v:1.55, label:'较高（每周运动6-7次）'},
   {v:1.725,label:'很高（体力劳动/每日两练）'},
 ];
-/* 热量倾向对 TDEE 的增减档(v4.2 引入)：计算器 / 设置页每日目标说明 / ftest 断言共用此单一来源，
+/* 热量倾向对 TDEE 的增减档(v4.2 引入)：计算器 / 设置页营养目标说明 / ftest 断言共用此单一来源，
  * 杜绝魔法数三处抄写漂移（v4.3 审查修复）。
  * v4.4：展示文案/编辑器选项并入同一表——旧版用符号反推「减脂/增肌」文案、选项另抄一份。 */
 const GOAL_MODE = {
@@ -1119,7 +1119,7 @@ function renderView(){
 function showOnboard(){
   const html =
     '<div class="empty" style="padding:6px 4px 2px"><div class="e-ic">👋</div></div>' +
-    '<p style="margin:2px 0 14px;color:var(--ink-2)">欢迎使用健康管理！简单填几项基础信息，就能开始估算你的每日营养目标（按减脂倾向估算，之后可在「设置」页的每日目标里改热量倾向）。</p>' +
+    '<p style="margin:2px 0 14px;color:var(--ink-2)">欢迎使用健康管理！简单填几项基础信息，就能开始估算你的每日营养目标（按减脂倾向估算，之后可在「设置」页的营养目标里改热量倾向）。</p>' +
     '<div class="form-grid">' +
       '<div><label>性别</label><select class="select" id="ob_gender"><option value="male">男</option><option value="female">女</option></select></div>' +
       '<div><label>出生年份</label><input class="input" id="ob_year" type="number" min="1930" max="2020" value="1992"></div>' +
@@ -1158,7 +1158,7 @@ function openProfileEditor(){
       '<div><label>身高 cm</label><input class="input" id="pr_height" type="number" min="130" max="230" value="' + p.height + '"></div>' +
       '<div><label>当前体重 kg</label><input class="input" id="pr_weight" type="number" min="30" max="300" value="' + p.currentKg + '"></div>' +
     '</div>' +
-    '<div class="tiny" style="margin-top:8px;color:var(--ink-3)">基础资料用于估算每日营养目标（自动档）。在「身体」页记录体重后会自动同步到这里；热量倾向、活动量与饮水目标请在「每日目标」卡片中修改。</div>' +
+    '<div class="tiny" style="margin-top:8px;color:var(--ink-3)">基础资料用于估算每日营养目标（自动档）。在「身体」页记录体重后会自动同步到这里；热量倾向、活动量与饮水目标请在「营养目标」卡片中修改。</div>' +
     '<div class="d-f"><button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="pr_save">保存</button></div>';
   const dlg = showDialog('修改基础资料', html);
   const b = dlg.box;
@@ -1264,7 +1264,7 @@ function adminCardHTML(){
   if(!(me && me.role === 'admin')) return '';
   return '<div class="card"><h3><span>🛠 后台管理</span></h3>' +
     '<a class="btn block" style="text-decoration:none;justify-content:center" href="/admin" target="_blank" rel="noopener">进入后台管理（系统库 · 用户权限）→</a>' +
-    '<div class="tiny muted mt">管理员专属：维护系统共享的食物库/动作库，以及账户权限（设为/撤销管理员、重置密码、删除账户）。在新标签页打开。</div>' +
+    '<div class="tiny muted mt">管理员专属：维护系统共享的食物库/动作库，以及账户权限（设为/撤销管理员、重置密码、删除账户）。</div>' +
   '</div>';
 }
 async function doLogout(){
@@ -2609,7 +2609,7 @@ function renderWaterChart(){
 ===================================================== */
 /* =====================================================
    设置页（v4.8：原「目标 · 打卡」页与 ⚙️ 设置弹窗合并，排在历史页之后）
-   卡片顺序：我的档案 → 基础资料 → 每日目标 → 每日打卡管理 → 数据管理
+   卡片顺序：我的档案 → 基础资料 → 营养目标 → 每日打卡管理 → 数据管理
    （末卡 = 后台管理，仅 admin 渲染；普通账户看不到任何管理入口）
    （所有卡片之下还有一颗独立的「⎋ 退出登录」，2026-09-11 由「修改档案」弹窗移出）
    （我的档案 = 2026-09-11 顶栏移除后并入；原顶栏胶囊弹窗改为内嵌卡。
@@ -2622,9 +2622,17 @@ function renderSettings(){
   const genderLabel = p.gender === 'male' ? '男' : p.gender === 'female' ? '女' : '—';
   const pTile = (lab, val, unit) =>
     '<div class="tile" style="box-shadow:none;background:var(--surface-2);min-width:0;padding:11px 10px"><div class="lab">' + lab + '</div><div class="val" style="font-size:19px">' + val + (unit ? '<span class="unit">' + unit + '</span>' : '') + '</div></div>';
-  // 每日目标卡（营养 + 活动量 + 饮水；热量倾向决定自动计算的档位）
+  // 营养目标卡（营养 + 热量倾向 + 活动量 + 饮水；热量倾向决定自动计算的档位）
   const T = target();
   const actLabel = (ACTIVITIES.find(a => String(a.v) === String(state.activity)) || {}).label || state.activity;
+  /* 活动量标签 =「主档位（补充说明）」，卡面拆两行：主档位正常字号，括号里的补充说明换行小字（2026-09-12） */
+  const actSplit = (function(){
+    const s = String(actLabel == null ? '' : actLabel);
+    const m = s.match(/^([^（(]*)[（(]([^）)]*)[）)]?\s*$/);
+    return m ? { main: m[1].trim(), note: m[2].trim() } : { main: s, note: '' };
+  })();
+  const goalMode = GOAL_MODE[state.goal.mode];   /* 未知档位（旧数据）显示 — */
+  const modeLabel = goalMode ? goalMode.label : '—';
   const html =
     profileCardHTML() +
     '<div class="card"><h3><span>🧍 基础资料</span><span class="grow"></span><button class="btn sm" id="pr_edit">修改资料</button></h3>' +
@@ -2634,17 +2642,20 @@ function renderSettings(){
       pTile('身高', p.height, 'cm') +
       pTile('体重', p.currentKg, 'kg') +
     '</div>' +
-    '<div class="tiny muted mt">性别、出生年份、身高、体重用于估算每日营养目标（自动档）与 BMI；在「身体」页记录体重后会同步到这里。点「修改资料」可修改。</div>' +
+    '<div class="tiny muted mt">性别、出生年份、身高、体重用于估算每日营养目标（自动档）与 BMI；在「身体」页记录体重后会同步到这里。</div>' +
     '</div>' +
-    '<div class="card"><h3><span>🥗 每日目标</span><span class="grow"></span><button class="btn sm" id="nut_edit">修改目标</button></h3>' +
+    '<div class="card"><h3><span>🥗 营养目标</span><span class="grow"></span><button class="btn sm" id="nut_edit">修改目标</button></h3>' +
     '<div style="margin:2px 0 12px"><span class="hero" style="font-size:34px;color:var(--brand-ink)">' + T.kcal + '<span class="unit">kcal</span></span></div>' +
     '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">' +
       '<div class="tile" style="box-shadow:none;background:var(--surface-2);min-width:0;padding:11px 10px"><div class="lab">蛋白</div><div class="val" style="font-size:19px">' + T.p + '<span class="unit">g</span></div></div>' +
       '<div class="tile" style="box-shadow:none;background:var(--surface-2);min-width:0;padding:11px 10px"><div class="lab">碳水</div><div class="val" style="font-size:19px">' + T.c + '<span class="unit">g</span></div></div>' +
       '<div class="tile" style="box-shadow:none;background:var(--surface-2);min-width:0;padding:11px 10px"><div class="lab">脂肪</div><div class="val" style="font-size:19px">' + T.f + '<span class="unit">g</span></div></div>' +
     '</div>' +
-    '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px">' +
-      '<div class="tile" style="box-shadow:none;background:var(--surface-2);min-width:0;padding:11px 10px"><div class="lab">活动量</div><div class="val" style="font-size:15px;line-height:1.35;white-space:normal">' + esc(actLabel) + '</div></div>' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:10px">' +
+      '<div class="tile" style="box-shadow:none;background:var(--surface-2);min-width:0;padding:11px 10px"><div class="lab">活动量</div><div class="val" style="font-size:19px;line-height:1.3;white-space:normal">' + esc(actSplit.main) +
+        (actSplit.note ? '<div class="tiny muted" style="font-weight:400;margin-top:2px;line-height:1.3">' + esc(actSplit.note) + '</div>' : '') +
+      '</div></div>' +
+      '<div class="tile" style="box-shadow:none;background:var(--surface-2);min-width:0;padding:11px 10px"><div class="lab">热量倾向</div><div class="val" style="font-size:19px">' + esc(modeLabel) + '</div></div>' +
       '<div class="tile" style="box-shadow:none;background:var(--surface-2);min-width:0;padding:11px 10px"><div class="lab">每日饮水</div><div class="val" style="' + (state.waterTarget ? 'font-size:19px' : 'font-size:15px;line-height:1.35;white-space:normal') + '">' + (state.waterTarget ? state.waterTarget + '<span class="unit">杯</span>' : '未设置') + '</div></div>' +
     '</div>' +
     '<div class="tiny muted mt">自动目标 = BMR ' + Math.round(bmr()) + ' kcal × 活动系数 ' + state.activity +
@@ -2653,7 +2664,7 @@ function renderSettings(){
         if(!g.adj) return '（热量倾向：' + g.label + '，不增减）';
         return '，再按热量倾向「' + g.label + '」' + (g.adj > 0 ? '+' : '−') + Math.abs(g.adj) + ' kcal'; })() +
       (state.nutrition.auto ? '（自动计算中）' : '（当前为手动设定）') +
-      '；饮水目标用于概览页「今日饮水」卡的达标判断，设为 0（不追踪）时概览页不再显示该卡。点「修改目标」可改热量倾向、活动量、饮水与营养素。</div>' +
+      '；饮水目标用于概览页「今日饮水」卡的达标判断，设为 0（不追踪）时概览页不再显示该卡。</div>' +
     '</div>' +
     habitSettingsCardHTML() +
     '<div class="card"><h3><span>💾 数据管理</span></h3>' +
@@ -2661,7 +2672,7 @@ function renderSettings(){
         '<button class="btn ghost" id="st_foodlib" style="flex:1;max-width:240px">📚 食物库(' + state.foods.length + ')</button>' +
         '<button class="btn ghost" id="st_exlib" style="flex:1;max-width:240px">📚 动作库(' + state.exercises.length + ')</button>' +
       '</div>' +
-      '<div class="tiny muted" style="margin:8px 0 12px">在这里管理个人食物库与动作库：「我的库」可增删，也可从管理员维护的系统库挑入；两个库各有独立页面（页面顶部可返回本页）。饮食页记录时仍可选用食物库，训练中保存的新动作会自动进入动作库。</div>' +
+      '<div class="tiny muted" style="margin:8px 0 12px">在这里管理个人食物库与动作库：「我的库」可增删，也可从管理员维护的系统库挑入。</div>' +
       '<div class="row gap8">' +
         '<button class="btn ghost" id="st_export">⬇ 导出备份</button>' +
         '<button class="btn ghost" id="st_import">⬆ 导入备份</button>' +
@@ -2671,7 +2682,7 @@ function renderSettings(){
       /* 概览卡片拖动顺序的逃生口（只在已被改过时出现，没改过就不占地方） */
       (resolveHomeOrder(state.homeOrder).join(',') !== HOME_ORDER_DEFAULT.join(',')
         ? '<div class="row" style="margin-top:8px"><button class="btn sm ghost" id="st_homeorder">↺ 概览卡片顺序：恢复默认</button></div>' : '') +
-      '<div class="tiny" style="margin-top:4px;color:var(--ink-3)">各设备登录同一账户，读写的就是同一份服务器数据，无需手动同步；不同账户彼此隔离。本机存储仅作当前账户的离线缓存。历史备份可在上方「导出/导入」搬运。</div>' +
+      /* 2026-09-12 按要求删掉卡底那条「各设备登录同一账户…多设备说明」小字 */
       '<input type="file" id="st_file" accept=".json,application/json" style="display:none">' +
     '</div>' +
     adminCardHTML() +
@@ -2704,7 +2715,7 @@ function renderSettings(){
 }
 
 
-/* ---------- 每日目标编辑（营养 + 活动量 + 饮水，设置页） ---------- */
+/* ---------- 营养目标编辑（营养 + 热量倾向 + 活动量 + 饮水，设置页） ---------- */
 function openNutritionEditor(){
   const n = state.nutrition;
   const html =
@@ -2723,7 +2734,7 @@ function openNutritionEditor(){
       '<div><label>脂肪 g</label><input class="input" id="ne_fat" type="number" value="' + (n.fat || '') + '"></div>' +
     '</div>' +
     '<div class="d-f"><button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="ne_save">保存</button></div>';
-  const dlg = showDialog('修改每日目标', html);
+  const dlg = showDialog('修改营养目标', html);
   const b = dlg.box;
   const hasV = v => v !== null && v !== undefined;
   $('#ne_act', b).value = String(state.activity);
