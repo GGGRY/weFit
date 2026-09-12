@@ -8,7 +8,7 @@
 个人健康管理网页，主线「记录 → 回顾」：饮食、运动、体重围度、睡眠、饮水、目标、历史看板。
 
 **技术形态**：零依赖全栈
-- **前端** `public/`：`index.html` + `admin.html` + `css/style.css` + `js/seed-data.js` + `js/sleep-shape.js` + `js/app.js`，无构建工具，样式/脚本/图标全内联，零外部依赖
+- **前端** `public/`：`index.html` + `admin.html` + `css/style.css` + `js/seed-data.json` + `js/seed-data.js` + `js/sleep-shape.js` + `js/app.js`，无构建工具，样式/脚本/图标全内联，零外部依赖
 - **后端** `server/`：Node 内置 `node:http` + `node:sqlite` + `node:crypto`，**npm 依赖为零**，`node server.js` 即起
 - **鉴权**：scrypt 密码哈希 + SQLite 持久会话（30 天）+ HttpOnly Cookie；除登录/注册/健康检查/静态页外全部 API 走鉴权中间件
 - **数据库** `server/data/jjhealth.db`：会增长的集合拆为 13 张关系表（餐次/运动安排/身体/睡眠/饮水/习惯/账户/会话…；v4.11 起运动项拍平为列，v4.12 起计划与记录合并为一天一条、且完成状态落在每一项上）；profile/goal/nutrition 与个人食物/动作库等形状固定对象用 JSON 列整存保真
@@ -42,7 +42,7 @@
 - 营养模型：食物按 **每100g 营养 × 实际克数** 自动换算（热量/蛋白/碳水/脂肪）
 - 添加弹窗：从食物库带入 → 改克数 → 实时预览合计；可勾选「同时存入食物库」；支持编辑/删除
 - 每日汇总对比目标，超标进度条变色提醒
-- 食物库（双层）：**我的库**可增删；**系统库**由管理员维护、只读，可一键「＋我的库」挑入；管理入口在「设置」→ 💾 数据管理 的「📚 食物库」按钮 → **独立子页面**「数据管理-食物库」（`renderFoodLibPage()`，页面第一行 = `‹` 返回 + 标题；`foodLibTab` 记住「我的库/系统库」分页；**「我的库」卡头一颗「＋ 添加食物」开弹窗 `openFoodAdder()`**（名称 + 四项营养，留空按 0 记，同名拒绝；添加即落库并关闭，页面列表与「我的库（n）」计数跟着刷新），页面上不再内嵌录入表单；**系统库分页里与我的库同名的食物直接标「已有」**（只读 chip，不再给「＋我的库」；与动作库同一口径，导入判重也是按名称，新加的个人食物与系统库撞名时也会即时标上）；饮食页不再挂入口，记录弹窗仍可从库选用/勾选存库）
+- 食物库（双层）：**我的库**可增删；**系统库**由管理员维护、只读，可一键「＋我的库」挑入；管理入口在「设置」→ 💾 数据管理 的「📚 食物库」按钮 → **独立子页面**「数据管理-食物库」（`renderFoodLibPage()`，页面第一行 = `‹` 返回 + 标题；`foodLibTab` 记住「我的库/系统库」分页；**「我的库」卡头一颗「＋ 添加食物」开弹窗 `openFoodAdder()`**（名称 + 四项营养，留空按 0 记，同名拒绝；添加即落库并关闭，页面列表与「我的库（n）」计数跟着刷新），页面上不再内嵌录入表单；**系统库分页里与我的库同名的食物直接标「已有」**（只读 chip，不再给「＋我的库」；与动作库同一口径，导入判重也是按名称，新加的个人食物与系统库撞名时也会即时标上）；饮食页不再挂入口，记录弹窗仍可从库选用/勾选存库；**321 条后加：页内名称搜索 + 20 条/页分页（我的库/系统库共用，系统库「已有」判重改 Set 索引）**）
 
 ### 3. 运动 🏋️
 - **周视图**（v4.13）：运动页是按周看的——顶部一张**周汇总卡**（`daynav` 周导航 `‹ 9月7日 – 9月13日 ›` + 周序 + 「已运动 X/7 天」进度条 + 容量/时长/距离 chips，版式同饮食页的日导航卡），下面**每天一张全宽卡竖排**（同饮食页的餐次卡）：卡头 = `周三 9月9日` + 今天/`n/N`/未完成 chip + 「＋ 添加运动」，卡内逐项打卡与行尾 ✏️（删除收在编辑弹窗里）；卡体空态为「休息日 / 未安排」。非本周时多一个「回到本周」；`setTrainWeek()` 是切周唯一入口，选中周存在 `trainMonday`，新增/修改后自动跳到那天那周。
@@ -130,20 +130,24 @@ weFit/
 │  ├─ index.html                #   页面骨架
 │  ├─ admin.html                #   管理后台（自包含单文件；/admin 路由）
 │  ├─ css/style.css             #   设计令牌 + 组件样式（含登录门/后台样式）
-│  ├─ js/seed-data.js           #   食物/动作库种子唯一数据源（前端加载；服务端 require）
+│  ├─ js/seed-data.json         #   食物/动作库种子数据本体（唯一数据源；食物 321（USDA Foundation Foods）+ 动作 27）
+│  ├─ js/seed-data.js           #   种子加载器 + 动作/肌群枚举（Node require JSON；浏览器同步 XHR）
 │  ├─ js/sleep-shape.js         #   睡眠形状契约唯一数据源（类型/时长/归一化；前端加载；服务端 mapper require）
 │  └─ js/app.js                 #   全部业务 JS + 同步层 + 登录门/双层库 UI
 ├─ server/                      # 后端（零 npm 依赖）
 │  ├─ server.js                 #   node:http：鉴权中间件 + 静态托管 + 登录/注册 + 本人数树读写 + 系统库 + /api/admin/*
 │  ├─ auth.js                   #   异步 scrypt 密码哈希 / 会话 token / Cookie 解析（node:crypto）
-│  ├─ seed.js                   #   系统库种子构建（数据源 = public/js/seed-data.js）+ 个人库初始拷贝
+│  ├─ seed.js                   #   系统库种子构建（数据源 = public/js/seed-data.json）+ 个人库初始拷贝
 │  ├─ db.js                     #   node:sqlite 建表 + 幂等列迁移（13 张表，每用户 rev）
 │  ├─ mapper.js                 #   单人数树 ⇄ 关系表；不变量：PUT→GET 深度相等（只触碰本人子树）
-│  ├─ test/roundtrip.test.js    #   67 项断言：鉴权 + 双账户隔离 + 系统库权限 + 形状保真（含睡眠多段、脏形状清洗与段数上限 400、静态映射）+ 规模压测 + 回归
+│  ├─ test/roundtrip.test.js    #   72 项断言：鉴权 + 双账户隔离 + 系统库权限 + 形状保真（含睡眠多段、脏形状清洗与段数上限 400、静态映射）+ 规模压测 + 回归
 │  ├─ test/admin.test.js        #   44 项断言：后台 API（角色/重置密码/删号 + 护栏）+ 系统库三件套白名单
 │  ├─ test/sleep-shape.test.js  #   16 项断言：睡眠形状契约纯函数（两侧共用同一份）
+│  ├─ test/import-usda-food.js  #   USDA Foundation Foods → seed-data.json 导入工具（按名称去重，缺四项的条目跳过）
+│  ├─ test/seed-food-zh.json    #   USDA description → 中文名映射（导入 usda 时套用，可继续补充）
+│  ├─ test/reset-food-library.js #  一次性：把系统库与所有用户个人食物库换血为 321 条种子（默认干跑，--yes 才写）
 │  ├─ test/migration.test.js    #   39 项断言：破坏性迁移（sets 拍平 / 计划记录合并）+ v4.12 中间态就地补列（下放 done、rev 不变、回填只做一次）+ 非运动数据逐值完好 + 不复发
-│  ├─ test/render.test.js       #   81 项断言：前端渲染逻辑无头验证（node:vm + DOM/fetch 桩，零依赖）
+│  ├─ test/render.test.js       #   93 项断言：前端渲染逻辑无头验证（node:vm + DOM/fetch 桩，零依赖）
 │  └─ data/jjhealth.db          #   SQLite 数据库（.gitignore 已排除）
 └─ MEMO.md
 ```
@@ -178,7 +182,7 @@ weFit/
 | `habit_done` | (user_id, habit_id, date) | 打卡记录（一行 = 一次打卡） |
 
 - **连接参数**：`journal_mode = DELETE`（不留常驻 -wal 边文件，OneDrive 同步友好）、`synchronous = NORMAL`、`foreign_keys = ON`
-- **往返不变量**（mapper.js）：单人数树 PUT→GET 深度相等——JSON 列与关系表拆分/重组必须保形状，且写路径只触碰本人子树，`test/roundtrip.test.js` 67 项断言守此约定（含双账户隔离与系统库权限）。**已登记的例外（T18m 显式锁定）**：脏元素/脏字段/空数组按 `sleep-shape.js` 三条清洗裁决丢弃（服务端无行可存，留键会两边形状长期抖动，所以前端 `ensureUserIntact` 必须同样删键）；超 `SLEEP_MAX_SEGS` 不属例外而是显式 400
+- **往返不变量**（mapper.js）：单人数树 PUT→GET 深度相等——JSON 列与关系表拆分/重组必须保形状，且写路径只触碰本人子树，`test/roundtrip.test.js` 72 项断言守此约定（含双账户隔离与系统库权限）。**已登记的例外（T18m 显式锁定）**：脏元素/脏字段/空数组按 `sleep-shape.js` 三条清洗裁决丢弃（服务端无行可存，留键会两边形状长期抖动，所以前端 `ensureUserIntact` 必须同样删键）；超 `SLEEP_MAX_SEGS` 不属例外而是显式 400
 
 ## 四、已知边界与技术债
 

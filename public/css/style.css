@@ -236,6 +236,20 @@ body.hcard-dragging input,body.hcard-dragging textarea{user-select:text;-webkit-
 .lrow:last-child{border-bottom:0}
 .lrow .grow{flex:1;min-width:0}
 .lrow .sub{font-size:12.5px;color:var(--ink-3)}
+
+/* 食物选择器（记录饮食弹窗）：搜索框 + 可滚候选行，替代 300+ 项原生下拉。
+   行高 ≥40px、限高 38vh，手机上一屏能扫、滑得动。 */
+.picklist{max-height:38vh;overflow-y:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface);margin-top:8px;-webkit-overflow-scrolling:touch}
+.picklist:empty{display:none}
+.pickrow{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);
+  background:transparent;color:var(--ink);padding:11px 12px;font-size:14px;font-family:inherit}
+.pickrow:last-child{border-bottom:0}
+.pickrow:hover{background:var(--surface-2)}
+.pickrow.on{background:var(--brand-soft);color:var(--brand-ink);font-weight:650}
+.pickrow .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* 食物库分页条（我的库 / 系统库共用） */
+.pager{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
 /* 档案卡：头像 + 昵称/账户 一行。原先是三栏 lrow,窄屏下概况串不缩,
    把昵称区挤到几十像素(详见 CHANGELOG 2026-09-11)。
    2026-09-11 同日再改：起卡头行与「修改档案」按钮已删,整行 = 修改入口 + 右侧主题图标钮。 */

@@ -30,6 +30,7 @@ const STATIC_FILES = {
   '/index.html': { file: 'index.html', type: 'text/html; charset=utf-8' },
   '/css/style.css': { file: 'css/style.css', type: 'text/css; charset=utf-8' },
   '/js/seed-data.js': { file: 'js/seed-data.js', type: 'text/javascript; charset=utf-8' },
+  '/js/seed-data.json': { file: 'js/seed-data.json', type: 'application/json; charset=utf-8' },
   /* 睡眠形状契约（v4.7）：与 server/mapper.js 共用同一份实现，故放在 public/js 下先行加载 */
   '/js/sleep-shape.js': { file: 'js/sleep-shape.js', type: 'text/javascript; charset=utf-8' },
   '/js/app.js': { file: 'js/app.js', type: 'text/javascript; charset=utf-8' },

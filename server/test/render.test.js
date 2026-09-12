@@ -105,6 +105,7 @@ const sandbox = {
   setTimeout, clearTimeout, setInterval: () => 0, clearInterval(){},
   URLSearchParams, URL, AbortController, TextEncoder,
   alert(){}, confirm: () => true, prompt: () => '',
+  XMLHttpRequest: function(){ const x = { status: 0, responseText: '' }; x.open = () => { x.status = 200; x.responseText = fs.readFileSync(path.join(__dirname, '..', '..', 'public', 'js', 'seed-data.json'), 'utf8'); }; x.send = () => {}; return x; },
 };
 sandbox.window = sandbox; sandbox.self = sandbox;
 sandbox.window.scrollTo = () => {};
@@ -674,6 +675,18 @@ async function main() {
      !hFoodAdder.startsWith('ERR:') && hFoodAdder.includes('id="nf_name"') && hFoodAdder.includes('id="nf_kcal"')
      && hFoodAdder.includes('id="nf_p"') && hFoodAdder.includes('id="nf_c"') && hFoodAdder.includes('id="nf_f"')
      && hFoodAdder.includes('id="nf_add"') && hFoodAdder.includes('data-cancel'), hFoodAdder.slice(0, 200));
+  let hMeal = '', hPickList = '';
+  try {
+    ev('closeDialog && curDialog && closeDialog()');
+    ev("addMealDialog(today(), 'dinner')");
+    hMeal = ev('curDialog.box.__html');
+    hPickList = ev("$('#mi_list', curDialog.box).__html");
+  } catch (e) { hMeal = 'ERR:' + e.message; }
+  ev('closeDialog && curDialog && closeDialog()');
+  ok('T12s 记录饮食弹窗：搜索框 + 候选行，无 300+ 项原生下拉',
+     !hMeal.startsWith('ERR:') && hMeal.includes('id="mi_q"') && hMeal.includes('id="mi_list"')
+     && hMeal.includes('class="picklist"') && !hMeal.includes('id="mi_sel"')
+     && hPickList.includes('data-pick='), (hMeal + ' | ' + hPickList).slice(0, 160));
   /* 系统分页的「已有」标记（与个人库按名称比，与动作库同一口径）——
    * 桩不能点分页，但分页选择是页面级状态 foodLibTab/exLibTab，直接设好再进页即可。
    * 先重置系统库缓存，否则前面用例拉过的 mock 列表会盖掉本处的断言数据 */
@@ -702,6 +715,20 @@ async function main() {
      && readPub('js/app.js').includes("$('#st_exlib').addEventListener('click', () => go('exlib'))"),
      'depth=' + dlgDepth + '/' + d1 + '/' + d2 + ' curView=' + ev('curView'));
   ev("go('settings')");
+
+  /* T12q/T12r 食物库搜索 + 分页（321 条库的可用性）：注入 45 条验证每页 20 行、分页条与搜索过滤 */
+  ev('__bakFoods = JSON.stringify(USERS.shared.foods)');
+  ev("(function(){ const many = []; for(let i=0;i<45;i++) many.push({ id:'t'+i, name:'测试食物'+i, per100:{ kcal:100, p:1, c:1, f:1 } });" +
+     " USERS.shared.foods = many; state.foods = many; foodLibTab='mine'; foodLibQuery=''; foodLibPage=1; go('foodlib'); })()");
+  const hPaged = ev("$('#fl_body', $('#view')).__html");
+  ok('T12q 食物库分页：搜索框 + 20 行/页 + 分页条',
+     view.__html.includes('id="fl_search"') && (hPaged.match(/class="lrow"/g) || []).length === 20
+     && hPaged.includes('第 1/3 页 · 共 45 条') && hPaged.includes('data-fpage="next"'), hPaged.slice(0, 120));
+  ev("foodLibQuery='测试食物4'; foodLibPage=1; go('foodlib')");
+  const hFiltered = ev("$('#fl_body', $('#view')).__html");
+  ok('T12r 食物库搜索过滤：45 → 6 条（测试食物4 + 40..44）',
+     (hFiltered.match(/class="lrow"/g) || []).length === 6 && hFiltered.includes('共 6 条'), hFiltered.slice(0, 120));
+  ev("USERS.shared.foods = JSON.parse(__bakFoods); state.foods = USERS.shared.foods; foodLibQuery=''; foodLibPage=1; foodLibTab='mine'; go('settings')");
 
   /* T13 v4.12 纯函数契约：旧形状清洗 / 项收集（含 done 保真）/ 字段写入 / 排序 / 完成进度 / 周聚合。
    * 对话框交互（点 chip/保存）在桩里点不到，但这几个决策函数零成本可直接断言。 */
@@ -782,6 +809,23 @@ async function main() {
         " upsertBody({ date:'2030-01-01', weight:70, calf:36.5 });" +
         " const r = state.body.find(x => x.date === '2030-01-01'); const okk = !!r && r.calf === 36.5;" +
         " state.body = bak; state.profile.currentKg = kg; return okk; })()") === true);
+
+  /* T15 种子读取失败路径：seed-data.json 拿不到时不能静默当「空库」正常用
+     （旧版 loadSeedData 失败回退空数组；现要求记下 SEED_LOAD_ERROR 并 console.error） */
+  {
+    const errs = [];
+    const badSandbox = {
+      XMLHttpRequest: function(){ const x = { status: 404, responseText: '' }; x.open = () => {}; x.send = () => {}; return x; },
+      console: { error: m => errs.push(String(m)) },
+    };
+    badSandbox.window = badSandbox;
+    const badCtx = vm.createContext(badSandbox);
+    vm.runInContext(readPub('js/seed-data.js'), badCtx, { filename: 'public/js/seed-data.js' });
+    const empty = vm.runInContext('SEED_FOODS.length === 0 && SEED_EXERCISES.length === 0', badCtx);
+    const errFlag = vm.runInContext('SEED_LOAD_ERROR', badCtx);
+    ok('T15a 种子 404：SEED_FOODS 为空且记下 SEED_LOAD_ERROR + console.error',
+       empty === true && !!errFlag && errs.length === 1, 'empty=' + empty + ' err=' + errFlag + ' logs=' + errs.length);
+  }
 
   finish();
 }

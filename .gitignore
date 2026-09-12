@@ -17,3 +17,7 @@ server/data/
 
 # Agent 工具工作树（嵌套 git，勿入库）
 .cindy-worktrees/
+
+# USDA 源数据（第三方下载，供 server/test/import-usda-food.js 使用，不入版本库）
+resources/
+FoodData_Central_*

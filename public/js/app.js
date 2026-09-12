@@ -195,8 +195,8 @@ function normalizeLegacyShared(shared){
   const exs = shared && shared.exercises;
   /* 整份库都没有 mode = v4.11 以前的旧库 → 按裁定整体作废、换新种子（半新半旧最难排查） */
   if(Array.isArray(exs) && exs.length && typeof SEED_EXERCISES !== 'undefined' && exs.every(e => !e || !e.mode)){
-    shared.exercises = seedExArr();
-    legacyShapeCleaned = true;
+    const seed = seedExArr();   /* 种子读不到时宁可不换，也别拿空库盖掉用户的动作库 */
+    if(seed.length){ shared.exercises = seed; legacyShapeCleaned = true; }
   }
 }
 
@@ -228,8 +228,8 @@ function ensureUserIntact(u){
 function adoptRaw(raw){
   if(raw && raw.users && raw.shared){
     USERS = raw;
-    USERS.shared.foods = (USERS.shared.foods && USERS.shared.foods.length) ? USERS.shared.foods : seedFoodArr();
-    USERS.shared.exercises = (USERS.shared.exercises && USERS.shared.exercises.length) ? USERS.shared.exercises : seedExArr();
+    if(!(USERS.shared.foods && USERS.shared.foods.length)){ const sf = seedFoodArr(); if(sf.length) USERS.shared.foods = sf; }
+    if(!(USERS.shared.exercises && USERS.shared.exercises.length)){ const se = seedExArr(); if(se.length) USERS.shared.exercises = se; }
     normalizeLegacyShared(USERS.shared);   /* v4.11：整份旧个人动作库换新种子 */
     Object.keys(USERS.users).forEach(id => ensureUserIntact(USERS.users[id]));
     if(!USERS.users[USERS.active]) USERS.active = Object.keys(USERS.users)[0] || null;
@@ -778,8 +778,8 @@ function habitStreak(h, until){
 function demoData(){
   USERS.onboarded = true;
   const t = today();
-  if(!USERS.shared.foods || !USERS.shared.foods.length) USERS.shared.foods = seedFoodArr();
-  if(!USERS.shared.exercises || !USERS.shared.exercises.length) USERS.shared.exercises = seedExArr();
+  if(!USERS.shared.foods || !USERS.shared.foods.length){ const sf = seedFoodArr(); if(sf.length) USERS.shared.foods = sf; }
+  if(!USERS.shared.exercises || !USERS.shared.exercises.length){ const se = seedExArr(); if(se.length) USERS.shared.exercises = se; }
   const foods = USERS.shared.foods, ex = USERS.shared.exercises;
   // 重置当前账户数据（保留名字/头像/颜色），灌入丰富演示数据
   const u = activeUser();
@@ -1676,12 +1676,16 @@ function addMealDialog(date, slot, itemId){
   const editing = !!itemId;
   let item = null;
   if(editing){ item = findMealItem(date, itemId); }
-  const libOpts = state.foods.map(f => '<option value="' + f.id + '"' + (item && item.name===f.name ? ' selected':'') + '>' + esc(f.name) + '（每100g ' + Math.round(f.per100.kcal) + 'kcal）</option>').join('');
+  const libFoods = state.foods;
+  const curFood = item ? libFoods.find(f => f.name === item.name) : null;
+  let pickId = curFood ? curFood.id : null;
   const html =
     '<div class="row gap8" style="margin-bottom:10px">' +
       '<span class="chip">' + dateCNW(date) + '</span><span class="chip slot" style="background:' + slotColor(slot) + '22;border-color:transparent">' + SLOTS.find(s=>s.id===slot).ic + ' ' + SLOTS.find(s=>s.id===slot).label + '</span>' +
     '</div>' +
-    '<div class="field"><label>从食物库选择（可留空后手动填）</label><select class="select" id="mi_sel"><option value="">— 手动输入 —</option>' + libOpts + '</select></div>' +
+    '<div class="field"><label>从食物库选择（可留空后手动填）</label>' +
+      '<input class="input" id="mi_q" type="search" placeholder="搜索食物名…">' +
+      '<div class="picklist" id="mi_list"></div></div>' +
     '<div class="form-grid">' +
       '<div class="span2"><label>食物名称</label><input class="input" id="mi_name" value="' + (item?esc(item.name):'') + '" placeholder="如：鸡胸肉"></div>' +
       '<div><label>每100g热量</label><input class="input" id="mi_kcal" type="number" min="0" value="' + (item?item.per100.kcal:'') + '"></div>' +
@@ -1698,13 +1702,38 @@ function addMealDialog(date, slot, itemId){
   function readFood(){ return { name:$('#mi_name', b).value.trim(), kcal:num($('#mi_kcal', b).value), p:num($('#mi_p', b).value), c:num($('#mi_c', b).value), f:num($('#mi_f', b).value) }; }
   function prevHTML(f, g){ const k = f.kcal*g/100, p=f.p*g/100, c=f.c*g/100, fa=f.f*g/100; return '合计：<b>' + Math.round(k) + ' kcal</b> · 蛋白 ' + round(p,1) + 'g · 碳水 ' + round(c,1) + 'g · 脂肪 ' + round(fa,1) + 'g'; }
   function refresh(){ const f = readFood(); const g = num($('#mi_g', b).value) || 0; $('#mi_prev', b).innerHTML = prevHTML(f, g); }
-  $('#mi_sel', b).addEventListener('change', e => {
-    const fo = mkFood(e.target.value); if(!fo) return;
+  const PICK_LIMIT = 40;   /* 空搜索先给前 40 条，配合关键字收敛；避免 300+ 行 DOM */
+  function pickFood(id){
+    const fo = libFoods.find(f => f.id === id); if(!fo) return;
+    pickId = fo.id;
+    const per = fo.per100 || {};
     $('#mi_name', b).value = fo.name;
-    $('#mi_kcal', b).value = fo.per100.kcal;
-    $('#mi_p', b).value = fo.per100.p; $('#mi_c', b).value = fo.per100.c; $('#mi_f', b).value = fo.per100.f;
-    refresh();
-  });
+    $('#mi_kcal', b).value = (per.kcal === undefined ? '' : per.kcal);
+    $('#mi_p', b).value = (per.p === undefined ? '' : per.p);
+    $('#mi_c', b).value = (per.c === undefined ? '' : per.c);
+    $('#mi_f', b).value = (per.f === undefined ? '' : per.f);
+    refresh(); renderPick();
+  }
+  function renderPick(){
+    const q = ($('#mi_q', b).value || '').trim().toLowerCase();
+    const hits = q ? libFoods.filter(f => String(f.name).toLowerCase().indexOf(q) >= 0) : libFoods;
+    let h;
+    if(!libFoods.length){
+      h = '<div class="tiny muted" style="padding:8px 12px">我的食物库是空的，可直接在下方手动填写</div>';
+    } else if(!hits.length){
+      h = '<div class="tiny muted" style="padding:8px 12px">没有匹配「' + esc(q) + '」的食物</div>';
+    } else {
+      h = hits.slice(0, PICK_LIMIT).map(f => '<button type="button" class="pickrow' + (f.id === pickId ? ' on' : '') + '" data-pick="' + esc(f.id) + '">' +
+        '<span class="grow">' + esc(f.name) + '</span>' +
+        '<span class="tiny muted">' + (f.per100 ? Math.round(f.per100.kcal || 0) + ' kcal/100g' : '无营养表') + '</span></button>').join('');
+      if(!q) h = '<div class="tiny muted" style="padding:6px 12px 2px">共 ' + libFoods.length + ' 条，输入关键字筛选</div>' + h;
+      else if(hits.length > PICK_LIMIT) h += '<div class="tiny muted" style="padding:6px 12px">还有 ' + (hits.length - PICK_LIMIT) + ' 条，输入关键字继续筛选</div>';
+    }
+    $('#mi_list', b).innerHTML = h;
+    $$('[data-pick]', b).forEach(btn => btn.addEventListener('click', () => pickFood(btn.dataset.pick)));
+  }
+  $('#mi_q', b).addEventListener('input', renderPick);
+  renderPick();
   $$('input', b).forEach(i => i.addEventListener('input', refresh));
   refresh();
   $('#mi_save', b).addEventListener('click', () => {
@@ -1771,25 +1800,59 @@ function foodRowHTML(f, dataAttr){
 /* 食物库管理（设置页 → 💾 数据管理 → 本页）：我的库（可增删）| 系统库（只读 + 挑入我的库）。
  * 未标版号：由弹窗改为独立页面——页头第一行是「返回 + 数据管理-食物库」，返回落回设置页。 */
 let foodLibTab = 'mine';   /* 页面级状态：切到系统库后再进来仍停在原分页 */
+let foodLibQuery = '';     /* 搜索词：两个分页共用，切分页保留 */
+let foodLibPage = 1;       /* 当前页码：换搜索词/切分页时回到第 1 页 */
+const FOOD_PAGE_SIZE = 20; /* 移动端一屏能扫完的行数 */
 function renderFoodLibPage(){
   invalidateSysLib();   /* v4.4:每次进页拉一次系统库即可,页内切分页不再重下 */
   $('#view').innerHTML =
     '<div class="pagehead"><button class="iconbtn2" id="fl_back" title="返回设置">‹</button><div class="ph-t">数据管理-食物库</div></div>' +
     '<div class="card">' +
       '<div class="row" style="margin-bottom:10px"><div class="seg" id="fl_seg"></div></div>' +
+      '<div class="field" style="margin:0 0 4px"><input class="input" id="fl_search" type="search" placeholder="搜索食物名称…" value="' + esc(foodLibQuery) + '"></div>' +
       '<div id="fl_body"><div class="tiny muted">载入中…</div></div>' +
     '</div>';
   $('#fl_back').addEventListener('click', () => go('settings'));
   const b = $('#view');
   let tab = foodLibTab;
+  let sysCache = null;   /* 本次进页拉到的系统库：切分页/改搜索词不再重下 */
+  $('#fl_search', b).addEventListener('input', e => { foodLibQuery = e.target.value; foodLibPage = 1; render(); });
+  function matchName(name){
+    const q = foodLibQuery.trim().toLowerCase();
+    return !q || String(name).toLowerCase().indexOf(q) >= 0;
+  }
+  function pageSlice(arr){
+    const pages = Math.max(1, Math.ceil(arr.length / FOOD_PAGE_SIZE));
+    if(foodLibPage > pages) foodLibPage = pages;
+    if(foodLibPage < 1) foodLibPage = 1;
+    const start = (foodLibPage - 1) * FOOD_PAGE_SIZE;
+    return arr.slice(start, start + FOOD_PAGE_SIZE);
+  }
+  function pagerHTML(n){
+    const pages = Math.max(1, Math.ceil(n / FOOD_PAGE_SIZE));
+    const from = n ? (foodLibPage - 1) * FOOD_PAGE_SIZE + 1 : 0;
+    const to = Math.min(n, foodLibPage * FOOD_PAGE_SIZE);
+    return '<div class="pager">' +
+      '<button class="btn sm ghost" data-fpage="prev"' + (foodLibPage <= 1 ? ' disabled' : '') + '>‹ 上一页</button>' +
+      '<span class="tiny">第 ' + foodLibPage + '/' + pages + ' 页 · 共 ' + n + ' 条' + (n ? '（' + from + '–' + to + '）' : '') + '</span>' +
+      '<button class="btn sm ghost" data-fpage="next"' + (foodLibPage >= pages ? ' disabled' : '') + '>下一页 ›</button>' +
+      '</div>';
+  }
+  function bindPager(){
+    $$('[data-fpage]', b).forEach(btn => btn.addEventListener('click', () => {
+      foodLibPage += (btn.dataset.fpage === 'next' ? 1 : -1);
+      render();
+    }));
+  }
   function paintSeg(){
     $('#fl_seg', b).innerHTML =
       '<button data-ft="mine" class="' + (tab==='mine'?'active':'') + '">我的库（' + state.foods.length + '）</button>' +
       '<button data-ft="sys" class="' + (tab==='sys'?'active':'') + '">系统库</button>';
-    $$('#fl_seg [data-ft]', b).forEach(btn => btn.addEventListener('click', () => { tab = foodLibTab = btn.dataset.ft; paintSeg(); render(); }));
+    $$('#fl_seg [data-ft]', b).forEach(btn => btn.addEventListener('click', () => { tab = foodLibTab = btn.dataset.ft; foodLibPage = 1; paintSeg(); render(); }));
   }
   function renderMine(){
-    const list = state.foods.map(f =>
+    const hits = state.foods.filter(f => matchName(f.name));
+    const list = pageSlice(hits).map(f =>
       foodRowHTML(f, 'data-id="' + f.id + '"') +
         '<button class="btn sm ghost" data-add="' + f.id + '">＋记录</button>' +
         '<button class="iconbtn2" data-delf="' + f.id + '" style="color:var(--danger)">🗑</button></div>').join('');
@@ -1798,8 +1861,11 @@ function renderFoodLibPage(){
       '<h3><span>📚 我的食物库（' + state.foods.length + '）</span><span class="grow"></span>' +
         '<button class="btn sm primary" id="nf_open">＋ 添加食物</button></h3>' +
       '<div class="tiny muted" style="margin-bottom:8px">点 ＋记录 可直接把它记到当日加餐；「系统库」分页可挑选管理员维护的公共食物。</div>' +
-      (list || '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">📚</div>我的食物库是空的，去「系统库」挑一些吧</div>');
-    $('#nf_open', b).addEventListener('click', () => openFoodAdder(() => { paintSeg(); renderMine(); }));
+      (list || (state.foods.length
+        ? '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">🔍</div>没有匹配「' + esc(foodLibQuery.trim()) + '」的食物</div>'
+        : '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">📚</div>我的食物库是空的，去「系统库」挑一些吧</div>')) +
+      (hits.length ? pagerHTML(hits.length) : '');
+    $('#nf_open', b).addEventListener('click', () => openFoodAdder(() => { paintSeg(); foodLibPage = 1; renderMine(); }));
     $$('[data-delf]', b).forEach(btn => btn.addEventListener('click', () => {
       const id = btn.dataset.delf;
       USERS.shared.foods = USERS.shared.foods.filter(f => f.id !== id);
@@ -1809,26 +1875,35 @@ function renderFoodLibPage(){
     $$('[data-add]', b).forEach(btn => btn.addEventListener('click', () => {
       const fo = mkFood(btn.dataset.add); if(!fo) return;
       addMealItem(dietDate, 'snack', mealItem(fo, 100)); save();
-      go('diet'); toast('已记到' + dateCN(dietDate) + '加餐，可去修改克数');   /* 入口从饮食页并入设置页,记完直接跳回饮食页(顺带重置导航高亮) */
+      go('diet'); toast('已记到' + dateCN(dietDate) + '加餐，可去修改克数');
     }));
+    bindPager();
   }
   async function renderSys(){
-    $('#fl_body', b).innerHTML = '<div class="tiny muted">载入系统库…</div>';
-    const sys = await fetchSysLib();   /* v4.4:本次进页已失效过缓存,首拉后切分页走内存 */
-    if(tab !== 'sys') return;   /* 载入期间用户切回了我的库 */
-    if(!sys){ $('#fl_body', b).innerHTML = '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">🔌</div>服务器离线，暂时看不到系统库</div>'; return; }
-    /* 已在我的库（同名）= 只读标记，与动作库系统分页同一口径（导入判重也是按名称） */
-    const owned = f => USERS.shared.foods.some(x => x.name === f.name);
+    if(!sysCache){
+      $('#fl_body', b).innerHTML = '<div class="tiny muted">载入系统库…</div>';
+      sysCache = await fetchSysLib();   /* v4.4:本次进页已失效过缓存,首拉后切分页走内存 */
+      if(tab !== 'sys') return;   /* 载入期间用户切回了我的库 */
+    }
+    if(!sysCache){ $('#fl_body', b).innerHTML = '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">🔌</div>服务器离线，暂时看不到系统库</div>'; return; }
+    /* 已在我的库（同名）= 只读标记，与动作库系统分页同一口径；用 Set 一次建索引，避免逐行 O(n) 扫 */
+    const sysFoods = sysCache.foods || [];
+    const ownedNames = new Set(USERS.shared.foods.map(x => x.name));
+    const all = sysFoods.map((f, i) => ({ f, i })).filter(x => matchName(x.f.name));
+    const rows = pageSlice(all).map(x =>
+      foodRowHTML(x.f, 'data-sysf="' + x.i + '"') +
+      (ownedNames.has(x.f.name)
+        ? '<span class="chip b3" style="padding:2px 9px;font-size:12px">已有</span></div>'
+        : '<button class="btn sm ghost" data-impf="' + x.i + '">＋我的库</button></div>')).join('');
     $('#fl_body', b).innerHTML =
       '<div class="tiny muted" style="margin-bottom:8px">系统共享库由管理员在后台维护，只读。点「＋我的库」把它挑进自己的食物库；与你库里同名的直接标「已有」。</div>' +
-      (sys.foods.map((f, i) =>
-        foodRowHTML(f, 'data-sysf="' + i + '"') +
-        (owned(f) ? '<span class="chip b3" style="padding:2px 9px;font-size:12px">已有</span></div>'
-                  : '<button class="btn sm ghost" data-impf="' + i + '">＋我的库</button></div>')).join('')
-        || '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">🗂</div>系统库暂无食物</div>');
+      (rows || '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">' + (sysFoods.length ? '🔍' : '🗂') + '</div>' +
+        (sysFoods.length ? '没有匹配「' + esc(foodLibQuery.trim()) + '」的食物' : '系统库暂无食物') + '</div>') +
+      (all.length ? pagerHTML(all.length) : '');
     $$('[data-impf]', b).forEach(btn => btn.addEventListener('click', () => {
-      if(importFoodFromSys(sys.foods[num(btn.dataset.impf)])){ btn.outerHTML = '<span class="chip b3" style="padding:2px 9px;font-size:12px">已有</span>'; paintSeg(); }
+      if(importFoodFromSys(sysFoods[num(btn.dataset.impf)])){ btn.outerHTML = '<span class="chip b3" style="padding:2px 9px;font-size:12px">已有</span>'; paintSeg(); }
     }));
+    bindPager();
   }
   function render(){ if(tab === 'mine') renderMine(); else renderSys(); }
   paintSeg(); render();   /* 按 tab 渲染：foodLibTab 会被记住，再进页可能停在「系统库」 */

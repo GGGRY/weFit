@@ -21,6 +21,8 @@ const { start } = require('../server');
 const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixture.json'), 'utf8'));
 /* 睡眠形状契约仍唯一来源于前端目录（服务端 mapper 也 require 它），测试不另拄上限 */
 const { SLEEP_MAX_SEGS } = require('../../public/js/sleep-shape.js');
+/* 系统库种子条数不写死：断言「新账户个人库 = 当前种子」，种子增删后测试不再漂移 */
+const { SEED_FOODS, SEED_EXERCISES } = require('../../public/js/seed-data.js');
 
 /* ---------- 深度相等比较(数组讲顺序,对象讲键集合,失败报路径) ---------- */
 function deepEq(a, b, p) {
@@ -143,7 +145,7 @@ async function main() {
   /* ============ 单用户往返 ============ */
   r = await A.req('GET', '/api/state');
   ok('T7a 新账户 state:rev=0+个人库=系统种子', r.status === 200 && r.json.rev === 0
-    && r.json.data && r.json.data.shared.foods.length === 14 && r.json.data.shared.exercises.length === 27
+    && r.json.data && r.json.data.shared.foods.length === SEED_FOODS.length && r.json.data.shared.exercises.length === SEED_EXERCISES.length
     && Object.keys(r.json.data.users).length === 1, JSON.stringify(r.json).slice(0, 160));
   uidA = Object.keys(r.json.data.users)[0];
 
@@ -188,7 +190,7 @@ async function main() {
   /* ============ 双账户隔离 ============ */
   r = await B.req('GET', '/api/state');
   ok('T13a B 的初始树与 A 无关', r.status === 200 && r.json.rev === 0 && r.json.data.theme === 'light'
-    && r.json.data.shared.foods.length === 14 && Object.keys(r.json.data.users).length === 1, JSON.stringify(r.json).slice(0, 120));
+    && r.json.data.shared.foods.length === SEED_FOODS.length && Object.keys(r.json.data.users).length === 1, JSON.stringify(r.json).slice(0, 120));
   uidB = Object.keys(r.json.data.users)[0];
   const snapshotB = JSON.stringify(r.json);
   ok('T13b B 看不到 A 的任何数据', snapshotB.indexOf('陈') < 0 && snapshotB.indexOf('u_alice') < 0
@@ -280,6 +282,10 @@ async function main() {
    * 但浏览器里 normalizeSleepDay 未定义、整个睡眠 UI 直接崩，故在此钉住 */
   r = await anon.req('GET', '/js/sleep-shape.js');
   ok('T17f sleep-shape.js→js', r.status === 200 && r.headers.get('content-type').includes('javascript'));
+  /* 种子数据本体改由 seed-data.json 承载：浏览器经同步 XHR 读取，漏映射会直接丢种子 */
+  r = await anon.req('GET', '/js/seed-data.json');
+  ok('T17h seed-data.json→json 且含 foods/exercises', r.status === 200 && r.headers.get('content-type').includes('application/json')
+    && (() => { try { const j = JSON.parse(r.text); return Array.isArray(j.foods) && Array.isArray(j.exercises); } catch (e) { return false; } })(), r.headers.get('content-type'));
   r = await anon.req('GET', '/');
   ok('T17g index.html 在 app.js 前加载 sleep-shape.js',
     r.text.includes('js/sleep-shape.js') && r.text.indexOf('js/sleep-shape.js') < r.text.indexOf('js/app.js'));
