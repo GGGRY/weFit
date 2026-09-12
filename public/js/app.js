@@ -1473,7 +1473,7 @@ function renderDiet(){
       : '<div class="empty" style="padding:10px"><div class="e-ic" style="font-size:22px">🍴</div>未记录</div>';
     return '<div class="card" style="margin-bottom:12px"><h3>' + s.ic + ' ' + esc(s.label) +
       '<span class="grow"></span><span class="hint">' + st.kcal + ' kcal</span>' +
-      '<button class="btn sm" data-addslot="' + s.id + '">＋ 添加</button></h3>' + list + '</div>';
+      '<button class="btn plus" data-addslot="' + s.id + '" title="添加' + esc(s.label) + '" aria-label="添加' + esc(s.label) + '">＋</button></h3>' + list + '</div>';
   }).join('');
 
   const html =

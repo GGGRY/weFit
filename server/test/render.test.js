@@ -424,6 +424,13 @@ async function main() {
   ok('T3b 饮食页渲染食物行(名称/克数/kcal)',
      view.__html.includes(x3.name) && view.__html.includes('150g') && view.__html.includes(String(x3.expKcal)));
 
+  ok('T3b2 四餐卡头是纯「＋」加号钮（无「添加」二字，文案进 title/aria-label，样式走 .btn.plus）',
+     (view.__html.match(/class="btn plus" data-addslot="[a-z]+"/g) || []).length === 4
+     && view.__html.includes('<button class="btn plus" data-addslot="breakfast" title="添加早餐" aria-label="添加早餐">＋</button>')
+     && view.__html.includes('<button class="btn plus" data-addslot="snack" title="添加加餐" aria-label="添加加餐">＋</button>')
+     && !view.__html.includes('＋ 添加<'),
+     'n=' + (view.__html.match(/class="btn plus"/g) || []).length);
+
   /* T3c 概览「今日饮食」卡：有记录时卡底右对齐一个「＋ 记录一下」（与运动/睡眠卡同款同位；
    * 空态仍是卡体内居中的 primary「去记录」；绑定用单元素 querySelector,同页恰好一个 data-go2="diet"） */
   ev('renderHome()');

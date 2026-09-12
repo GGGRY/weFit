@@ -184,6 +184,14 @@ body.hcard-dragging input,body.hcard-dragging textarea{user-select:text;-webkit-
    定义在 .btn.sm 之后——同特异性靠源码顺序覆盖 padding */
 .btn.icon{width:30px;height:30px;padding:0;font-size:15px;line-height:1;flex:none}
 
+/* 卡头「只加不写」的加号钮（饮食四餐的「＋ 添加」）：圆形品牌淡底，比同排文字按钮轻；
+   文案收进 title / aria-label，卡头右侧的 kcal 提示不再被挤。 */
+.btn.plus{
+  width:30px;height:30px;padding:0;border-radius:50%;border-color:transparent;
+  background:var(--brand-soft);color:var(--brand-ink);font-size:16px;font-weight:700;line-height:1;flex:none;
+}
+.btn.plus:hover{background:var(--brand);color:#fff;border-color:transparent}
+
 /* 圆形小按钮 */
 .iconbtn2{width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);font-size:16px;display:inline-grid;place-items:center;flex:none}
 .iconbtn2:hover{border-color:var(--brand);color:var(--brand-ink)}
