@@ -131,8 +131,8 @@ a{color:var(--brand-ink)}
 /* KPI 指标卡 */
 .tile{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:13px 14px;box-shadow:var(--shadow);flex:1;min-width:130px}
 .tile .lab{font-size:12px;color:var(--ink-2);display:flex;align-items:center;gap:6px}
-/* 首行右侧小字（BMI 分档）：贴标签行右端、靠右对齐；窄卡放不下时自动换行（不截断） */
-.tile .lab .lab-tone{margin-left:auto;text-align:right;min-width:0}
+/* 数值行右侧小字（BMI 分档）：紧跟数值、与数值同一基线；窄卡放不下时自动换行（不截断） */
+.tile .val .val-tone{font-size:12px;font-weight:600;margin-left:6px;min-width:0}
 .tile .val{font-size:24px;font-weight:800;margin-top:3px;font-variant-numeric:tabular-nums}
 .tile .val .unit{font-size:12px;font-weight:600;color:var(--ink-2);margin-left:2px}
 .tile .delta{font-size:12px;margin-top:2px;color:var(--ink-2)}
@@ -259,9 +259,13 @@ body.hcard-dragging input,body.hcard-dragging textarea{user-select:text;-webkit-
 .lrow .grow{flex:1;min-width:0}
 .lrow .sub{font-size:12.5px;color:var(--ink-3)}
 
-/* 食物选择器（记录饮食弹窗）：搜索框 + 可滚候选行，替代 300+ 项原生下拉。
-   行高 ≥40px、限高 38vh，手机上一屏能扫、滑得动。 */
-.picklist{max-height:38vh;overflow-y:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface);margin-top:8px;-webkit-overflow-scrolling:touch}
+/* 食物选择器（记录饮食 / 添加运动弹窗）：搜索框 + 可滚候选行，替代 300+ 项原生下拉。
+   行高 ≥40px、限高 38vh，手机上一屏能扫、滑得动。
+   min-height 取与 max-height 同值（用户裁定 2026-09-12）：弹窗是贴底面板、高度由内容撑开，
+   而「系统库」是切到该 tab 才去拉的（拉取期间只有一行「载入系统库…」占位）——列表高矮一变，
+   整张面板的顶边就跟着上下跳（实测 728px → 445px → 728px，一次点击跳两下）。
+   固定高度后「我的库 / 系统库 / 载入中」三态等高，切 tab 面板纹丝不动；代价是条目少时列表下方留白。 */
+.picklist{min-height:38vh;max-height:38vh;overflow-y:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface);margin-top:8px;-webkit-overflow-scrolling:touch}
 .picklist:empty{display:none}
 .pickrow{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);
   background:transparent;color:var(--ink);padding:11px 12px;font-size:14px;font-family:inherit}
