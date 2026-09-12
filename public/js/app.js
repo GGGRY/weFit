@@ -2651,7 +2651,7 @@ function renderSettings(){
       '<div class="tile" style="box-shadow:none;background:var(--surface-2);min-width:0;padding:11px 10px"><div class="lab">碳水</div><div class="val" style="font-size:19px">' + T.c + '<span class="unit">g</span></div></div>' +
       '<div class="tile" style="box-shadow:none;background:var(--surface-2);min-width:0;padding:11px 10px"><div class="lab">脂肪</div><div class="val" style="font-size:19px">' + T.f + '<span class="unit">g</span></div></div>' +
     '</div>' +
-    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:10px">' +
+    '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:10px">' +   /* 2026-09-12：与上方营养三格同口径——手机上正好两行各三格（auto-fit 140px 会在窄屏降成 2 列，排成 3/2/1 三行） */
       '<div class="tile" style="box-shadow:none;background:var(--surface-2);min-width:0;padding:11px 10px"><div class="lab">活动量</div><div class="val" style="font-size:19px;line-height:1.3;white-space:normal">' + esc(actSplit.main) +
         (actSplit.note ? '<div class="tiny muted" style="font-weight:400;margin-top:2px;line-height:1.3">' + esc(actSplit.note) + '</div>' : '') +
       '</div></div>' +

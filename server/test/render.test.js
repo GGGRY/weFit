@@ -392,7 +392,10 @@ async function main() {
      && !actMid.includes('（') && actMid.includes('font-size:19px') && actMid.includes('font-weight:400')
      && actHigh.includes('>很高<div class="tiny muted"') && actHigh.includes('体力劳动/每日两练')
      && !actBad.includes('tiny muted') && actBad.includes('9.9')
-     && !actCard.includes('（很少运动）'),           /* 卡上不再出现带括号的整串标签 */
+     && !actCard.includes('（很少运动）') &&           /* 卡上不再出现带括号的整串标签 */
+     /* 手机端两行各三格：两段网格都是固定三列（auto-fit 140px 在窄屏会降成 2 列排成 3/2/1） */
+     (nutCard.match(/grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/g) || []).length === 2
+     && !nutCard.includes('auto-fit,minmax(140px'),
      JSON.stringify({ mid: actMid.slice(0, 190), bad: actBad.slice(0, 130) }));
   ev("me.role = 'user'; go('settings')");
 
