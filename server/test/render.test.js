@@ -1182,6 +1182,61 @@ async function main() {
        'adopt=' + adoptEmpty + ' malformed=' + adoptMalformed + ' boot=' + bootEmpty);
   }
 
+  /* T19 时间滚轮（2026-09-12：手机端原生 time 输入弹的是系统「圆盘」时钟，改成上下滑动）
+     · 结构：两列 scroll-snap + 中间高亮 band，值写在同名**隐藏 input** 里
+     · 值契约与旧 time 输入一致（'HH:MM'），sleepDur / 存储形状零改动
+     · 关键回归：stub 里量不到布局（col.scrollTop === undefined）时绝不许把值改写成 00:00 */
+  {
+    const noTimeInput = !readPub('js/app.js').includes('type="time"');
+    /* 按列截段数项：`data-tw-col="h"` 到该列 `</div>` 之间就是这一列的 items */
+    const colItems = (html, kind) => ((html.split('data-tw-col="' + kind + '"')[1] || '').split('</div>')[0].match(/tw-item/g) || []).length;
+    const h = ev("timeWheelHTML('sq_bed', '23:35')");
+    const hOff = ev("timeWheelHTML('sq_off', '23:07')");
+    ok('T19a 时间滚轮结构：隐藏 input(HH:MM) + 小时/分钟两列 + 中线 band；原生 type="time" 已从 app.js 消失',
+       noTimeInput && h.includes('<input type="hidden" id="sq_bed" value="23:35">')
+       && colItems(h, 'h') === 24 && colItems(h, 'm') === 12
+       && h.includes('class="tw-col" data-tw-col="h"') && h.includes('class="tw-col" data-tw-col="m"')
+       && h.includes('class="tw-band"')
+       && h.includes('class="tw-item on" data-n="23"') && h.includes('class="tw-item on" data-n="35"'),
+       'h=' + colItems(h, 'h') + ' m=' + colItems(h, 'm'));
+    /* 不在 5 分档位的旧记录（23:07）要把 7 分插进分钟列，且不许把它挪到 5/10 分 */
+    ok('T19b 分钟列按 5 分档，但旧记录的 23:07 原样保留（13 项 + 07 选中 + 值不变）',
+       colItems(hOff, 'm') === 13 && ev("twParts('23:07')[1]") === 7
+       && hOff.includes('class="tw-item on" data-n="7"')
+       && hOff.includes('value="23:07"'),
+       'm=' + colItems(hOff, 'm'));
+    ok('T19c twParts/twFmt 边界：7:5 归一化、25:00 与 12:99 与空值一律 null',
+       ev("JSON.stringify(twParts('7:5'))") === '[7,5]' && ev("twFmt(7,5)") === '07:05'
+       && ev("twParts('25:00') === null && twParts('12:99') === null && twParts('') === null && twParts(null) === null")
+       && ev("twParts('23:35')[0] === 23"));
+    /* 挂载路径：stub 没有布局/滚动，twPull 必须放过（否则一打开编辑弹窗就把 23:07 写成 00:00） */
+    const mounted = ev("JSON.stringify((function(){ const box = curDialog.box, cb = function(){};"
+      + " const w = timeWheelMount(box, 'sq_bed', '23:07', cb); twWrite(w); twPull(w); twWrite(w);"
+      + " const keep = w.__twv.join(','); twSet(box, 'sq_bed', '07:30');"
+      + " return { keep: keep, after: w.__twv.join(','), cbKept: w.__twcb === cb, backTo23: w.__twv.join(',') === '7,30' && w.__twcb === cb }; })())");
+    const m = JSON.parse(mounted);
+    ok('T19d 挂载/重画：无布局时值不被改写，换时段（twSet）改值且回调不丢',
+       m.keep === '23,7' && m.after === '7,30' && m.cbKept === true, mounted);
+    /* 编辑弹窗里两个时间位都换成滚轮，默认时段仍来自 SLEEP_TYPES */
+    const sleepBak = ev('JSON.stringify(state.sleep[today()] || null)');
+    ev('delete state.sleep[today()]');                     // 当天已有夜间段时新段默认「午睡」，这里要先归零
+    const sqHtml = (function(){ try { ev('closeDialog && curDialog && closeDialog()'); ev("sleepSessionEditor(today(), null)");
+      return ev('curDialog.box.__html'); } finally { ev('closeDialog && curDialog && closeDialog()'); } })();
+    ev('state.sleep[today()] = ' + sleepBak);
+    const bedItems = (sqHtml.match(/data-tw="sq_bed"/g) || []).length, wakeItems = (sqHtml.match(/data-tw="sq_wake"/g) || []).length;
+    /* 标题在控件下面（用户 2026-09-12 要求，两格都要），顺序：滚轮 → label */
+    const bedCap = sqHtml.indexOf('入睡'), bedWheel = sqHtml.indexOf('data-tw="sq_bed"');
+    const wakeCap = sqHtml.indexOf('起床'), wakeWheel = sqHtml.indexOf('data-tw="sq_wake"');
+    ok('T19e 睡眠段编辑弹窗：入睡/起床各一个滚轮（不再有原生时间控件），默认 23:30/07:00',
+       bedItems === 1 && wakeItems === 1 && sqHtml.includes('value="23:30"') && sqHtml.includes('value="07:00"')
+       && !sqHtml.includes('type="time"'),
+       'bed=' + bedItems + ' wake=' + wakeItems);
+    ok('T19f 入睡/起床的标题在滚轮下面（两格均是，标注居中用 .tw-cell）',
+       bedCap > bedWheel && wakeCap > wakeWheel && bedWheel >= 0
+       && (sqHtml.match(/class="tw-cell"/g) || []).length === 2,
+       'bedWheel=' + bedWheel + ' bedCap=' + bedCap + ' wakeWheel=' + wakeWheel + ' wakeCap=' + wakeCap);
+  }
+
   finish();
 }
 

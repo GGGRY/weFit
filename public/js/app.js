@@ -2931,6 +2931,135 @@ function dropSleepSeg(d, editing){
   if(segs) state.sleep[d] = segs; else delete state.sleep[d];
 }
 
+/* ---------- 时间滚轮（2026-09-12：手机端用 input[type=time] 会弹系统「圆盘」时钟，改成上下滑动） ----------
+ * 自绘两列滚动列表（小时 / 分钟），CSS scroll-snap 吸附，中间一条高亮 band 表示选中项。
+ * 值仍写回**同名隐藏 input**：调用方继续读 `$('#sq_bed', b).value`，sleepDur 与存储形状零改动。
+ * 列高恒为 5 项、上下各留 2 项空白（CSS 的 --tw-h 与 TW_ITEM_H 必须一致），
+ * 这样「滚到某个值」= scrollTop = 下标 × 项高，选中项自然停在正中。 */
+const TW_ITEM_H = 34;                                   // 单项高度(px)，与 style.css 的 .twheel --tw-h 同步
+const TW_MIN_STEP = 5;                                  // 分钟档位步长（0/5/…/55，睡眠记到 5 分钟足够）
+const TW_HOURS = Array.from({ length: 24 }, (_, i) => i);
+/* 'HH:MM' → [时, 分]；缺值/非法（含 25:00、12:99）→ null（调用方按默认时段兜底，不写脏值） */
+function twParts(v){
+  const m = /^(\d{1,2}):(\d{1,2})$/.exec(typeof v === 'string' ? v.trim() : '');
+  if(!m) return null;
+  const h = Number(m[1]), mi = Number(m[2]);
+  return (h <= 23 && mi <= 59) ? [h, mi] : null;
+}
+const tw2 = n => (n < 10 ? '0' : '') + n;
+function twFmt(h, m){ return tw2(h) + ':' + tw2(m); }
+/* 分钟列档位：0,5,…,55；当前值不在档位（旧记录里的 23:07 这类）就把它插进去——
+ * 不然一打开编辑弹窗就把用户的分钟数悄悄挪到最近的 5 分。 */
+function twMinList(cur){
+  const out = [];
+  for(let i = 0; i < 60; i += TW_MIN_STEP) out.push(i);
+  if(typeof cur === 'number' && Number.isFinite(cur) && cur >= 0 && cur < 60 && out.indexOf(cur) < 0){
+    out.push(cur); out.sort((a, b) => a - b);
+  }
+  return out;
+}
+function twColHTML(kind, list, sel){
+  return '<div class="tw-col" data-tw-col="' + kind + '">' + list.map(v =>
+    '<button type="button" class="tw-item' + (v === sel ? ' on' : '') + '" data-n="' + v + '">' + tw2(v) + '</button>'
+  ).join('') + '</div>';
+}
+/* 滚轮内胆（挂载时重画也走这里 → 单一来源） */
+function twInner(id, p){
+  return '<input type="hidden" id="' + id + '" value="' + twFmt(p[0], p[1]) + '">' +
+    '<div class="tw-cols">' + twColHTML('h', TW_HOURS, p[0]) +
+      '<span class="tw-sep">:</span>' + twColHTML('m', twMinList(p[1]), p[1]) + '</div>' +
+    '<span class="tw-band" aria-hidden="true"></span>';
+}
+function timeWheelHTML(id, value){
+  const p = twParts(value) || [0, 0];                    // 脏值只能落到 00:00（滚轮没有「空」态）
+  return '<div class="twheel" data-tw="' + id + '">' + twInner(id, p) + '</div>';
+}
+/* 组装/重画一个滚轮并绑监听：换时段或程序改值都走这里（重画顺带重绑；回调挂在节点上不丢）。
+ * 值存在节点上（`__twv`），**不靠 DOM 回读**——布局万一没就绪，scrollTop 赋值会静默留在 0，
+ * 那时再从滚动位置反推就会把 23:35 写成 00:00。 */
+function timeWheelMount(root, id, value, onChange){
+  const w = $('[data-tw="' + id + '"]', root); if(!w) return null;
+  if(onChange) w.__twcb = onChange;
+  const p = twParts(value) || [0, 0];
+  w.__tw = { h: TW_HOURS, m: twMinList(p[1]) };          // 下标 ↔ 值 的映射（列里的 data-n 与它同序）
+  w.__twv = [p[0], p[1]];
+  w.innerHTML = twInner(id, p);
+  twBindCol(w, 'h'); twBindCol(w, 'm');
+  twScrollTo(w, 'h'); twScrollTo(w, 'm');               // 只摆视觉位置
+  twWrite(w);
+  return w;
+}
+/* 程序改值（如换睡眠类型带默认时段）：整轮重画，回调沿用节点上存的 */
+function twSet(root, id, value){ timeWheelMount(root, id, value, null); }
+function twColOf(w, kind){ return $('[data-tw-col="' + kind + '"]', w); }
+/* 项高优先量 DOM（CSS 改了也不用动 JS），量不到（未布局/测试桩）退回常量 */
+function twItemH(col){
+  const it = col && col.children && col.children[0];
+  return (it && it.offsetHeight) || TW_ITEM_H;
+}
+/* 当前停在第几项；**没有项 / 量不到滚动量**（渲染未完、测试桩）时返回 null：
+ * 这种时候不能拿「位置 0」去反推值，否则一打开编辑弹窗就把 23:07 改写成 00:00。 */
+function twIdx(col){
+  const n = col && col.children ? col.children.length : 0;
+  if(!n || typeof col.scrollTop !== 'number') return null;
+  const i = Math.round(col.scrollTop / twItemH(col));
+  return Math.max(0, Math.min(n - 1, i));
+}
+/* 按当前值把某一列滚到选中项（纯视觉） */
+function twScrollTo(w, kind){
+  const col = twColOf(w, kind), list = w.__tw && w.__tw[kind]; if(!col || !list) return;
+  const i = list.indexOf(w.__twv[kind === 'h' ? 0 : 1]); if(i < 0) return;
+  col.scrollTop = i * twItemH(col);
+  twPaint(w, kind);
+}
+function twPaint(w, kind){
+  const col = twColOf(w, kind); if(!col || !col.children) return;
+  const v = w.__twv[kind === 'h' ? 0 : 1];
+  Array.prototype.forEach.call(col.children, it => it.classList.toggle('on', num(it.dataset.n) === v));
+}
+/* 用户在某一列滑停 → 由下标回写值（两列都回写：不知道刚才动的是哪一列） */
+function twPull(w){
+  ['h', 'm'].forEach((kind, i) => {
+    const col = twColOf(w, kind), list = w.__tw && w.__tw[kind]; if(!col || !list) return;
+    const k = twIdx(col); if(k === null) return;
+    w.__twv[i] = list[k];
+  });
+}
+/* 值 → 隐藏 input（= 调用方读的 .value）+ 中线高亮 */
+function twWrite(w){
+  const ip = $('#' + (w.dataset.tw || ''), w); if(ip) ip.value = twFmt(w.__twv[0], w.__twv[1]);
+  twPaint(w, 'h'); twPaint(w, 'm');
+}
+/* 滚到最近的一档：浏览器对**程序设定**的 scrollTop 不会补吸附（实测 122px 停在两档之间），
+ * 拖停后统一对一次，保证「看见的那一格」= 写进去的值。 */
+function twAlign(w, kind){
+  const col = twColOf(w, kind); if(!col) return;
+  const k = twIdx(col); if(k === null) return;
+  const want = k * twItemH(col);
+  if(Math.abs(col.scrollTop - want) > 0.5) col.scrollTop = want;
+}
+/* 滑动停下再取值（拖动中每帧回调会把 prev() 打成刷屏；大于一次停顿的间隔就不该再当拖动中）。
+ * 点数字 = 直接选中该项（手机上一列 24 小时盲滑太累）。 */
+function twBindCol(w, kind){
+  const col = twColOf(w, kind); if(!col || !col.addEventListener) return;
+  let timer = null;
+  const settle = () => {
+    twAlign(w, 'h'); twAlign(w, 'm');
+    twPull(w); twWrite(w);
+    const cb = w.__twcb; if(cb) cb();
+  };
+  col.addEventListener('scroll', () => {
+    if(timer) clearTimeout(timer);
+    timer = setTimeout(settle, 120);
+  });
+  Array.prototype.forEach.call(col.children || [], it =>
+    it.addEventListener('click', () => {
+      w.__twv[kind === 'h' ? 0 : 1] = num(it.dataset.n);
+      twScrollTo(w, kind); twWrite(w);
+      const cb = w.__twcb; if(cb) cb();
+    }));
+}
+
 /* 睡眠段编辑弹窗（概览今日卡 / 历史弹窗共用）：idx=null 新增，否则按下标修改（含删除该段）。
  * 新增默认类型：当日已有夜间段则建议「午睡」；新增态换类型重置默认时段，编辑态保留已填时间。
  * 编辑态原样承接已存的 t（未知类型不预选任何档、保存也不改写）。 */
@@ -2942,12 +3071,13 @@ function sleepSessionEditor(d, idx, after){
   let tk = seg ? (typeof seg.t === 'string' && seg.t ? seg.t : null)
                : (list.some(s => s.t === 'night') ? 'nap' : 'night');
   const def = (sleepType(tk) || sleepType('night')).def;
+  const bed0 = (seg && seg.bed) || def[0], wake0 = (seg && seg.wake) || def[1];
   const html =
     '<div class="row" style="gap:6px;margin-bottom:10px">' + SLEEP_TYPES.map(t =>
       '<button class="btn sm" id="sq_tp_' + t.k + '">' + t.ic + ' ' + t.label + '</button>').join('') + '</div>' +
-    '<div class="form-grid">' +
-      '<div><label>入睡</label><input class="input" type="time" id="sq_bed" value="' + esc((seg && seg.bed) || def[0]) + '"></div>' +
-      '<div><label>起床</label><input class="input" type="time" id="sq_wake" value="' + esc((seg && seg.wake) || def[1]) + '"></div>' +
+    '<div class="form-grid tw-grid">' +
+      '<div class="tw-cell">' + timeWheelHTML('sq_bed', bed0) + '<label>入睡</label></div>' +
+      '<div class="tw-cell">' + timeWheelHTML('sq_wake', wake0) + '<label>起床</label></div>' +
     '</div>' +
     '<div class="row mt" style="align-items:center"><span class="tiny muted" style="margin-right:8px">质量：</span><div class="stars" id="sq_stars">' + QUALITY.map(q => '<button class="sqst on" data-q="' + q.n + '">' + q.ic + '</button>').join('') + '</div></div>' +
     '<div class="row mt" style="align-items:center"><span class="tiny muted">时长 <b id="sq_prev">--</b></span></div>' +
@@ -2969,9 +3099,10 @@ function sleepSessionEditor(d, idx, after){
   paintTp();
   SLEEP_TYPES.forEach(t => $('#sq_tp_' + t.k, b).addEventListener('click', () => {
     tk = t.k; paintTp(); prev();
-    if(editing === null){ $('#sq_bed', b).value = t.def[0]; $('#sq_wake', b).value = t.def[1]; prev(); }
+    if(editing === null){ twSet(b, 'sq_bed', t.def[0]); twSet(b, 'sq_wake', t.def[1]); prev(); }
   }));
-  $('#sq_bed', b).addEventListener('change', prev); $('#sq_wake', b).addEventListener('change', prev); prev();
+  timeWheelMount(b, 'sq_bed', bed0, prev); timeWheelMount(b, 'sq_wake', wake0, prev);   // 滚动停下即刷新时长预览
+  prev();
   $('#sq_save', b).addEventListener('click', () => {
     const bed = $('#sq_bed', b).value, wake = $('#sq_wake', b).value;
     if(!bed || !wake){ toast('请填写入睡与起床时间', true); return; }

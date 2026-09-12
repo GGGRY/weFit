@@ -211,6 +211,26 @@ body.hcard-dragging input,body.hcard-dragging textarea{user-select:text;-webkit-
   padding:8px 12px;font-size:13.5px;cursor:pointer}
 .mins-menu button:hover{background:var(--surface-3)}
 .form-grid label{font-size:12px;color:var(--ink-2);display:block;margin-bottom:4px;font-weight:550}
+
+/* ---------- 时间滚轮（2026-09-12：替代 input[type=time]——手机端原生控件会弹系统「圆盘」时钟）----------
+   两列 scroll-snap 列表：列高 = 5 项，上下用伪元素各留 2 项空白，选中项正好停在正中；
+   正中一条高亮 band 垫在列表下面（z-index）表示当前选中。--tw-h 与 app.js 的 TW_ITEM_H 同步。 */
+.twheel{--tw-h:34px;position:relative;width:100%}
+.twheel .tw-cols{display:flex;justify-content:center;gap:2px;position:relative;z-index:1}
+.twheel .tw-col{height:calc(var(--tw-h)*5);overflow-y:auto;scroll-snap-type:y mandatory;overscroll-behavior:contain;
+  flex:0 0 auto;min-width:46px;text-align:center;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.twheel .tw-col::-webkit-scrollbar{display:none}
+.twheel .tw-col::before,.twheel .tw-col::after{content:"";display:block;height:calc(var(--tw-h)*2)}
+.twheel .tw-item{display:block;width:100%;height:var(--tw-h);border:0;background:transparent;color:var(--ink-3);
+  font-size:17px;line-height:var(--tw-h);font-variant-numeric:tabular-nums;user-select:none;-webkit-user-select:none}
+.twheel .tw-item.on{color:var(--brand-ink);font-weight:700}
+.twheel .tw-sep{align-self:center;color:var(--ink-3);font-weight:700}
+.twheel .tw-band{position:absolute;left:4px;right:4px;top:calc(var(--tw-h)*2);height:var(--tw-h);z-index:0;
+  border-radius:10px;background:var(--brand-soft);border:1px solid var(--brand-line);pointer-events:none}
+/* 字段标题放控件**下面**且居中（2026-09-12 用户要求）：先压掉 .form-grid label 的 margin-bottom，
+   再靠 .tw-cell 的 text-align 把标题与滚轮一起居中 */
+.tw-grid .tw-cell{text-align:center}
+.tw-grid .tw-cell label{margin:6px 0 0;text-align:center}
 .chkline{display:flex;align-items:center;gap:8px;font-size:14px}
 
 /* 分段控件 */
