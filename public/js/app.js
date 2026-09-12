@@ -1467,7 +1467,6 @@ function renderDiet(){
         '<div class="grow"><div class="b">' + esc(it.name) + '</div>' +
           '<div class="sub">' + it.g + 'g · ' + st2kcal(it) + ' kcal · <span class="tiny">P' + st2p(it) + ' C' + st2c(it) + ' F' + st2f(it) + '</span></div></div>' +
         '<button class="iconbtn2" data-edit="' + it.id + '" title="修改">✏️</button>' +
-        '<button class="iconbtn2" data-del="' + it.id + '" style="color:var(--danger)" title="删除">🗑</button>' +
       '</div>').join('')
       : '<div class="empty" style="padding:10px"><div class="e-ic" style="font-size:22px">🍴</div>未记录</div>';
     return '<div class="card" style="margin-bottom:12px"><h3>' + s.ic + ' ' + esc(s.label) +
@@ -1501,7 +1500,6 @@ function renderDiet(){
   }));
   $$('[data-addslot]', v).forEach(b => b.addEventListener('click', () => addMealDialog(dietDate, b.dataset.addslot)));
   $$('[data-edit]', v).forEach(b => b.addEventListener('click', () => editMealDialog(dietDate, b.dataset.edit)));
-  $$('[data-del]', v).forEach(b => b.addEventListener('click', () => delMealItem(dietDate, b.dataset.del)));
 }
 function slotColor(id){ return {breakfast:'#eda100', lunch:'#eb6834', dinner:'#4a3aa7', snack:'#1baf7a'}[id] || 'var(--brand)'; }
 function st2kcal(it){ const x = itemMacro(it); return round(x.kcal,0); }
