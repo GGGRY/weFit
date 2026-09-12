@@ -142,7 +142,7 @@ async function main() {
   /* T1d 概览磁贴：今日热量 → BMI → 今日运动 → 打卡（BMI/运动为本轮新增） */
   const rowStart = view.__html.indexOf('<div class="row mt">');
   const tileRow = rowStart < 0 ? '' : view.__html.slice(rowStart, view.__html.indexOf('🍽️ 今日饮食'));
-  const ti = ['今日热量','BMI','今日运动','打卡'].map(l => tileRow.indexOf('>' + l + '</span></div>'));
+  const ti = ['今日热量','BMI','今日运动','打卡'].map(l => tileRow.indexOf('>' + l + '</span>'));
   ok('T1d 概览磁贴四张，顺序为 今日热量 → BMI → 今日运动 → 打卡',
      ti.every((i, k) => i >= 0 && (k === 0 || i > ti[k - 1])), 'idx=' + ti.join(','));
   const bmiV = ev('bmi()');
@@ -153,13 +153,17 @@ async function main() {
     : bmiV < 28   ? { t:'⚠ 超重', c:'var(--warn)' }
     :               { t:'⚠ 肥胖', c:'var(--danger)' };
   const bmiTile = ti[1] < 0 ? '' : tileRow.slice(ti[1] - 40, ti[2]);
-  ok('T1d BMI 磁贴 = 分档数值 + 分档文案/颜色（与身体页 bmiTone 同源）',
-     bmiTile.includes('>' + (bmiV === null ? '--' : bmiV) + '</div>') && bmiTile.includes('>' + expTone.t + '</div>')
-     && (!expTone.c || bmiTile.includes('color:' + expTone.c)),
+  /* 需 2026-09-12：分档小字从末行挪到首行「BMI」右侧（首行 = 标签 + lab-tone，值单独一行，不再有 delta 行） */
+  const toneSpan = '<span class="lab-tone"' + (expTone.c ? ' style="color:' + expTone.c + '"' : '') +
+    '>' + expTone.t + '</span></div>';
+  ok('T1d BMI 磁贴 = 分档数值 + 分档小字贴在首行「BMI」右侧（颜色与 bmiTone 同源，不再另占一行）',
+     bmiTile.includes('<div class="lab"><span>BMI</span>' + toneSpan)
+     && bmiTile.includes('>' + (bmiV === null ? '--' : bmiV) + '</div>')
+     && !bmiTile.includes('<div class="delta'),
      'bmi=' + bmiV + ' tone=' + expTone.t + '/' + expTone.c + ' tile=' + bmiTile);
-  const expWk = ev("(function(){const d=workoutForDate(today());return d&&d.items.length?doneCount(d)+'/'+d.items.length:'--';})()");
-  ok('T1d 今日运动磁贴 = 当日已打勾项/全部项（今天没安排显示 --）',
-     tileRow.slice(ti[2], ti[3]).includes(expWk === '--' ? '>--</div>' : '>' + expWk + '<span class="unit">项</span>'),
+  const expWk = ev("(function(){const d=workoutForDate(today());return d&&d.items.length?doneCount(d)+'/'+d.items.length:'休息';})()");
+  ok('T1d 今日运动磁贴 = 当日已打勾项/全部项（今天没安排显示「休息」）',
+     tileRow.slice(ti[2], ti[3]).includes(expWk === '休息' ? '>休息</div>' : '>' + expWk + '<span class="unit">项</span>'),
      'wk=' + expWk + ' tile=' + tileRow.slice(ti[2], ti[3]));
 
   /* T1e 概览「今日卡片」可拖动排序（2026-09-11）：容器内的卡片顺序 = state.homeOrder；

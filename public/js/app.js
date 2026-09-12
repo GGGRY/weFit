@@ -1134,9 +1134,13 @@ async function doLogout(){
 /* =====================================================
    概览首页
 ===================================================== */
-function tileHTML(lab, val, unit, delta, deltaCls, icon, deltaColor){
-  return '<div class="tile"><div class="lab"><span>' + esc(lab) + '</span></div><div class="val">' + val + (unit ? '<span class="unit">' + unit + '</span>' : '') + '</div>' +
-    (delta ? '<div class="delta ' + (deltaCls||'') + '"' + (deltaColor ? ' style="color:' + deltaColor + '"' : '') + '>' + delta + '</div>' : '') + '</div>';
+/* labRight：首行右侧的小字（贴在标签行右端，如 BMI 的分档「✓ 正常」）；第 6 位原本是个从没被用过的 icon 形参 */
+function tileHTML(lab, val, unit, delta, deltaCls, labRight, deltaColor){
+  const cs = deltaColor ? ' style="color:' + deltaColor + '"' : '';
+  return '<div class="tile"><div class="lab"><span>' + esc(lab) + '</span>' +
+      (labRight ? '<span class="lab-tone"' + cs + '>' + esc(labRight) + '</span>' : '') + '</div>' +
+    '<div class="val">' + val + (unit ? '<span class="unit">' + unit + '</span>' : '') + '</div>' +
+    (delta ? '<div class="delta ' + (deltaCls||'') + '"' + cs + '>' + delta + '</div>' : '') + '</div>';
 }
 
 /* ---------- 概览「今日卡片」的排序契约 ----------
@@ -1207,11 +1211,11 @@ function renderHome(){
     '<div class="muted home-greet">' + esc(greet) + '，<b>' + esc(activeUser().name) + '</b> · ' + dateCNW(t) + '</div>' +
     '<div class="row mt">' +
       tileHTML('今日热量', fmtNum(eat.kcal), '/ ' + fmtNum(T.kcal) + ' kcal', '', '') +
-      /* BMI 磁贴：数值 + 分档小字，颜色同身体页（bmiTone 单一来源）；无体重/身高时给提示文案 */
-      tileHTML('BMI', bmiV === null ? '--' : bmiV, '',
-        bmiInfo ? (bmiInfo.ok ? '✓ 正常' : '⚠ ' + bmiInfo.tag) : '记录体重后查看', '', '', bmiInfo ? bmiInfo.c : '') +
-      /* 今日运动磁贴：当天已打勾项 / 全部项；今天没安排（或安排为空）显示 -- */
-      tileHTML('今日运动', itemTotal ? dn + '/' + itemTotal : '--', itemTotal ? '项' : '', '', '') +
+      /* BMI 磁贴：数值 + 分档小字；小字贴在首行「BMI」右侧（不再另占一行），颜色同身体页（bmiTone 单一来源）；无体重/身高时给提示文案 */
+      tileHTML('BMI', bmiV === null ? '--' : bmiV, '', '', '',
+        bmiInfo ? (bmiInfo.ok ? '✓ 正常' : '⚠ ' + bmiInfo.tag) : '记录体重后查看', bmiInfo ? bmiInfo.c : '') +
+      /* 今日运动磁贴：当天已打勾项 / 全部项；今天没安排（或安排为空）显示「休息」 */
+      tileHTML('今日运动', itemTotal ? dn + '/' + itemTotal : '休息', itemTotal ? '项' : '', '', '') +
       tileHTML('打卡', habToday + '/' + state.habits.length, '', '', '') +
     '</div>' +
     /* 除顶部磁贴行外，其余「今日卡片」都进这个容器：顺序由 state.homeOrder 决定、可拖动调整 */
