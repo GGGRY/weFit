@@ -449,12 +449,16 @@ async function main() {
      meDlgH.includes('id="me_del"') && meDlgH.includes('>删除</button>') && meDlgH.includes('id="me_save"'),
      'box=' + meDlgH.slice(0, 160));
 
-  ok('T3b2 四餐卡头是纯「＋」加号钮（无「添加」二字，文案进 title/aria-label，样式走 .btn.plus）',
-     (view.__html.match(/class="btn plus" data-addslot="[a-z]+"/g) || []).length === 4
-     && view.__html.includes('<button class="btn plus" data-addslot="breakfast" title="添加早餐" aria-label="添加早餐">＋</button>')
-     && view.__html.includes('<button class="btn plus" data-addslot="snack" title="添加加餐" aria-label="添加加餐">＋</button>')
-     && !view.__html.includes('＋ 添加<'),
-     'n=' + (view.__html.match(/class="btn plus"/g) || []).length);
+  /* T3b2 用户 2026-09-12 先要把「＋ 添加」改成只带「＋」的圆钮，随后又裁定改回原来的文字版
+   * （「添加还是改为原来的样式吧，就是『+添加』」）：卡头恒为一颗 `<button class="btn sm" data-addslot>`＋ 添加</button>`，
+   * 四餐各一颗，不再有 `.btn.plus` 那个圆钮（样式类也已从 style.css 删掉）。 */
+  ok('T3b2 四餐卡头是原来的文字版「＋ 添加」钮（`.btn sm` ×4，无 `.btn.plus` 圆钮）',
+     (view.__html.match(/<button class="btn sm" data-addslot="[a-z]+">＋ 添加<\/button>/g) || []).length === 4
+     && view.__html.includes('<button class="btn sm" data-addslot="breakfast">＋ 添加</button>')
+     && view.__html.includes('<button class="btn sm" data-addslot="snack">＋ 添加</button>')
+     && !view.__html.includes('class="btn plus"')
+     && !view.__html.includes('data-addslot="breakfast" title='),
+     'n=' + (view.__html.match(/class="btn sm" data-addslot/g) || []).length);
 
   /* T3b3 卡头顺序：图标+餐名 → 紧贴右侧的合计 kcal → grow → ＋（kcal 不再被 grow 推到最右） */
   ok('T3b3 四餐卡头里合计 kcal 紧贴餐名右侧（label + hint + grow + ＋）',
