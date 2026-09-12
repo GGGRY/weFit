@@ -207,7 +207,7 @@ async function main() {
        (err && err.message) || ('len=' + view.__html.length));
   }
 
-  /* T2b 页面记忆(未标版号):go() 落盘上次页面;readView() 校验非法值回退概览。
+  /* T2b 页面记忆(v4.14):go() 落盘上次页面;readView() 校验非法值回退概览。
    * 刷新保持页面的真实路径 = startMain 结尾 go(readView()),此处验纯函数与键名口径 */
   ok('T2b 导航落盘 + readView 还原(非法值回退概览)',
      ev('readView()') === 'settings' && ev('localStorage.getItem(viewKey())') === 'settings'
@@ -215,7 +215,7 @@ async function main() {
      && ev("localStorage.setItem('jjhealth_view:tester','bogus'); readView()") === 'home',
      'readView=' + ev('readView()'));
 
-  /* T2g 未标版号 数据管理子页面（食物库/动作库）的导航语义：不占侧栏/底栏项，借父级 settings 高亮，
+  /* T2g v4.15 数据管理子页面（食物库/动作库）的导航语义：不占侧栏/底栏项，借父级 settings 高亮，
    * 落盘也记 settings —— 刷新后落回设置页，而不是停在一个「返回」无处可去的半截子页 */
   ev("go('settings'); go('foodlib')");
   const subNav = {
@@ -232,7 +232,7 @@ async function main() {
   ev("go('settings')");
   ok('T2g 数据管理子页面：不占导航项、高亮父级设置、落盘记父级', Object.values(subNav).every(Boolean), JSON.stringify(subNav));
 
-  /* T2h 滚动位置记忆（未标版号，手机端反馈）：换页记下离开那页的滚动量、回来原位恢复，
+  /* T2h 滚动位置记忆（v4.15，手机端反馈）：换页记下离开那页的滚动量、回来原位恢复，
    * 且一律瞬时（behavior:'auto'）——旧写法 smooth 归零在手机上会先看到一段「往上滚」 */
   ev("window.scrollTo = o => { window.__scroll = o; };");
   ev("$('.main').scrollTop = 640");
@@ -445,7 +445,7 @@ async function main() {
   ok('T4b 目标 8 · 已 3 → 显示「再喝 5 杯达标」',
      view.__html.includes('💧 今日饮水') && view.__html.includes('再喝 5 杯达标'));
 
-  /* T5 睡眠多段合计（v4.6 多段化契约；未标版号：目标由 7h/420min 改为 10h/600min） */
+  /* T5 睡眠多段合计（v4.6 多段化契约；v4.14：目标由 7h/420min 改为 10h/600min） */
   ev(`state.sleep[today()] = [
     { t:'night', bed:'23:00', wake:'06:30', mins:450, q:4 },
     { t:'nap',   bed:'13:00', wake:'13:30', mins:30,  q:3 },
@@ -649,7 +649,7 @@ async function main() {
      defs.reps === 30 && defs.time === 20 && defs.keptReps === 12 && defs.keptTime === 45
      && defs.crossed[0] === false && defs.crossed[1] === 20, JSON.stringify(defs));
   const hPick = dlgHTML('openExercisePicker(function(){})');  ok('T12f 动作选择器为平铺表格', !hPick.startsWith('ERR:') && hPick.includes('<th>分类</th>') && hPick.includes('杠铃卧推'), hPick.slice(0, 140));
-  /* 动作库页面（未标版号 由弹窗改独立页）：页头「返回 + 数据管理-动作库」，内容在 #xl_host → #xl_body */
+  /* 动作库页面（v4.15 由弹窗改独立页）：页头「返回 + 数据管理-动作库」，内容在 #xl_host → #xl_body */
   let hLib = '';
   try { ev("go('exlib')"); hLib = ev("$('#xl_body', $('#xl_host')).__html"); }
   catch (e) { hLib = 'ERR:' + e.message; }
@@ -742,7 +742,7 @@ async function main() {
      && er.bare === '' && er.bareName === '无营养表食品（改）' && er.bareHasPer === false && er.bareSrc === '用户'
      && er.padded === 'dup' && er.pushN === 3 && er.othersSame === true, editRes);
   ev('closeDialog && curDialog && closeDialog()');
-  /* T12s 记录饮食弹窗（未标版号：三 tab）：我的库 / 系统库 / 新增 + 共用底栏（克数 + 实时合计 + 保存）
+  /* T12s 记录饮食弹窗（v4.15：三 tab）：我的库 / 系统库 / 新增 + 共用底栏（克数 + 实时合计 + 保存）
    * 默认停在「我的库」（不做跨次记忆）；弹窗内不是原生下拉而是 .seg + .picklist，避免 300+ 行 DOM */
   let hMeal = '', hMineList = '';
   try {
@@ -953,7 +953,7 @@ async function main() {
      JSON.stringify(pure.sort) + ' ' + pure.badge);
   ok('T13e weeklyMinutes/Distances 只累计各自口径', pure.wk[0] === 45 && pure.wk[1] === 5, JSON.stringify(pure.wk));
 
-  /* T14 身体指标清单（未标版号）：新增「小腿围」= MEASURES 单一来源
+  /* T14 身体指标清单（v4.14）：新增「小腿围」= MEASURES 单一来源
      （磁贴/趋势下拉/记录表头/记录弹窗字段/upsertBody 白名单 五处同源） */
   ev("go('body')");
   const bHtml = view.__html;

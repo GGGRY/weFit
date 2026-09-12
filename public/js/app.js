@@ -987,7 +987,7 @@ function closeDialog(){ if(curDialog) curDialog.close(); }
 
 /* ---------- 导航渲染 ---------- */
 let curView = 'home';
-/* 未标版号：设置页「数据管理」里点食物库/动作库由弹窗改为独立页面。
+/* v4.15：设置页「数据管理」里点食物库/动作库由弹窗改为独立页面。
  * 这两个子页面不进 NAV（不占侧栏/底栏），借父级 settings 的高亮与持久化：
  * 刷新后落回设置页，而不是停在一个「返回」无处可去的半截子页。 */
 const SUBVIEW = { foodlib:'settings', exlib:'settings' };
@@ -1013,14 +1013,14 @@ function rebuildNav(){
   $$('[data-go]').forEach(b => b.addEventListener('click', () => go(b.dataset.go)));
   const tc = $('#sidebar [data-themeclick]'); if(tc) tc.addEventListener('click', toggleTheme);
 }
-/* 记住当前页面（未标版号）：刷新后回到上次浏览的页面而不是总回概览。
+/* 记住当前页面（v4.14）：刷新后回到上次浏览的页面而不是总回概览。
  * 键名按账户隔离，与离线缓存同一口径；只存 UI 状态，不参与服务器同步。 */
 function viewKey(){ return 'jjhealth_view:' + storeWho(); }
 function readView(){
   try { const v = localStorage.getItem(viewKey()); return NAV.some(n => n.id === v) ? v : 'home'; } catch(e){ return 'home'; }
 }
 function writeView(v){ try { localStorage.setItem(viewKey(), v); } catch(e){} }
-/* 滚动位置记忆（未标版号，手机端反馈）：切页时把离开那页的滚动量存起来，回来时原位恢复——
+/* 滚动位置记忆（v4.15，手机端反馈）：切页时把离开那页的滚动量存起来，回来时原位恢复——
  * 从设置页进「数据管理」的两个子页面再点返回，不再被打回设置页顶部。
  * 桌面滚文档、手机滚 .main（见 style.css 响应式段），两个滚动量都记（存的是纯 UI 状态，不入数据树）。
  * 恢复/归零一律 behavior:'auto'（瞬时）：旧写法是 smooth 归零，手机上会先看到一段「进页往上滚」。 */
@@ -1113,7 +1113,7 @@ function bindPullToRefresh(){
 function renderView(){
   cancelHomeDrag();   /* 切页时若有拖动中的卡片，收干净（否则监听器/样式会带到下一页） */
   const map = { home:renderHome, diet:renderDiet, train:renderTrain, body:renderBody, stats:renderStats, settings:renderSettings,
-    foodlib:renderFoodLibPage, exlib:renderExLibPage };   /* 未标版号 数据管理下的两个子页面 */
+    foodlib:renderFoodLibPage, exlib:renderExLibPage };   /* v4.15 数据管理下的两个子页面 */
   (map[curView])();
 }
 
@@ -1948,7 +1948,7 @@ function foodRowHTML(f, dataAttr, srcFallback){
 }
 
 /* 食物库管理（设置页 → 💾 数据管理 → 本页）：我的库（可增删）| 系统库（只读 + 挑入我的库）。
- * 未标版号：由弹窗改为独立页面——页头第一行是「返回 + 数据管理-食物库」，返回落回设置页。 */
+ * v4.15：由弹窗改为独立页面——页头第一行是「返回 + 数据管理-食物库」，返回落回设置页。 */
 let foodLibTab = 'mine';   /* 页面级状态：切到系统库后再进来仍停在原分页 */
 let foodLibQuery = '';     /* 搜索词：两个分页共用，切分页保留 */
 let foodLibPage = 1;       /* 当前页码：换搜索词/切分页时回到第 1 页 */
@@ -2482,7 +2482,7 @@ function openExercisePicker(cb){
 }
 
 /* ---------- 动作库（设置页 → 💾 数据管理 → 本页）：我的库（可增删）| 系统库（只读 + 挑入我的库） ----------
- * 未标版号：由弹窗改为独立页面——页头第一行是「返回 + 数据管理-动作库」。 */
+ * v4.15：由弹窗改为独立页面——页头第一行是「返回 + 数据管理-动作库」。 */
 function renderExLibPage(){
   invalidateSysLib();   /* v4.4:每次进页拉一次系统库即可,页内切分页不再重下 */
   $('#view').innerHTML =
@@ -2713,7 +2713,7 @@ function lifeSleepCard(d, ctx){
   const list = sleepSessions(d);
   const total = sleepTotalMins(d);
   const totalTxt = '合计 ' + round(total/60,1) + ' 小时 · ' + (total >= SLEEP_GOAL_MINS ? '达标' : '偏少');
-  /* 概览「今日」卡：合计挪到底部按钮那一行的最左（未标版号，用户要求），标题只留卡名；
+  /* 概览「今日」卡：合计挪到底部按钮那一行的最左（v4.15，用户要求），标题只留卡名；
    * 历史弹窗卡仍留在卡头 hint（isHome=false 分支不变） */
   const head = '<span>' + (isHome ? '😴 今日睡眠' : '😴 睡眠') + '</span>' +
     (list.length && !isHome ? '<span class="hint">' + totalTxt + '</span>' : '');
@@ -2992,7 +2992,7 @@ function renderSettings(){
   $('#nut_edit').addEventListener('click', openNutritionEditor);
   bindHabitSettings();
   /* v4.8：原 ⚙️ 设置弹窗的数据工具搬进本页卡片；v4.9 起「载入演示数据」入口移除，清空/导入成功后各自跳回概览 */
-  /* 未标版号：食物库/动作库由弹窗改为子页面（页面顶部带「返回」），返回时本页重渲染、按钮上的库计数自动刷新 */
+  /* v4.15：食物库/动作库由弹窗改为子页面（页面顶部带「返回」），返回时本页重渲染、按钮上的库计数自动刷新 */
   $('#st_foodlib').addEventListener('click', () => go('foodlib'));
   $('#st_exlib').addEventListener('click', () => go('exlib'));
   $('#st_export').addEventListener('click', exportData);
@@ -3452,7 +3452,7 @@ function runSelfTest(){
   const errs = [];
   try {
     demoData();
-    /* 未标版号：数据管理下的两个子页面也进冷渲染冒烟（它们不在 NAV 里，但同样是 go() 能到达的页） */
+    /* v4.15：数据管理下的两个子页面也进冷渲染冒烟（它们不在 NAV 里，但同样是 go() 能到达的页） */
     const views = ['home','diet','train','body','stats','settings','foodlib','exlib'];
     views.forEach(v => {
       try { curView = v; rebuildNav(); renderView(); errs.push(v + ':ok'); }
@@ -3495,7 +3495,7 @@ function runFTest(){
   T('habit', () => { const h = state.habits[0]; h.done[today()] = true; if(habitStreak(h, today()) < 1) throw new Error('streak-fail'); });
   T('aimMode', () => { const tdee = bmrOf(state.profile) * state.activity; openNutritionEditor(); const b = curDialog.box; $('#ne_mode', b).value = 'bulk'; $('#ne_save', b).click(); if(state.goal.mode !== 'bulk') throw new Error('aim-not-saved'); if(state.nutrition.kcal !== Math.round(tdee + GOAL_ADJ.bulk)) throw new Error('aim-calc-wrong'); });
   T('mealDialog', () => {
-    /* 未标版号（2026-09-12）记录饮食三 tab：「新增」全字段 + 勾选入库 → 「我的库」选中后只填克数。
+    /* v4.15（2026-09-12）记录饮食三 tab：「新增」全字段 + 勾选入库 → 「我的库」选中后只填克数。
      * 测试用刚入库的那条食物，账户个人库为空也能跑；结束就地复位，不污染真实数据。 */
     dietDate = today(); renderDiet();
     /* 先洗掉历史 residue（上一次跑到一半异常退出时留下的），再取快照 */
@@ -3537,7 +3537,7 @@ function runFTest(){
     $('#mi_name', b).value = ''; $('#mi_name', b).dispatchEvent(new Event('input', { bubbles: true }));
     if($('#mi_save_wrap', b).style.display !== 'none') throw new Error('empty-name-should-hide-checkbox');
     closeDialog();
-    /* 编辑已简化（未标版号：只改克数）：editMealDialog 预填原克数、不写库、不开放改营养 */
+    /* 编辑已简化（v4.15：只改克数）：editMealDialog 预填原克数、不写库、不开放改营养 */
     editMealDialog(today(), it.id);
     if(curDialog.box.innerHTML.indexOf('id="mi_name"') >= 0) throw new Error('edit-should-not-expose-nutrition');
     $('#me_g', curDialog.box).value = 80; $('#me_save', curDialog.box).click();
