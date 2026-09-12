@@ -424,6 +424,15 @@ async function main() {
   ok('T3b 饮食页渲染食物行(名称/克数/kcal)',
      view.__html.includes(x3.name) && view.__html.includes('150g') && view.__html.includes(String(x3.expKcal)));
 
+  /* T3b4 条目行不再重复显能量：kcal 只在标题下方那行（`Ng · N kcal · P/C/F`）里出现一次，
+   * 行尾只剩 ✏️/🗑 两个图标钮（旧的右侧 `<div class="textright">N / kcal</div>` 已删） */
+  const dietRow = (view.__html.match(/<div class="lrow" data-item="t_x1">[\s\S]*?(?=<button class="iconbtn2" data-edit)/) || [''])[0];
+  ok('T3b4 饮食条目行不重复显能量（kcal 只在副标题行，行尾无 textright 数值块）',
+     !view.__html.includes('class="textright"')
+     && !!dietRow && dietRow.includes('150g · ' + x3.expKcal + ' kcal') && !dietRow.includes('textright')
+     && (dietRow.match(/kcal/g) || []).length === 1,
+     'n=' + (dietRow.match(/kcal/g) || []).length + ' row=' + dietRow.slice(-160));
+
   ok('T3b2 四餐卡头是纯「＋」加号钮（无「添加」二字，文案进 title/aria-label，样式走 .btn.plus）',
      (view.__html.match(/class="btn plus" data-addslot="[a-z]+"/g) || []).length === 4
      && view.__html.includes('<button class="btn plus" data-addslot="breakfast" title="添加早餐" aria-label="添加早餐">＋</button>')

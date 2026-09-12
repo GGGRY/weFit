@@ -1466,7 +1466,6 @@ function renderDiet(){
         '<div class="thumb" style="background:' + slotColor(s.id) + '22;font-size:15px">' + s.ic + '</div>' +
         '<div class="grow"><div class="b">' + esc(it.name) + '</div>' +
           '<div class="sub">' + it.g + 'g · ' + st2kcal(it) + ' kcal · <span class="tiny">P' + st2p(it) + ' C' + st2c(it) + ' F' + st2f(it) + '</span></div></div>' +
-        '<div class="textright"><b>' + round(st2kcal(it), 0) + '</b><div class="tiny">kcal</div></div>' +
         '<button class="iconbtn2" data-edit="' + it.id + '" title="修改">✏️</button>' +
         '<button class="iconbtn2" data-del="' + it.id + '" style="color:var(--danger)" title="删除">🗑</button>' +
       '</div>').join('')
