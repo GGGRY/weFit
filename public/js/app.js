@@ -80,7 +80,7 @@ function age(){ return new Date().getFullYear() - state.profile.birthYear; }
  * 服务端 server/seed.js require 同一份),此处不再另抄一份。 */
 /* v4.11:动作库三件套枚举收敛到 seed-data.js 单一来源(admin.html 选择器同源;曾各抄一份互不感知)。
  * 内联数组仅为 seed-data.js 缺失时的兜底——增删枚举请改 seed-data.js 里的 SEED_CATS/SEED_MUSCLES/SEED_MODES。 */
-const CATS    = (typeof SEED_CATS    !== 'undefined' && SEED_CATS)    || ['力量','有氧','课程','球类','柔韧','其他'];
+const CATS    = (typeof SEED_CATS    !== 'undefined' && SEED_CATS)    || ['力量','有氧','球类','柔韧','其他'];
 const MUSCLES = (typeof SEED_MUSCLES !== 'undefined' && SEED_MUSCLES) || ['胸','背','腿','肩','手臂','核心','全身','其他'];
 const MODES   = (typeof SEED_MODES   !== 'undefined' && SEED_MODES)   || ['reps','time'];
 const MODE_CN = (typeof SEED_MODE_CN !== 'undefined' && SEED_MODE_CN) || { reps:'计次', time:'计时' };

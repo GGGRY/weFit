@@ -968,6 +968,13 @@ async function main() {
      && exEdit.after.name === '引体向上（改）' && exEdit.after.cat === '有氧' && exEdit.after.muscle === '全身' && exEdit.after.mode === 'time'
      && exEdit.badEnum === '' && exEdit.kept.cat === '有氧' && exEdit.kept.muscle === '全身' && exEdit.kept.mode === 'time'
      && exEdit.othersSame === true, JSON.stringify(exEdit));
+  /* T12z6 大类去掉「课程」：枚举只剩 5 类，库里残留的 cat='课程' 由 exTriple 兜底成「其他」 */
+  const catEnum = ev('JSON.stringify(CATS)');
+  const courseFb = JSON.parse(ev("JSON.stringify(exTriple({ name:'帕梅拉跳操', cat:'课程', muscle:'全身', mode:'time' }))"));
+  ok('T12z6 大类枚举无「课程」（力量/有氧/球类/柔韧/其他）；残留课程条目兜底 = 其他 · 全身 · 计时',
+     catEnum === '["力量","有氧","球类","柔韧","其他"]'
+     && courseFb.cat === '其他' && courseFb.muscle === '全身' && courseFb.mode === 'time',
+     catEnum + ' / ' + JSON.stringify(courseFb));
   ev("exLibQuery = ''; exLibPage = 1");
   ev("foodLibTab = 'mine'; exLibTab = 'mine'; go('settings')");
   /* 入口不再是弹窗：进入两个库页面不会往弹窗栈里加层；入口绑定直接走 go() */

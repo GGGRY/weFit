@@ -14,12 +14,12 @@
    增删枚举只改这里：app.js / admin.html 同源读取，服务端 sanitizeLibrary 白名单亦引用同一常量。
    * 旧字段名 muscle 保留原语义（部位），另加 cat 装大类 —— 不是改名。
    ===================================================== */
-const SEED_CATS = ['力量','有氧','课程','球类','柔韧','其他'];
+const SEED_CATS = ['力量','有氧','球类','柔韧','其他'];   /* 已删「课程」大类：原 2 条课程动作改判为「有氧」，见 CHANGELOG */
 const SEED_MUSCLES = ['胸','背','腿','肩','手臂','核心','全身','其他'];
 const SEED_MODES = ['reps','time'];
 const SEED_MODE_CN = { 'reps':'计次', 'time':'计时' };           /* 展示用中文名（前端与 admin 同源，防两处漂移） */
 /* 表单默认值：只是预选，不是约束（有氧也能标"腿"，计时也能是"核心"） */
-const SEED_MODE_DEFAULT = {'力量':'reps','有氧':'time','课程':'time','球类':'time','柔韧':'time','其他':'reps'};
+const SEED_MODE_DEFAULT = {'力量':'reps','有氧':'time','球类':'time','柔韧':'time','其他':'reps'};
 const SEED_MUSCLE_DEFAULT = {'力量':'胸'};           // 其余大类默认 '全身'
 function muscleDefault(cat){ return SEED_MUSCLE_DEFAULT[cat] || '全身'; }
 function modeDefault(cat){ return SEED_MODE_DEFAULT[cat] || 'reps'; }

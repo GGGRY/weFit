@@ -86,6 +86,7 @@ async function main() {
     { id: 'x1', name: '跑步', cat: '有氧', muscle: '全身', mode: 'time' },
     { id: 'x2', name: '瞎写条目', cat: '不存在的类', muscle: '胸', mode: 'nope' },
     { id: 'x3', name: '裸条目' },
+    { id: 'x4', name: '旧课程条目', cat: '课程', muscle: '全身', mode: 'time' },
   ] });
   ok('T3.6a 系统库写入成功', r.status === 200, JSON.stringify(r.json).slice(0, 120));
   r = await A.req('GET', '/api/system/library');
@@ -93,6 +94,8 @@ async function main() {
   ok('T3.6b 合法三件套原样保留', !!sEx[0] && sEx[0].cat === '有氧' && sEx[0].muscle === '全身' && sEx[0].mode === 'time', JSON.stringify(sEx[0]));
   ok('T3.6c 非法 cat/mode 丢弃、合法 muscle 保留', !!sEx[1] && !('cat' in sEx[1]) && sEx[1].muscle === '胸' && !('mode' in sEx[1]), JSON.stringify(sEx[1]));
   ok('T3.6d 缺三件套→键全缺(不凭空补默认值)', !!sEx[2] && !('cat' in sEx[2]) && !('muscle' in sEx[2]) && !('mode' in sEx[2]), JSON.stringify(sEx[2]));
+  /* T3.6e 大类去掉「课程」：白名单不再收 cat='课程'（其余合法键照旧保留） */
+  ok('T3.6e 「课程」已非法→cat 丢弃、muscle/mode 保留', !!sEx[3] && !('cat' in sEx[3]) && sEx[3].muscle === '全身' && sEx[3].mode === 'time', JSON.stringify(sEx[3]));
   /* 还原系统库，避免污染后续断言 */
   r = await A.req('PUT', '/api/system/library', {
     foods: seedData.SEED_FOODS.map((f, i) => ({ id: 'sf' + i, name: f.name, per100: f.per100, src: seedData.FOOD_SRC_SYS })),

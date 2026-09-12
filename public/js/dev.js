@@ -34,7 +34,7 @@ const DEMO_EXERCISES = [
   {name:'引体向上', cat:'力量', muscle:'背', mode:'reps'}, {name:'杠铃划船', cat:'力量', muscle:'背', mode:'reps'}, {name:'坐姿划船', cat:'力量', muscle:'背', mode:'reps'},
   {name:'杠铃深蹲', cat:'力量', muscle:'腿', mode:'reps'}, {name:'腿举', cat:'力量', muscle:'腿', mode:'reps'}, {name:'罗马尼亚硬拉', cat:'力量', muscle:'腿', mode:'reps'},
   {name:'哑铃二头弯举', cat:'力量', muscle:'手臂', mode:'reps'},
-  {name:'跑步', cat:'有氧', muscle:'全身', mode:'time'}, {name:'燃脂操课', cat:'课程', muscle:'全身', mode:'time'},
+  {name:'跑步', cat:'有氧', muscle:'全身', mode:'time'}, {name:'燃脂操课', cat:'有氧', muscle:'全身', mode:'time'},
 ];
 function demoFoodArr(){ return DEMO_FOODS.map((f,i)=>({id:'demo_f'+i, name:f.name, per100:Object.assign({}, f.per100), src:FOOD_SRC_SYS})); }
 function demoExArr(){ return DEMO_EXERCISES.map((e,i)=>({id:'demo_e'+i, name:e.name, cat:e.cat, muscle:e.muscle, mode:e.mode})); }
