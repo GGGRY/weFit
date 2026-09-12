@@ -614,7 +614,6 @@ function target(){
 }
 
 /* ---------- 饮食数据辅助 ---------- */
-function mkFood(id){ return state.foods.find(f => f.id === id); }
 function mealItem(food, g){ return { id:uid(), name:food.name, per100:Object.assign({}, food.per100), g:Math.round(g) }; }
 function dayMeals(date){
   if(!state.meals[date]) state.meals[date] = { breakfast:[], lunch:[], dinner:[], snack:[] };
@@ -1854,13 +1853,12 @@ function renderFoodLibPage(){
     const hits = state.foods.filter(f => matchName(f.name));
     const list = pageSlice(hits).map(f =>
       foodRowHTML(f, 'data-id="' + f.id + '"') +
-        '<button class="btn sm ghost" data-add="' + f.id + '">＋记录</button>' +
         '<button class="iconbtn2" data-delf="' + f.id + '" style="color:var(--danger)">🗑</button></div>').join('');
     /* 添加表单收进弹窗（卡头一颗「＋ 添加食物」），列表与计数留给页面 */
     $('#fl_body', b).innerHTML =
       '<h3><span>📚 我的食物库（' + state.foods.length + '）</span><span class="grow"></span>' +
         '<button class="btn sm primary" id="nf_open">＋ 添加食物</button></h3>' +
-      '<div class="tiny muted" style="margin-bottom:8px">点 ＋记录 可直接把它记到当日加餐；「系统库」分页可挑选管理员维护的公共食物。</div>' +
+      '<div class="tiny muted" style="margin-bottom:8px">「系统库」分页可挑选管理员维护的公共食物；记饮食请到「饮食」页。</div>' +
       (list || (state.foods.length
         ? '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">🔍</div>没有匹配「' + esc(foodLibQuery.trim()) + '」的食物</div>'
         : '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">📚</div>我的食物库是空的，去「系统库」挑一些吧</div>')) +
@@ -1871,11 +1869,6 @@ function renderFoodLibPage(){
       USERS.shared.foods = USERS.shared.foods.filter(f => f.id !== id);
       state.foods = USERS.shared.foods;
       save(); paintSeg(); renderMine();
-    }));
-    $$('[data-add]', b).forEach(btn => btn.addEventListener('click', () => {
-      const fo = mkFood(btn.dataset.add); if(!fo) return;
-      addMealItem(dietDate, 'snack', mealItem(fo, 100)); save();
-      go('diet'); toast('已记到' + dateCN(dietDate) + '加餐，可去修改克数');
     }));
     bindPager();
   }

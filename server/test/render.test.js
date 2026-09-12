@@ -665,11 +665,11 @@ async function main() {
   let hFood = '';
   try { ev("go('foodlib')"); hFood = ev("$('#fl_body', $('#view')).__html"); }
   catch (e) { hFood = 'ERR:' + e.message; }
-  ok('T12k 食物库页面：页头返回 + 标题，列表 + 卡头「＋ 添加食物」', !hFood.startsWith('ERR:')
+  ok('T12k 食物库页面：页头返回 + 标题，列表 + 卡头「＋ 添加食物」（行内只剩删除，「＋记录」已移除）', !hFood.startsWith('ERR:')
      && view.__html.includes('id="fl_back"') && view.__html.includes('数据管理-食物库')
      && view.__html.includes('id="fl_seg"') && hFood.includes('id="nf_open"')
      && !hFood.includes('id="nf_name"') && !hFood.includes('id="nf_add"')
-     && hFood.includes('data-delf=') && hFood.includes('data-add='), hFood.slice(0, 160));
+     && hFood.includes('data-delf=') && !hFood.includes('data-add='), hFood.slice(0, 160));
   const hFoodAdder = dlgHTML('openFoodAdder()');
   ok('T12n 添加食物弹窗：名称 + 四项营养 + 取消/添加',
      !hFoodAdder.startsWith('ERR:') && hFoodAdder.includes('id="nf_name"') && hFoodAdder.includes('id="nf_kcal"')
