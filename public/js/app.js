@@ -1203,19 +1203,19 @@ function renderHome(){
   const habToday = state.habits.filter(h => h.done[t]).length;
   const day = workoutForDate(t);
   const dn = day ? doneCount(day) : 0;
-  const itemTotal = day ? day.items.length : 0;                  /* 概览磁贴「今日运动」的分母 */
+  const itemTotal = day ? day.items.length : 0;                  /* 概览磁贴「运动」的分母 */
   const bmiV = bmi(), bmiInfo = bmiTone(bmiV);                  /* 概览磁贴「BMI」 */
 
   const html =
     /* 问候语：手机端居中（.home-greet，见 style.css 的 ≤899px 块）；桌面侧仍左对齐与下方内容对齐 */
     '<div class="muted home-greet">' + esc(greet) + '，<b>' + esc(activeUser().name) + '</b> · ' + dateCNW(t) + '</div>' +
     '<div class="row mt">' +
-      tileHTML('今日热量', fmtNum(eat.kcal), '/ ' + fmtNum(T.kcal) + ' kcal', '', '') +
+      tileHTML('热量', fmtNum(eat.kcal), '/ ' + fmtNum(T.kcal) + ' kcal', '', '') +
       /* BMI 磁贴：数值 + 分档小字；小字跟在第二行数值右侧（标签行只剩「BMI」），颜色同身体页（bmiTone 单一来源）；无体重/身高时给提示文案 */
       tileHTML('BMI', bmiV === null ? '--' : bmiV, '', '', '',
         bmiInfo ? (bmiInfo.ok ? '✓ 正常' : '⚠ ' + bmiInfo.tag) : '记录体重后查看', bmiInfo ? bmiInfo.c : '') +
-      /* 今日运动磁贴：当天已打勾项 / 全部项；今天没安排（或安排为空）显示「休息」 */
-      tileHTML('今日运动', itemTotal ? dn + '/' + itemTotal : '休息', itemTotal ? '项' : '', '', '') +
+      /* 运动磁贴（需 2026-09-12：标签由「今日运动」缩为「运动」）：当天已打勾项 / 全部项；今天没安排（或安排为空）显示「休息」 */
+      tileHTML('运动', itemTotal ? dn + '/' + itemTotal : '休息', itemTotal ? '项' : '', '', '') +
       tileHTML('打卡', habToday + '/' + state.habits.length, '', '', '') +
     '</div>' +
     /* 除顶部磁贴行外，其余「今日卡片」都进这个容器：顺序由 state.homeOrder 决定、可拖动调整 */
@@ -2797,7 +2797,16 @@ function chartCard(containerId, title, sub, controls){
 ===================================================== */
 let waterHisDate = today();        // 饮水历史弹窗内翻页的当前日期
 let sleepHisDate = today();        // 睡眠历史弹窗内翻页的当前日期
-const QUALITY = [{n:1,ic:'😖'},{n:2,ic:'😕'},{n:3,ic:'😐'},{n:4,ic:'🙂'},{n:5,ic:'😄'}];
+/* 睡眠质量 1-5 档。2026-09-12 用户裁定：由表情改成星等。
+ * 原 😖😕😐🙂😄 五张脸在卡面 16px 上中间三档几乎分不出（而且段首类型图标也是表情，两张脸挤一行）。
+ * 现在档位 = 实心 ★ 的个数 + 空心 ☆ 补足 5 格，“几档”一眼看得出；编辑器那排也用同一套星。 */
+const QUALITY = [1,2,3,4,5].map(n => ({ n, stars: '★'.repeat(n) + '☆'.repeat(5 - n) }));
+/* 卡面质量小签（HTML）：实心 ★ 金色 = 已给档，空心 ☆ 灰色 = 剩余档（无评分不显，返回空串） */
+function qStarsHTML(v){
+  const q = QUALITY.find(x => x.n === v);
+  if (!q) return '';
+  return '<span class="qstars"><span class="qf">' + '★'.repeat(q.n) + '</span><span class="qe">' + '☆'.repeat(5 - q.n) + '</span></span>';
+}
 
 function lifeWaterCard(d, ctx){    // ctx:'home'=概览今日卡（标题带「今日」）| 'dlg'=历史弹窗卡
   const isHome = ctx === 'home';
@@ -2827,15 +2836,15 @@ function lifeSleepCard(d, ctx){
   // 无当日快速表单：空态只留一句提示，新增一律走「记录一段」弹窗（v4.6 用户要求收敛）
   return '<div class="card" style="margin-bottom:0"><h3>' + head + '</h3>' +
     (list.length ? list.map((s, i) => {
-      const tp = sleepType(s.t), qm = QUALITY.find(q => q.n === num(s.quality));
+      const tp = sleepType(s.t);
       // 未知类型如实显形（❓ + 原始 t），不冒充「夜间睡眠」——旧写法会让人看错档，
       // 并在编辑保存时把原值悄悄改成 night
       const ic = tp ? tp.ic : '❓';
       const label = tp ? tp.label : '未知类型 ' + esc(String(s.t === undefined || s.t === null || s.t === '' ? '(空)' : s.t));
-      // 重点展示时长；质量只显当前档位一个表情（无评分不显）；具体时段小字
+      // 重点展示时长；质量贴个星等小签（无评分不显——qStarsHTML 自己返空）；具体时段小字
       return '<div class="lrow"><div class="thumb">' + ic + '</div>' +
         '<div class="grow"><div class="b" style="font-size:17px">' + round((num(s.mins) || 0)/60,1) + ' 小时' +
-        (qm ? '<span style="font-size:16px;margin-left:8px">' + qm.ic + '</span>' : '') + '</div>' +
+        qStarsHTML(num(s.quality)) + '</div>' +
         '<div class="sub">' + label + ' · ' + esc(s.bed || '--:--') + ' → ' + esc(s.wake || '--:--') + '</div></div>' +
         '<button class="iconbtn2" data-sleedit data-i="' + i + '" title="修改/删除">✏️</button></div>';
     }).join('') : '<div class="tiny muted" style="text-align:center;padding:8px 0">还没有睡眠记录</div>') +
@@ -3079,7 +3088,7 @@ function sleepSessionEditor(d, idx, after){
       '<div class="tw-cell">' + timeWheelHTML('sq_bed', bed0) + '<label>入睡</label></div>' +
       '<div class="tw-cell">' + timeWheelHTML('sq_wake', wake0) + '<label>起床</label></div>' +
     '</div>' +
-    '<div class="row mt" style="align-items:center"><span class="tiny muted" style="margin-right:8px">质量：</span><div class="stars" id="sq_stars">' + QUALITY.map(q => '<button class="sqst on" data-q="' + q.n + '">' + q.ic + '</button>').join('') + '</div></div>' +
+    '<div class="row mt" style="align-items:center"><span class="tiny muted" style="margin-right:8px">质量：</span><div class="stars" id="sq_stars">' + QUALITY.map(q => '<button class="sqst on" data-q="' + q.n + '" title="' + q.n + ' 档">★</button>').join('') + '</div></div>' +
     '<div class="row mt" style="align-items:center"><span class="tiny muted">时长 <b id="sq_prev">--</b></span></div>' +
     '<div class="d-f"><button class="btn ghost" data-cancel>取消</button>' +
       (editing !== null ? '<button class="btn danger ghost" id="sq_del">删除该段</button>' : '') +

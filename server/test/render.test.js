@@ -133,17 +133,17 @@ async function main() {
   while (!view.__html && Date.now() - t0 < 3000) await new Promise(r => setTimeout(r, 10));
   ok('T1a 启动冒烟:me/state → 概览渲染无异常', !!view.__html, '3s 超时:#view 始终为空');
   if (!view.__html) return finish();
-  ok('T1b 概览关键块', view.__html.includes('今日热量') && view.__html.includes('🍽️ 今日饮食')
+  ok('T1b 概览关键块', view.__html.includes('>热量</span>') && view.__html.includes('🍽️ 今日饮食')
      && sidebar.__html.includes('navbtn active" data-go="home"'));
   ok('T1c 登录态与单人树', ev('me.username') === 'tester' && ev('USERS.active') === 'u_alice'
      && ev('Object.keys(USERS.users).length') === 1,
      `me=${ev('JSON.stringify(me&&me.username)')} active=${ev('USERS.active')}`);
 
-  /* T1d 概览磁贴：今日热量 → BMI → 今日运动 → 打卡（BMI/运动为本轮新增） */
+  /* T1d 概览磁贴：热量 → BMI → 运动 → 打卡（BMI/运动为本轮新增；2026-09-12 标签去掉「今日」前缀） */
   const rowStart = view.__html.indexOf('<div class="row mt">');
   const tileRow = rowStart < 0 ? '' : view.__html.slice(rowStart, view.__html.indexOf('🍽️ 今日饮食'));
-  const ti = ['今日热量','BMI','今日运动','打卡'].map(l => tileRow.indexOf('>' + l + '</span>'));
-  ok('T1d 概览磁贴四张，顺序为 今日热量 → BMI → 今日运动 → 打卡',
+  const ti = ['热量','BMI','运动','打卡'].map(l => tileRow.indexOf('>' + l + '</span>'));
+  ok('T1d 概览磁贴四张，顺序为 热量 → BMI → 运动 → 打卡',
      ti.every((i, k) => i >= 0 && (k === 0 || i > ti[k - 1])), 'idx=' + ti.join(','));
   const bmiV = ev('bmi()');
   /* 这里故意用测试侧独立阈值再算一遍，防渲染/色号写错（不对 bmiTone 自证） */
@@ -162,7 +162,7 @@ async function main() {
      && !bmiTile.includes('<div class="delta'),
      'bmi=' + bmiV + ' tone=' + expTone.t + '/' + expTone.c + ' tile=' + bmiTile);
   const expWk = ev("(function(){const d=workoutForDate(today());return d&&d.items.length?doneCount(d)+'/'+d.items.length:'休息';})()");
-  ok('T1d 今日运动磁贴 = 当日已打勾项/全部项（今天没安排显示「休息」）',
+  ok('T1d 运动磁贴 = 当日已打勾项/全部项（今天没安排显示「休息」）',
      tileRow.slice(ti[2], ti[3]).includes(expWk === '休息' ? '>休息</div>' : '>' + expWk + '<span class="unit">项</span>'),
      'wk=' + expWk + ' tile=' + tileRow.slice(ti[2], ti[3]));
 
@@ -468,6 +468,32 @@ async function main() {
   ]; renderHome()`);
   ok('T5b 10 小时 = 新目标 → 「合计 10 小时 · 达标」', view.__html.includes('合计 10 小时 · 达标'),
      view.__html.includes('😴') ? view.__html.slice(view.__html.indexOf('😴'), view.__html.indexOf('😴') + 120) : '无睡眠卡');
+  /* T5c 三档类型图标（2026-09-12）：每段行首 thumb 用自己那档的图标，三档互不相同 */
+  ev(`state.sleep[today()] = [
+    { t:'night', bed:'22:00', wake:'07:00', mins:540, quality:4 },
+    { t:'nap',   bed:'13:00', wake:'13:30', mins:30,  quality:3 },
+    { t:'rest',  bed:'16:00', wake:'16:20', mins:20,  quality:3 },
+  ]; renderHome()`);
+  const segIcons = ev("SLEEP_TYPES.map(t => '<div class=\"thumb\">' + t.ic + '</div>')");
+  ok('T5c 今日睡眠卡：段首图标随类型走（🌙 / ⛅ / 🛋️ 三档互不相同）',
+     segIcons.every(s => view.__html.includes(s)) && new Set(segIcons).size === 3,
+     'icons=' + JSON.stringify(segIcons));
+  /* T5d 质量星等（2026-09-12）：卡面小签 = 实心 ★ 个数即档位 + 空心 ☆ 补足 5 格；五档文案互不相同；无评分不渲染小签 */
+  const starStr = ev('QUALITY.map(q => q.stars)');
+  ok('T5d 质量五档星等文案 = ★×n + ☆×(5-n)，且五档互不相同',
+     starStr.join('|') === '★☆☆☆☆|★★☆☆☆|★★★☆☆|★★★★☆|★★★★★' && new Set(starStr).size === 5,
+     'stars=' + JSON.stringify(starStr));
+  ok('T5d 卡面按各段自己的 quality 渲染小签（4 档 = 金 ★★★★ + 灰 ☆；3 档 = 金 ★★★ + 灰 ★☆…☆）',
+     view.__html.includes('<span class="qstars"><span class="qf">★★★★</span><span class="qe">☆</span></span>') &&
+     view.__html.includes('<span class="qstars"><span class="qf">★★★</span><span class="qe">☆☆</span></span>'),
+     'html=' + (view.__html.match(/<span class="qstars">.*?<\/span><\/span>/g) || []).join(','));
+  const starDlg = (function(){ try { ev('closeDialog && curDialog && closeDialog()'); ev('sleepSessionEditor(today(), 0)');
+      return ev('curDialog.box.__html'); } finally { ev('closeDialog && curDialog && closeDialog()'); } })();
+  ok('T5d 编辑器星级按钮 = 五颗固定 ★（亮起颗数由 paint() 按档位点亮，不再五张脸）',
+     (starDlg.match(/data-q="[1-5]"/g) || []).length === 5 &&
+     (starDlg.match(/>★<\/button>/g) || []).length === 5 &&
+     !/[\u{1F600}-\u{1F64F}]/u.test(starDlg),      // 质量不再拿脸表情当档位
+     'stars=' + (starDlg.match(/>★<\/button>/g) || []).length + ' q=' + (starDlg.match(/data-q="[1-5]"/g) || []).join(','));
 
   /* T6 打卡卡:今日+昨日已打卡 → 连续 2 天 */
   ev(`state.habits = [{ id:'h1', name:'背单词', icon:'📖', color:'#1baf7a',

@@ -18,6 +18,12 @@ const J = v => JSON.stringify(v);
 /* ---- 类型 ---- */
 ok('S1 三档类型齐全且键唯一', SLEEP_TYPES.length === 3 &&
   new Set(SLEEP_TYPES.map(t => t.k)).size === 3);
+/* 2026-09-12 用户反馈：原 😴（夜间）/😌（午睡）都是睡脸，38px thumb 里分不出，
+   所以图标必须三档互不相同、且不用人脸表情（脸表情留给头像等用途，睡眠类型不许用） */
+ok('S1b 三档图标互不相同且都不是人脸表情（区分度：🌙 / ⛅ / 🛋️）',
+  new Set(SLEEP_TYPES.map(t => t.ic)).size === 3 &&
+  SLEEP_TYPES.every(t => !/[\u{1F600}-\u{1F64F}]/u.test(t.ic)),
+  'icons=' + J(SLEEP_TYPES.map(t => t.ic)));
 ok('S2 sleepType 命中返回原对象', sleepType('nap').label === '午睡');
 ok('S3 未知类型返回 null（不冒充夜间，调用方须如实展示）',
   sleepType('meditation') === null && sleepType(undefined) === null);

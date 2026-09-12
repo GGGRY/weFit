@@ -350,9 +350,15 @@ body.hcard-dragging input,body.hcard-dragging textarea{user-select:text;-webkit-
 }
 
 /* 睡眠星星 */
+/* 睡眠质量星等（.qstars = 卡面小签，★ 个数 = 档位；.stars = 编辑弹窗的星级按钮，亮起颗数 = 档位）
+   2026-09-12：由表情（😖😕😐🙂😄）改星等——五张脸小字号下分不出，且与段首类型图标撞脸。
+   星级是文字字形，颜色由这两条规则给，所以 off 态用灰色而不是 grayscale 滤镜。 */
+.qstars{font-size:14px;letter-spacing:1px;margin-left:8px}
+.qstars .qf{color:var(--warn)}
+.qstars .qe{color:var(--ink-3);opacity:.75}
 .stars{display:inline-flex;gap:3px}
-.stars button{font-size:20px;background:none;border:0;padding:0 1px;filter:grayscale(1);opacity:.45}
-.stars button.on{filter:none;opacity:1}
+.stars button{font-size:22px;line-height:1;background:none;border:0;padding:0 3px;color:var(--ink-3);opacity:.6}
+.stars button.on{color:var(--warn);opacity:1}
 
 /* 底部大按钮条 */
 .quickbar{position:sticky;bottom:0;display:flex;gap:10px;padding:10px 0 6px;z-index:15}
