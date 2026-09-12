@@ -153,12 +153,12 @@ async function main() {
     : bmiV < 28   ? { t:'⚠ 超重', c:'var(--warn)' }
     :               { t:'⚠ 肥胖', c:'var(--danger)' };
   const bmiTile = ti[1] < 0 ? '' : tileRow.slice(ti[1] - 40, ti[2]);
-  /* 需 2026-09-12：分档小字从末行挪到首行「BMI」右侧（首行 = 标签 + lab-tone，值单独一行，不再有 delta 行） */
-  const toneSpan = '<span class="lab-tone"' + (expTone.c ? ' style="color:' + expTone.c + '"' : '') +
-    '>' + expTone.t + '</span></div>';
-  ok('T1d BMI 磁贴 = 分档数值 + 分档小字贴在首行「BMI」右侧（颜色与 bmiTone 同源，不再另占一行）',
-     bmiTile.includes('<div class="lab"><span>BMI</span>' + toneSpan)
-     && bmiTile.includes('>' + (bmiV === null ? '--' : bmiV) + '</div>')
+  /* 需 2026-09-12：分档小字钉在第二行数值右侧（数值 + val-tone 一行，标签行只剩「BMI」，仍不用 delta 行） */
+  const toneSpan = '<span class="val-tone"' + (expTone.c ? ' style="color:' + expTone.c + '"' : '') +
+    '>' + expTone.t + '</span>';
+  ok('T1d BMI 磁贴 = 第二行「数值 + 分档小字」（标签行只剩 BMI，颜色与 bmiTone 同源，不用 delta 行）',
+     bmiTile.includes('<div class="lab"><span>BMI</span></div>')
+     && bmiTile.includes('<div class="val">' + (bmiV === null ? '--' : bmiV) + toneSpan + '</div>')
      && !bmiTile.includes('<div class="delta'),
      'bmi=' + bmiV + ' tone=' + expTone.t + '/' + expTone.c + ' tile=' + bmiTile);
   const expWk = ev("(function(){const d=workoutForDate(today());return d&&d.items.length?doneCount(d)+'/'+d.items.length:'休息';})()");
