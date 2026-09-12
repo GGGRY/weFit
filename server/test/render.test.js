@@ -633,11 +633,25 @@ async function main() {
   ok('T9b 周图横轴为 W1…W12（不得出现 Wundefined）',
      /\>W\d+</.test(volSVG) && /\>W\d+</.test(minsSVG) && !volSVG.includes('undefined') && !minsSVG.includes('undefined'),
      'volX=' + (volSVG.match(/\>W\w*</g) || []).join(','));
-  const stI = view.__html.indexOf('id="st_sleep"'), waI = view.__html.indexOf('id="st_water"');
-  const gap = (stI > -1 && waI > stI) ? view.__html.slice(stI, waI) : '';
-  ok('T9c 历史页睡眠/饮水卡各自独占一行（不再共用一个 cols-2 网格）',
-     gap.includes('><div><div class="chart-card') && !gap.includes('grid cols-2'),
-     'between=' + (gap ? gap.slice(-70) : '未找到两张图'));
+  /* 2026-09-12 起睡眠时长卡调到体重趋势后面，睡眠/饮水不再相邻 → 不再用「两张图之间」取切片，
+   * 改成对每张卡各自判它的外层包裹（卡内 `chart-card` 之前那层）= 普通 `<div>`、不是 `cols-2` 网格 */
+  const soloWrap = id => {
+    const o = view.__html, i = o.indexOf('id="' + id + '"');
+    if (i < 0) return null;
+    const k = o.lastIndexOf('<div class="chart-card', i);
+    return k < 0 ? null : o.slice(Math.max(0, k - 30), k);
+  };
+  const sleepWrap = soloWrap('st_sleep'), waterWrap = soloWrap('st_water');
+  ok('T9c 历史页睡眠/饮水卡各自独占一行（不共用一个 cols-2 网格）',
+     !!sleepWrap && !!waterWrap && sleepWrap.endsWith('<div>') && waterWrap.endsWith('<div>')
+     && !sleepWrap.includes('cols-2') && !waterWrap.includes('cols-2'),
+     'sleep=' + sleepWrap + ' | water=' + waterWrap);
+  ok('T9d 睡眠时长卡紧随体重趋势卡（睡眠→热量→宏量，2026-09-12 裁定）',
+     (() => { const o = view.__html;
+       const iW = o.indexOf('id="st_weight"'), iS = o.indexOf('id="st_sleep"'), iC = o.indexOf('id="st_cal"');
+       return iW > -1 && iW < iS && iS < iC; })(),
+     'weight=' + view.__html.indexOf('id="st_weight"') + ' sleep=' + view.__html.indexOf('id="st_sleep"')
+       + ' cal=' + view.__html.indexOf('id="st_cal"'));
 
   /* T10 动作库行内版式：名称 + 「大类 · 部位 · 方式」小字（v4.15 的平铺表格已换成食物库同款 lrow） */
   const libRow = ev("exLibRowHTML(state.exercises.find(e => e.name === '杠铃卧推'), 'data-id=\"e0\"', '<button>✏️</button>')");

@@ -3593,24 +3593,24 @@ function renderStats(){
     tileHTML('平均饮水(30天)', S.avgWater === null ? '--' : S.avgWater, '杯', '') +
     tileHTML('打卡完成率(30天)', S.habitRate === null ? '--' : S.habitRate + '%', '', '');
 
-  // 图表容器
+  /* 图表容器（渲染顺序 = 下面 html 里的拼装顺序；睡眠时长卡紧跟体重趋势卡，2026-09-12 用户裁定） */
   const c1 = chartWrap('体重趋势', '近120条记录', 'st_weight', '');
+  const c5 = chartWrap('睡眠时长', '近30天 · 虚线为目标 10 小时', 'st_sleep', '<button class="btn sm ghost" data-slehis title="补记/修改历史睡眠记录">🕘 补记</button>');
   const c2 = chartWrap('每日热量 vs 目标', '近30天', 'st_cal', '');
   const c3 = chartWrap('宏量营养素摄入', '近14天 · kcal', 'st_macro', legendHTML([{label:'蛋白',color:CX.c1},{label:'碳水',color:CX.c2},{label:'脂肪',color:CX.c3}]));
   const c4 = chartWrap('每周运动容量', '近12周 · Σ重量×次数', 'st_vol', '');
   const c4b = chartWrap('每周运动时长', '近12周 · Σ分钟（当周有距离时显示在悬停提示里）', 'st_mins', '');
-  const c5 = chartWrap('睡眠时长', '近30天 · 虚线为目标 10 小时', 'st_sleep', '<button class="btn sm ghost" data-slehis title="补记/修改历史睡眠记录">🕘 补记</button>');
   const c6 = chartWrap('每日饮水量', state.waterTarget ? '近30天 · 虚线为每日目标' : '近30天', 'st_water', '<button class="btn sm ghost" data-watshis title="补记/修改历史饮水记录">🕘 补记</button>');
 
   const html =
     '<div class="row">' + tiles + '</div>' +
     '<div class="row mt">' + tiles2 + '</div>' +
     '<div class="mt">' + c1 + '</div>' +
+    '<div>' + c5 + '</div>' +
     '<div class="grid cols-2">' + c2 + '</div>' +
     '<div>' + c3 + '</div>' +
     '<div>' + c4 + '</div>' +
     '<div>' + c4b + '</div>' +
-    '<div>' + c5 + '</div>' +
     '<div>' + c6 + '</div>';
 
   $('#view').innerHTML = html;
