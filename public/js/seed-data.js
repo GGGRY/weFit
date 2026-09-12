@@ -1,10 +1,12 @@
 /* =====================================================
    食物/动作库种子数据 —— 数据本体在 seed-data.json，本文件只做枚举与加载
    - 数据源：public/js/seed-data.json（唯一数据源，禁止在 JS 里另抄一份）
-   - 浏览器：index.html 在 app.js 之前加载本文件；本文件同步读取同目录 seed-data.json
+   - 浏览器：index.html / admin.html 只取本文件的枚举与常量（大类/部位/记录方式/营养来源）；
+     **不加载 seed-data.json**（v4.16 起；此前是同步 XHR，见下）
    - 服务端：server/seed.js require('../public/js/seed-data.js')；Node 侧直接 require JSON
    历史上两份手抄（app.js 与 server/seed.js）已发生数值漂移（香蕉/苹果的 f），
-   收敛为本 JSON 后禁止再在任何一侧另抄一份。
+   收敛为本 JSON 后禁止再在任何一侧另抄一份（调试钩子的演示数据除外，见 app.js 的 DEMO_FOODS，
+   它只服务 ?selftest/?ftest/?shot，与系统库无关）。
    v4.4：肌群枚举 SEED_MUSCLES 一并收编（曾各抄一份于 app.js 与 admin.html）。
    v4.11：动作库三件套 —— cat 大类 / muscle 部位 / mode 计数方式，三者正交：
        杠铃卧推 = 力量 · 胸 · 计次     跑步 = 有氧 · 全身 · 计时
@@ -28,41 +30,19 @@ function modeDefault(cat){ return SEED_MODE_DEFAULT[cat] || 'reps'; }
 const FOOD_SRC_SYS = 'USDA';
 const FOOD_SRC_USER = '用户';
 
-/* 数据本体统一从 seed-data.json 读取：
- * Node 侧 require JSON（缺失/坏 JSON 直接抛错、服务起不来——不静默变空库）；
- * 浏览器侧同步 XHR（同源、index.html 先加载本文件，无构建）。
- * 浏览器读不到时**不能静默变空库**（SEED_FOODS 为空会被「旧库换新种子」等路径拿来覆盖库），
- * 所以记下 SEED_LOAD_ERROR 并 console.error，调用方按空数组自行收紧。 */
-let SEED_LOAD_ERROR = null;
-function seedLoadFailed(reason){
-  SEED_LOAD_ERROR = reason;
-  if (typeof console !== 'undefined' && console.error) console.error('[seed] seed-data.json 读取失败：' + reason + ' —— SEED_FOODS/SEED_EXERCISES 为空');
+/* 数据本体（食物 321 条 / 动作 27 个）**只有服务端用**：server/seed.js require 本文件、
+ * 由 Node 侧 require seed-data.json 建系统库；缺失/坏 JSON 直接抛错、服务起不来（不静默变空库）。
+ * **浏览器侧不加载数据本体**（v4.16）：用户端要系统库走 GET /api/system/library，本人库在数据树里，
+ * 调试钩子的演示数据用 app.js 内联的 DEMO_FOODS/DEMO_EXERCISES。此前浏览器用同步 XHR 拉这 62KB，
+ * 每刷新一次就要在主线程上阻塞地下载（既是「手机刷新卡一下」的成因，也把 fetch 的 4s 超时定时器拖到响应之后才执行）。
+ * 浏览器侧需要的只是下面的枚举/默认值/来源常量（~1KB 内联），不依赖那个 JSON。 */
+let SEED_FOODS = [];
+let SEED_EXERCISES = [];
+if (typeof module !== 'undefined' && module.exports) {
+  const data = require('./seed-data.json');
+  SEED_FOODS = data.foods || [];
+  SEED_EXERCISES = data.exercises || [];
 }
-function loadSeedData(){
-  if (typeof module !== 'undefined' && module.exports){
-    const data = require('./seed-data.json');
-    return { foods: data.foods || [], exercises: data.exercises || [] };
-  }
-  if (typeof XMLHttpRequest !== 'undefined'){
-    try {
-      const xhr = new XMLHttpRequest();
-      xhr.open('GET', 'js/seed-data.json', false);
-      xhr.send(null);
-      if (xhr.status >= 200 && xhr.status < 300){
-        const data = JSON.parse(xhr.responseText);
-        return { foods: data.foods || [], exercises: data.exercises || [] };
-      }
-      seedLoadFailed('HTTP ' + xhr.status);
-    } catch (e) { seedLoadFailed(e && e.message ? e.message : String(e)); }
-  } else {
-    seedLoadFailed('无 XMLHttpRequest');
-  }
-  return { foods: [], exercises: [] };
-}
-
-const _SEED = loadSeedData();
-const SEED_FOODS = _SEED.foods;
-const SEED_EXERCISES = _SEED.exercises;
 
 /* Node 侧（server/seed.js）经 CommonJS 取用；浏览器里这几行是无害空操作 */
 if (typeof module !== 'undefined' && module.exports) {

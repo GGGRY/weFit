@@ -1,6 +1,6 @@
 # 健康管理 · 项目备忘录
 
-> 当前版本 **v4.14** · 最后更新 2026-09-11 · 版本变更历史见 [CHANGELOG.md](CHANGELOG.md) · 后续开发计划见 [PLANS.md](PLANS.md)
+> 当前版本 **v4.16** · 最后更新 2026-09-12 · 版本变更历史见 [CHANGELOG.md](CHANGELOG.md) · 后续开发计划见 [PLANS.md](PLANS.md)
 > 本文当仅记录主要的项目定位，主要功能清单和结构等，已经实现的功能清单中，细节的交互，样式和按钮功能等不用记录在本文档中。
 
 ## 一、项目定位
@@ -8,13 +8,15 @@
 个人健康管理网页，主线「记录 → 回顾」：饮食、运动、体重围度、睡眠、饮水、目标、历史看板。
 
 **技术形态**：零依赖全栈
-- **前端** `public/`：`index.html` + `admin.html` + `css/style.css` + `js/seed-data.json` + `js/seed-data.js` + `js/sleep-shape.js` + `js/app.js`，无构建工具，样式/脚本/图标全内联，零外部依赖
+- **前端** `public/`：`index.html` + `admin.html` + `css/style.css` + `js/seed-data.js` + `js/sleep-shape.js` + `js/app.js`（+ `js/dev.js` 调试钩子，按需加载）；`js/seed-data.json` 也在 `public/` 下但**只有服务端与工具读**（浏览器不加载，见下），无构建工具，样式/脚本/图标全内联，零外部依赖
 - **后端** `server/`：Node 内置 `node:http` + `node:sqlite` + `node:crypto`，**npm 依赖为零**，`node server.js` 即起
 - **鉴权**：scrypt 密码哈希 + SQLite 持久会话（30 天）+ HttpOnly Cookie；除登录/注册/健康检查/静态页外全部 API 走鉴权中间件
 - **数据库** `server/data/jjhealth.db`：会增长的集合拆为 13 张关系表（餐次/运动安排/身体/睡眠/饮水/习惯/账户/会话…；v4.11 起运动项拍平为列，v4.12 起计划与记录合并为一天一条、且完成状态落在每一项上）；profile/goal/nutrition 与个人食物/动作库等形状固定对象用 JSON 列整存保真
 - **同步模型**：同一服务器 + **登录同一账户** = 读写同一份本人数据，天然同步；**不同账户彼此隔离**；浏览器 localStorage 降级为按账户分键的离线缓存，服务器为准数据源
 - **启动**：Windows 双击 `start.bat`，Linux/macOS 运行 `./start.sh`（或 `cd server && node server.js`），端口 8123
 - **手机访问**：与电脑同 Wi-Fi 时打开 `http://<电脑IP>:8123`（启动窗口会打印可用地址）
+- **静态资源与响应压缩（v4.16）**：静态文件（html/css/js/json）一律 `Cache-Control: no-cache` + `ETag`（大小+mtime）——刷新时带 `If-None-Match` 校验，未改动回 `304`（~300B）、改动立即生效（项目无构建/无版本号，靠 304 而不是 `max-age`，不会出现「改了代码手机还拿旧文件」）；文本响应（含 `/api/state`、`/api/system/library` ≥1KB 的 JSON）按 `Accept-Encoding` 走 gzip（`app.js` 258KB→75KB，十进制 KB；`gzip;q=0` 视为不接受；静态响应的 200/304 都带 `Vary`）。此前是 `no-store` + 不压缩，手机每次刷新重下 **361KB**，是「局域网刷新有点慢」的主因；同时 `server.keepAliveTimeout` 没为 65s（Node 默认 5s，比浏览器 socket 池空闲时间短，容易复用已被服务端关掉的连接）。**注意 ETag 含 mtime**：mtime 精度取决于文件系统（本项目所在的 NTFS/exFAT fuse 挂载只有 10ms 粒度），别用「改内容不改 mtime」的方式写文件。
+- **种子数据只在服务端**：数据本体 `js/seed-data.json`（食物 321 + 动作 27）由 `server/seed.js` 在 Node 侧 `require` 建系统库；**浏览器侧不加载它**（v4.16；用户端要系统库走 `GET /api/system/library`，本人库存在数据树里），`js/seed-data.js` 在浏览器只提供枚举/默认值/来源常量（~1KB 内联，表单与来源小签用）。调试钩子的演示数据用 app.js 内联的 `DEMO_FOODS`（14 条）/`DEMO_EXERCISES`（11 个）——不依赖种子，也不为它多下 62KB（换 USDA 种子后按名匹配全落空、近 14 天餐食其实为空，v4.16 一并修掉）。
 
 ## 二、已实现功能清单
 
@@ -123,7 +125,7 @@
 - **滚动容器**：桌面滚文档（`.sidebar` 靠 `sticky` 贴边；2026-09-11 起无顶栏，内容直接从 `.main` 顶部开始，上内边距 20px）；`≤899px` 改滚 `.main`（`html:has(.app),body:has(.app){height:100%;overflow:hidden}`——2026-09-12 起作用域只到带 `.app` 外壳的用户端，否则后台页 `/admin`（`.adm-wrap` 直接挂 `body`、没有 `.main`）会被一起锁死而整页无法滚动；`.app`/`.main` 取 `100dvh`，`100vh` 仅作回退），避免移动浏览器翻页时收起地址栏改变视口高度、把 `fixed;bottom:0` 的 Tab 栏拖着上下跳。随之两处移动端专属修正（原「`.topbar` 改 `position:static`」一条已随顶栏整体移除作废）：①隐 `.main` 滚动条（`scrollbar-width:none` + `::-webkit-scrollbar{display:none}`），否则全局滚动条样式会让这个内层容器常驻一条占宽竖条；②原生下拉刷新随之失效（挂在根滚动器上 + `.main` 的 `overscroll-behavior-y:contain` 阻断滚动链），由手写手势 `bindPullToRefresh()` 补回——`.main` 顶部下拉 0.5 阻尼跟手、过 72px 松手整页重载（重走冷启动收敛），`#ptr` 胶囊指示器，仅 ≤899px 且无登录门/弹窗时接管。切页归顶/回位由 `go(v)` 同时处理 `window` 与 `.main` 两处（换页回该页上次位置，见上「滚动位置记忆」）
 - **移动端适配**：`.tile` 自带 `min-width:130px` 是多列网格溢出根因，网格列一律 `minmax(0,1fr)` + 子项 `min-width:0`；营养目标六 tile 自适应收窄；概览打卡区为**一行一条习惯 + 当天圆钮**（无多日网格/横向滚动，≤560px 圆钮缩至 27px）
 - 深/浅色主题（每账户独立）；手写 SVG 图表；首次引导；Toast；危险操作二次确认
-- 开发调试钩子：`?selftest` 全视图渲染、`?ftest` 15 项功能自测、`?shot=视图名`、`?probe` 数据摘要（**三个会覆盖当前账户为演示数据**的钩子 `?selftest`/`?ftest`/`?shot` 共用同一确认门卫，确认/取消后自动从地址栏剥除钩子；`?shot` 先校验视图名再动数据；自动化场景可 URL 追加 `&devok` 跳过确认）
+- 开发调试钩子：`?selftest` 全视图渲染、`?ftest` 15 项功能自测、`?shot=视图名`、`?probe` 数据摘要（实现在 `public/js/dev.js`，**只在命中这些钩子时才由 app.js 按需注入**；classic script 与 app.js 同一全局作用域才能读写 `USERS`/`state`，演示库 `DEMO_FOODS`/`DEMO_EXERCISES` 也在里面）；**三个会覆盖当前账户为演示数据**的钩子 `?selftest`/`?ftest`/`?shot` 共用同一确认门卫，确认/取消后自动从地址栏剥除钩子；`?shot` 先校验视图名再动数据；自动化场景可 URL 追加 `&devok` 跳过确认
 
 ## 三、代码结构速览
 
@@ -135,12 +137,13 @@ weFit/
 │  ├─ index.html                #   页面骨架
 │  ├─ admin.html                #   管理后台（自包含单文件；/admin 路由）
 │  ├─ css/style.css             #   设计令牌 + 组件样式（含登录门/后台样式）
-│  ├─ js/seed-data.json         #   食物/动作库种子数据本体（唯一数据源；食物 321（USDA Foundation Foods）+ 动作 27）
-│  ├─ js/seed-data.js           #   种子加载器 + 动作/肌群枚举（Node require JSON；浏览器同步 XHR）
+│  ├─ js/seed-data.json         #   食物/动作库种子数据本体（唯一数据源；食物 321（USDA Foundation Foods）+ 动作 27；**仅服务端与工具读，浏览器不加载**）
+│  ├─ js/seed-data.js           #   动作/肌群枚举 + 默认值 + 来源常量（浏览器只用这些）；种子数据本体仅 Node 侧 require
 │  ├─ js/sleep-shape.js         #   睡眠形状契约唯一数据源（类型/时长/归一化；前端加载；服务端 mapper require）
-│  └─ js/app.js                 #   全部业务 JS + 同步层 + 登录门/双层库 UI
+│  ├─ js/dev.js                 #   调试钩子（演示数据 + ?selftest/?ftest，按需注入；用户路径不加载）
+│  └─ js/app.js                 #   全部业务 JS + 同步层 + 登录门/双层库 UI（~3.6k 行，单页修改看 AGENTS.md 锚点表）
 ├─ server/                      # 后端（零 npm 依赖）
-│  ├─ server.js                 #   node:http：鉴权中间件 + 静态托管 + 登录/注册 + 本人数树读写 + 系统库 + /api/admin/*
+│  ├─ server.js                 #   node:http：鉴权中间件 + 静态托管（ETag/304 + gzip，keepAlive 65s） + 登录/注册 + 本人数树读写 + 系统库 + /api/admin/*
 │  ├─ auth.js                   #   异步 scrypt 密码哈希 / 会话 token / Cookie 解析（node:crypto）
 │  ├─ seed.js                   #   系统库种子构建（数据源 = public/js/seed-data.json）；copyLibrary() 仅供一次性工具 reset-food-library.js 用，注册已不再调用
 │  ├─ db.js                     #   node:sqlite 建表 + 幂等列迁移（13 张表，每用户 rev）
@@ -206,7 +209,7 @@ weFit/
 - **手机端**：同一 Wi-Fi 下打开启动窗口显示的 `http://<电脑IP>:8123`，每人注册/登录**自己的账户**，互不干扰；自己多设备用同一账户登录 = 自动同步
 - **管理后台**：浏览器访问 `http://<服务器>:8123/admin`，仅管理员账户可登录；普通用户即使在登录页输对了密码也会看到"无管理权限"提示
 - **换电脑**：整个文件夹拷走（OneDrive 同步即等价），`server/data/jjhealth.db` 就是全部数据（含账户与会话）
-- **跑测试**：`cd server && npm test`（五个文件：roundtrip 67 + admin 44 + sleep-shape 16 + migration 20 + render 33 项断言；也可 `node test/xxx.test.js` 单跑）；浏览器 `?ftest` 15 项功能自测（会覆盖为演示数据，需确认或 `&devok`）
+- **跑测试**：`cd server && npm test`（五个文件：sleep-shape 16 + migration 39 + roundtrip 73 + admin 45 + render 119 项断言；也可 `node test/xxx.test.js` 单跑）；浏览器 `?ftest` 15 项功能自测（会覆盖为演示数据，需确认或 `&devok`）
 - **渲染回归**：`test/render.test.js` 用零依赖 `node:vm` + 迷你 DOM/fetch 桩真实走完 init → /api/me → /api/state → 渲染链，守「数据 → 页面 HTML」这一段（六页冒烟、卡片显隐、多段合计、营养换算）；布局/间距/配色等视觉表现不在其能力内，仍靠目测（Cindy 浏览器工具被策略禁访本地地址，agent 也无法截图本地页）
 - **清零重来**：设置页 → 💾 数据管理 → 🗑 清空数据（仅本账户，服务器同步清本人子树，不可恢复，先导出留底）；**全库重来**：停服务后删除 `server/data/jjhealth.db`
 - **忘记密码**：找任一管理员在后台「用户管理 → 重置密码」处理（该账户会被强制下线）；若所有管理员都失联：停服务删库重来（最后手段）

@@ -15,6 +15,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const zlib = require('node:zlib');
 const dbm = require('./db');
 const mapper = require('./mapper');
 const auth = require('./auth');
@@ -34,17 +35,41 @@ const STATIC_FILES = {
   /* 睡眠形状契约（v4.7）：与 server/mapper.js 共用同一份实现，故放在 public/js 下先行加载 */
   '/js/sleep-shape.js': { file: 'js/sleep-shape.js', type: 'text/javascript; charset=utf-8' },
   '/js/app.js': { file: 'js/app.js', type: 'text/javascript; charset=utf-8' },
+  /* v4.16 调试钩子（?probe/?selftest/?ftest/?shot）专用：由 loadDev() 按需注入，用户路径不加载 */
+  '/js/dev.js': { file: 'js/dev.js', type: 'text/javascript; charset=utf-8' },
   /* 管理后台(v4.1)：页面本身公开，数据面全部走 /api/admin/* 的 admin 守卫 */
   '/admin': { file: 'admin.html', type: 'text/html; charset=utf-8' },
   '/admin.html': { file: 'admin.html', type: 'text/html; charset=utf-8' },
 };
 
+/* v4.16：文本响应按客户端 Accept-Encoding 走 gzip（app.js 230KB→75KB、seed-data.json 62KB→9KB）。
+ * `q=0` = 客户端明确不接受该编码，按 RFC 9110 得跳过（只做 token 级判断，不做权重排序与通配符）。 */
+function acceptsGzip(req) {
+  const raw = String((req && req.headers['accept-encoding']) || '');
+  return raw.split(',').some(part => {
+    const seg = part.trim().toLowerCase().split(';');
+    if (seg[0] !== 'gzip' && seg[0] !== 'x-gzip') return false;
+    return !seg.slice(1).some(p => /^\s*q=0(\.0*)?\s*$/.test(p));
+  });
+}
+
 function sendJson(res, code, obj, extraHeaders) {
-  const body = JSON.stringify(obj);
+  const body = Buffer.from(JSON.stringify(obj), 'utf8');
   const headers = Object.assign({
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
   }, extraHeaders || {});
+  /* 大响应（/api/state 最大 ~35KB、/api/system/library ~32KB）也压缩；小响应压了反而更大 */
+  if (res.__gz && body.length >= 1024) {
+    headers['Content-Encoding'] = 'gzip';
+    headers['Vary'] = 'Accept-Encoding';
+    const gz = zlib.gzipSync(body);
+    headers['Content-Length'] = gz.length;
+    res.writeHead(code, headers);
+    res.end(gz);
+    return;
+  }
+  headers['Content-Length'] = body.length;
   res.writeHead(code, headers);
   res.end(body);
 }
@@ -92,14 +117,44 @@ async function readJson(req, res) {
   return parsed;
 }
 
-function serveStatic(res, key) {
+/* ---------- 静态资源：ETag 校验(304) + gzip ----------
+ * v4.16 前的写法是 `Cache-Control: no-store` 且不压缩：手机每刷新一次就要重下
+ * 361KB（app.js 258KB + seed-data.json 62KB…），是「局域网刷新有点慢」的主因。
+ * 这里用 no-cache + ETag（而非 max-age）：每次刷新仍会带 If-None-Match 回服务器校验，
+ * 未改动 → 304（约 300B），改动 → 立刻下发新内容。项目无构建、无版本号，
+ * 靠 304 既省掉重复下载，又不会出现「改了代码手机还拿旧文件」。
+ * 内容按 (size,mtime) 缓存在内存：文件数很少，无需淘汰策略。 */
+const staticCache = new Map();
+function serveStatic(req, res, key) {
   const entry = STATIC_FILES[key];
   const full = path.normalize(path.join(PUBLIC_DIR, entry.file));
   if (!full.startsWith(PUBLIC_DIR)) { sendJson(res, 403, { error: 'forbidden' }); return; }
-  fs.readFile(full, (err, buf) => {
+  fs.stat(full, (err, st) => {
     if (err) { sendJson(res, 404, { error: 'not_found', path: key }); return; }
-    res.writeHead(200, { 'Content-Type': entry.type, 'Cache-Control': 'no-store' });
-    res.end(buf);
+    /* ETag = 大小 + mtime(ms)。mtime 精度取决于文件系统（本项目所在的 NTFS/exFAT fuse 挂载
+     * 实测只有 10ms 粒度）：同一时间窗内「等长改动」理论上会撞成同一个 ETag。人工编辑不现实，
+     * 但别用「改内容不改 mtime」的方式写文件（连续写入的自动化验证同样要当心）。 */
+    const etag = '"' + st.size.toString(16) + '-' + Math.floor(st.mtimeMs).toString(16) + '"';
+    /* 200 与 304 都带 Vary：响应体随 Accept-Encoding 变化，304 也得按同一规则缓存 */
+    const headers = { 'ETag': etag, 'Cache-Control': 'no-cache', 'Vary': 'Accept-Encoding' };
+    if (req.headers['if-none-match'] === etag) { res.writeHead(304, headers); res.end(); return; }
+    let c = staticCache.get(full);
+    if (!c || c.etag !== etag) {
+      let raw;
+      try { raw = fs.readFileSync(full); }
+      catch (e) { sendJson(res, 404, { error: 'not_found', path: key }); return; }
+      c = { etag: etag, raw: raw, gz: null };
+      staticCache.set(full, c);
+    }
+    const gz = acceptsGzip(req);
+    /* 惰性压：不接受 gzip 的客户端不为它白压一次（压缩缓存留在条目上，下次复用） */
+    if (gz && !c.gz) c.gz = zlib.gzipSync(c.raw);
+    const body = gz ? c.gz : c.raw;
+    res.writeHead(200, Object.assign({
+      'Content-Type': entry.type,
+      'Content-Length': body.length,
+    }, gz ? { 'Content-Encoding': 'gzip' } : {}, headers));
+    res.end(req.method === 'HEAD' ? undefined : body);
   });
 }
 
@@ -354,6 +409,7 @@ async function handleSystemLibrary(db, req, res, sessionUser, pathname) {
 }
 
 async function handle(db, req, res) {
+  res.__gz = acceptsGzip(req);   /* sendJson 据此决定是否 gzip（不逐处传 req） */
   let pathname;
   try { pathname = new URL(req.url, 'http://localhost').pathname; }
   catch { sendJson(res, 400, { error: 'bad_url' }); return; }
@@ -367,7 +423,7 @@ async function handle(db, req, res) {
     }
     if (req.method === 'POST' && pathname === '/api/register') { await handleRegister(db, req, res); return; }
     if (req.method === 'POST' && pathname === '/api/login') { await handleLogin(db, req, res); return; }
-    if ((req.method === 'GET' || req.method === 'HEAD') && STATIC_FILES[pathname]) { serveStatic(res, pathname); return; }
+    if ((req.method === 'GET' || req.method === 'HEAD') && STATIC_FILES[pathname]) { serveStatic(req, res, pathname); return; }
 
     /* ---- 鉴权中间件：其余 /api/* 必须登录 ---- */
     if (pathname.startsWith('/api/')) {
@@ -401,6 +457,11 @@ function start(opts) {
   opts = opts || {};
   const db = dbm.open(opts.dbPath);
   const server = http.createServer((req, res) => handle(db, req, res));
+  /* v4.16：Node 默认 keepAliveTimeout=5s，比浏览器 socket 池的空闲时间短——
+   * 手机放一会儿再刷新时，浏览器可能复用「服务端已关掉」的连接，白白等一轮超时
+   * （表现就是「有时候要等几秒 / 系统库偶发假离线」）。设成 65s 并配 headersTimeout。 */
+  server.keepAliveTimeout = 65000;
+  server.headersTimeout = 66000;
   const port = opts.port !== undefined ? opts.port : DEFAULT_PORT;
   return new Promise((resolve, reject) => {
     server.once('error', reject);

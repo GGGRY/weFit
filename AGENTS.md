@@ -14,6 +14,8 @@
 - 前端渲染逻辑的自动化验证**已落地零依赖路线**:`server/test/render.test.js`(node:vm + 迷你 DOM/fetch/localStorage 桩,复用 fixture.json 树真实走完 init→/api/me→/api/state→渲染),已并入 `npm test`。
   - 改渲染函数/数据形状后:给新卡片或新契约**补结构断言**再跑 `npm test`;启动冒烟、六页导航、卡片显隐、多段合计、营养换算已在覆盖。断言失败修渲染代码,不要放松断言。
   - 桩的锚点:网络出口收敛在 `srvFetch()`;`$$` 恒返回 [] 故事件绑定全 no-op(交互路径不在范围);裸 emoji(如 💧)会撞习惯图标,断言要锚定卡片标题文案。
+  - 调试钩子与演示数据住在 `public/js/dev.js`(v4.16 起按需注入):测试里要用它们就 `vm.runInContext(readPub('js/dev.js'), ctx)` 手动加载(T15a 先断言主包不含 `demoData`/`DEMO_FOODS`,T15a2 再断言 dev.js 单独加载即可用);改动钩子后必须过一次真实浏览器(`?selftest` + `?ftest`)。
+  - 种子数据:桩的 `fakeFetch` 会记录对 `seed-data.json` 的请求(断言前端不请求它,T15a);改种子/演示库契约时同步改桩与 T15a/T15b。
   - 不能验:布局/间距/配色等视觉表现——样式类改动仍靠用户目测;确需测 DOM 事件流时可引入 jsdom 类 devDependency(见硬约束边界,无需再确认),但默认用现有桩补断言。
 
 ## 样式 / 单页修改定位法(省 token,必须遵守)
@@ -28,6 +30,8 @@
 ## 每次修改后必做
 - 检查并按需更新文档:CHANGELOG.md、MEMO.md、README.md、PLANS.md。
 - 改完服务端/前端代码,部署必须走「停服务 → 启服务 → 全端刷新」再验证;禁止新旧进程混跑测试(整树 PUT 会互相覆盖丢数据)。
+- 静态资源已带 `ETag`+`Cache-Control: no-cache`(v4.16):刷新时自动 304 复用,**改完前端不需要手动清缓存/加版本号**;但服务端 `serveStatic` 的内存缓存 key = (size, mtime),别用「改内容不改 mtime」的方式写文件。
+- 浏览器侧**不加载**种子数据本体（v4.16）：`SEED_FOODS`/`SEED_EXERCISES`/`seed-data.json` 只归服务端（`server/seed.js`）；用户端要系统库走 `GET /api/system/library`；调试钩子（`?selftest`/`?ftest`/`?shot`/`?probe`）与演示数据住在 `public/js/dev.js`，按需注入（要改演示库就改 dev.js 里的 `DEMO_FOODS`/`DEMO_EXERCISES`），不要把这些加回 app.js。
 - 提交前跑 `cd server && npm test` 确认通过。
 
 ## 文档分工 (请按需读取)

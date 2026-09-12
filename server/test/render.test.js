@@ -52,6 +52,11 @@ const doc = makeNode('#document');
 doc.documentElement = makeNode('html');
 doc.head = makeNode('head');
 doc.body = makeNode('body');
+/* 记账：被动态注入的 <script>（app.js 的 loadDev() 按需注入 js/dev.js）——
+ * 正常启动路径应当一次都没有（T15a）；桩不执行脚本，只记下 src。 */
+const INJECTED_SCRIPTS = [];
+const headAppend = doc.head.appendChild.bind(doc.head);
+doc.head.appendChild = c => { if (c && c.src) INJECTED_SCRIPTS.push(String(c.src)); return headAppend(c); };
 doc.createElement = t => makeNode(t);
 doc.getElementById = id => doc.querySelector('#' + id);   /* 与 $('#id') 共用同一桩节点 */
 /* documentElement 的属性存取改成真记账:applyTheme 写的 data-theme 要能在 Node 侧读回
@@ -82,8 +87,10 @@ function res(status, body) {
     json: async () => JSON.parse(JSON.stringify(body)),
     text: async () => JSON.stringify(body) };
 }
+const SEED_REQUESTS = [];   /* 断言用：前端全程不应请求 seed-data.json（v4.16） */
 async function fakeFetch(url, opts) {
   const u = String(url), m = ((opts && opts.method) || 'GET').toUpperCase();
+  if (u.endsWith('seed-data.json')) SEED_REQUESTS.push(u);
   if (m === 'GET' && u.endsWith('/api/me'))
     return res(200, { username: 'tester', role: 'user', user: { id: 'u_alice', name: '测试者' } });
   if (m === 'GET' && u.endsWith('/api/state')) return res(200, { rev: 1, data: TREE });
@@ -105,8 +112,7 @@ const sandbox = {
   setTimeout, clearTimeout, setInterval: () => 0, clearInterval(){},
   URLSearchParams, URL, AbortController, TextEncoder,
   alert(){}, confirm: () => true, prompt: () => '',
-  XMLHttpRequest: function(){ const x = { status: 0, responseText: '' }; x.open = () => { x.status = 200; x.responseText = fs.readFileSync(path.join(__dirname, '..', '..', 'public', 'js', 'seed-data.json'), 'utf8'); }; x.send = () => {}; return x; },
-};
+  XMLHttpRequest: null,};
 sandbox.window = sandbox; sandbox.self = sandbox;
 sandbox.window.scrollTo = () => {};
 const ctx = vm.createContext(sandbox);
@@ -681,7 +687,7 @@ async function main() {
      && hItemEdit.includes('修改这一项') && hItemEdit.includes('it_del')
      && !readPub('js/app.js').includes('openExercisePicker') && !readPub('js/app.js').includes('libTableHTML'),
      hItemEdit.slice(0, 200));
-  /* 动作库页面（v4.15 由弹窗改独立页；2026-09-12 起与食物库同一版式）：页头「返回 + 数据管理-动作库」，
+  /* 动作库页面（v4.15 由弹窗改独立页；v4.16 起与食物库同一版式）：页头「返回 + 数据管理-动作库」，
    * 卡内 = seg tab（带条数）+ 搜索框 + #xl_body 列表行 */
   let hLib = '';
   try { ev("go('exlib')"); hLib = ev("$('#xl_body', $('#view')).__html"); }
@@ -1040,17 +1046,21 @@ async function main() {
     badge: (function(){ const w = { items:[{ exName:'跑步', mins:30, done:true }, { exName:'杠铃卧推', muscle:'胸', reps:32 }] };
       return doneCount(w) + '/' + isDone(w) + '/' + allDone(w) + '/' + itemDone(w.items[0]) + '/' + itemDone(w.items[1]); })(),
     libSeed: (function(){ const s = { exercises:[{ id:'e0', name:'杠铃卧推', muscle:'胸' }] };
-      normalizeLegacyShared(s); return [s.exercises.length, s.exercises.every(e => e.cat && e.mode)]; })(),
+      const bak = USERS;   /* adoptRaw 会把全局 USERS 换成这棵假树，验完必须还原（后面的断言还靠夹具树） */
+      adoptRaw({ theme:'light', onboarded:false, shared:s, users:{ u_x:{ id:'u_x', name:'新人' } }, active:'u_x' });
+      const r = [s.exercises.length, s.exercises[0].name];
+      USERS = bak;
+      return r; })(),
     wk: (function(){ const y0 = weeklyMinutes(12)[11].y, k0 = weeklyDistances(12)[11].y;
       state.workouts.push({ id:'w_t13', date:today(), name:'', items:[{ exName:'跑步', mins:30, km:5, done:true }, { exName:'操课', mins:15, done:true }] });
       return [weeklyMinutes(12)[11].y - y0, weeklyDistances(12)[11].y - k0]; })()
   })`));
-  ok('T13a 旧树清洗：plans 作废、天级 done 下放到项、sets/同日/无日期丢弃、旧库换新种子',
+  ok('T13a 旧树清洗：plans 作废、天级 done 下放到项、sets/同日/无日期丢弃、个人库原样保留',
      pure.legacy.plans === undefined && pure.legacy.workouts.length === 1
      && pure.legacy.workouts[0].id === 'w2' && pure.legacy.workouts[0].done === undefined
      && pure.legacy.workouts[0].note === undefined && pure.legacy.workouts[0].items.length === 1
      && pure.legacy.workouts[0].items[0].done === true
-     && pure.libSeed[0] === 27 && pure.libSeed[1] === true, JSON.stringify(pure.legacy) + JSON.stringify(pure.libSeed));
+     && pure.libSeed[0] === 1 && pure.libSeed[1] === '杠铃卧推', JSON.stringify(pure.legacy) + JSON.stringify(pure.libSeed));
   ok('T13b collectItems：丢空项/无值项、剥 _mode、done 保真、needEx 生效',
      JSON.stringify(pure.collect) === JSON.stringify([
        { exName:'A', exId:'x', cat:'力量', muscle:'胸', done:true, reps:32, weight:60 },
@@ -1084,21 +1094,59 @@ async function main() {
         " const r = state.body.find(x => x.date === '2030-01-01'); const okk = !!r && r.calf === 36.5;" +
         " state.body = bak; state.profile.currentKg = kg; return okk; })()") === true);
 
-  /* T15 种子读取失败路径：seed-data.json 拿不到时不能静默当「空库」正常用
-     （旧版 loadSeedData 失败回退空数组；现要求记下 SEED_LOAD_ERROR 并 console.error） */
+  /* T15a 用户路径不带调试代码、不注入 js/dev.js、也不下载种子数据本体（v4.16）：
+     演示数据与自测已拆到 js/dev.js（按需注入），主包不应出现这些全局；
+     用户端要系统库走 /api/system/library。
+     三条互不依赖：① 全程没有 seed-data.json 请求；② 正常启动（location.search=''）没注入过
+     任何 <script>；③ 主包**源码文本**里就没有调试代码（这条与「dev.js 是否已在本上下文加载」
+     无关，T15a2 之后再跑也不会变味）。 */
   {
-    const errs = [];
-    const badSandbox = {
-      XMLHttpRequest: function(){ const x = { status: 404, responseText: '' }; x.open = () => {}; x.send = () => {}; return x; },
-      console: { error: m => errs.push(String(m)) },
-    };
-    badSandbox.window = badSandbox;
-    const badCtx = vm.createContext(badSandbox);
-    vm.runInContext(readPub('js/seed-data.js'), badCtx, { filename: 'public/js/seed-data.js' });
-    const empty = vm.runInContext('SEED_FOODS.length === 0 && SEED_EXERCISES.length === 0', badCtx);
-    const errFlag = vm.runInContext('SEED_LOAD_ERROR', badCtx);
-    ok('T15a 种子 404：SEED_FOODS 为空且记下 SEED_LOAD_ERROR + console.error',
-       empty === true && !!errFlag && errs.length === 1, 'empty=' + empty + ' err=' + errFlag + ' logs=' + errs.length);
+    const asked = SEED_REQUESTS.length === 0;
+    const notInjected = INJECTED_SCRIPTS.length === 0;   /* 先量：启动全程没注入过 <script> */
+    /* 再证记账是活的：手动追一个脚本节点应该被记下（否则上一条是空断言） */
+    const probeNode = doc.createElement('script');
+    probeNode.src = '__probe__';
+    doc.head.appendChild(probeNode);
+    const recorderLive = INJECTED_SCRIPTS.indexOf('__probe__') >= 0;
+    INJECTED_SCRIPTS.length = 0;
+    const mainSrc = readPub('js/app.js');
+    const devTokens = ['DEMO_FOODS','DEMO_EXERCISES','demoData','seedRichMember','runSelfTest','runFTest','devHandle'];
+    const noDevInMain = devTokens.every(g => mainSrc.indexOf(g) < 0);
+    const noSeedGlobals = ev("(typeof SEED_READY === 'undefined') && (typeof onSeedReady === 'undefined') && (typeof SEED_LOAD_ERROR === 'undefined')") === true;
+    const noDevGlobals = ev("(typeof demoData === 'undefined') && (typeof seedRichMember === 'undefined') && (typeof DEMO_FOODS === 'undefined') && (typeof runSelfTest === 'undefined') && (typeof runFTest === 'undefined') && (typeof window.__devHooks === 'undefined')") === true;
+    ok('T15a 主包不含调试代码（源码文本 + 运行期全局），也不注入 js/dev.js、不请求 seed-data.json',
+       asked && notInjected && recorderLive && noDevInMain && noSeedGlobals && noDevGlobals,
+       'requests=' + JSON.stringify(SEED_REQUESTS) + ' injected=' + JSON.stringify(INJECTED_SCRIPTS) + ' recorder=' + recorderLive
+       + ' srcClean=' + noDevInMain + ' noSeed=' + noSeedGlobals + ' noDev=' + noDevGlobals);
+  }
+
+  /* T15a2 js/dev.js 按需加载（classic script，同一全局作用域）后钩子可用，演示库内联在其中；
+     并直接验一下 startMain 依赖的那条契约：非调试 URL 时 devHandle 返回 false（不接管）。
+     放在此处会让后续断言看到 dev 代码，故紧随 T15a 验证完就继续往下跑（T15b 用它的 demoData）。 */
+  {
+    vm.runInContext(readPub('js/dev.js'), ctx, { filename: 'public/js/dev.js' });
+    const loaded = ev("typeof demoData === 'function' && typeof runSelfTest === 'function' && typeof runFTest === 'function' && !!window.__devHooks && DEMO_FOODS.length >= 14 && DEMO_EXERCISES.length >= 11 && DEMO_FOODS.every(f => f.name && f.per100 && f.per100.kcal > 0) && DEMO_EXERCISES.every(e => e.name && e.cat && e.muscle && e.mode)") === true;
+    const noTakeover = ev("window.__devHooks.handle(new URLSearchParams(''), {}) === false") === true;
+    ok('T15a2 js/dev.js 单独加载即可用：demoData/runSelfTest/runFTest + __devHooks + 内联演示库；非调试 URL 不接管',
+       loaded && noTakeover, 'loaded=' + loaded + ' noTakeover=' + noTakeover);
+  }
+
+  /* T15b 演示数据自给自足（v4.15 换 USDA 种子后按名匹配全落空、近 14 天餐食其实为空）：
+     demoData()（现在住在 js/dev.js）后个人库 = 内联演示库、且按名字引用的餐食/运动真的落了数据。
+     放在其余断言之后：它会覆盖当前账户数据（与调试钩子行为一致）。 */
+  {
+    const r = ev(`(function(){
+      demoData();
+      const days = Object.keys(state.meals).filter(d => SLOTS.some(sl => (state.meals[d][sl.id] || []).length > 0));
+      const items = Object.keys(state.meals).reduce((n, d) => n + SLOTS.reduce((m, sl) => m + (state.meals[d][sl.id] || []).length, 0), 0);
+      const wk = state.workouts.filter(w => w.items && w.items.length);
+      const named = state.foods.every(f => f.name && f.per100 && f.per100.kcal > 0);
+      return { foods: state.foods.length, ex: state.exercises.length, days: days.length, items: items,
+               wk: wk.length, doneDays: wk.filter(w => w.items.some(i => i.done)).length, named: named };
+    })()`);
+    ok('T15b 演示数据：个人库 = 内联演示库，14 天餐饮/10 周运动真落数据（不再靠种子按名匹配）',
+       r.foods === 14 && r.ex === 11 && r.days >= 13 && r.items > 30 && r.wk >= 20 && r.doneDays >= 20 && r.named === true,
+       JSON.stringify(r));
   }
 
   /* T16 个人库初始为空（2026-09-12 用户裁定：注册不再导入系统库，前端同步拆掉两条「空库 → 种子」路径）
@@ -1118,7 +1166,7 @@ async function main() {
       + " const r = USERS.shared.foods.length === 0 && USERS.shared.exercises.length === 0;"
       + " if(bk) localStorage.setItem(storeKey(), bk); return r; })()");
     ev('USERS = JSON.parse(' + JSON.stringify(bakUsers) + ')');
-    ok('T16 个人库初始为空：采纳空树/畸形库/无缓存建档都不再拿种子填满（空库 ≠ 321+27 条种子）',
+    ok('T16 个人库初始为空：采纳空树/畸形库/无缓存建档都不再拿种子填满（空库就是空库）',
        adoptEmpty === true && adoptMalformed === true && bootEmpty === true,
        'adopt=' + adoptEmpty + ' malformed=' + adoptMalformed + ' boot=' + bootEmpty);
   }
