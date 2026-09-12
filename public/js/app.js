@@ -1660,7 +1660,7 @@ function renderDiet(){
     renderDiet();
   }));
   $$('[data-addslot]', v).forEach(b => b.addEventListener('click', () => addMealDialog(dietDate, b.dataset.addslot)));
-  $$('[data-edit]', v).forEach(b => b.addEventListener('click', () => { const it = findMealItem(dietDate, b.dataset.edit); if(it) addMealDialog(dietDate, slotOfItem(dietDate, it.id), it.id); }));
+  $$('[data-edit]', v).forEach(b => b.addEventListener('click', () => editMealDialog(dietDate, b.dataset.edit)));
   $$('[data-del]', v).forEach(b => b.addEventListener('click', () => delMealItem(dietDate, b.dataset.del)));
 }
 function slotColor(id){ return {breakfast:'#eda100', lunch:'#eb6834', dinner:'#4a3aa7', snack:'#1baf7a'}[id] || 'var(--brand)'; }
@@ -1675,90 +1675,231 @@ function delMealItem(date, id){
   for(const s of SLOTS){ const ix = dm[s.id].findIndex(i => i.id === id); if(ix >= 0){ dm[s.id].splice(ix,1); save(); renderDiet(); toast('已删除'); return; } }
 }
 
-/* 添加/编辑一条食物记录 */
-function addMealDialog(date, slot, itemId){
-  const editing = !!itemId;
-  let item = null;
-  if(editing){ item = findMealItem(date, itemId); }
-  const libFoods = state.foods;
-  const curFood = item ? libFoods.find(f => f.name === item.name) : null;
-  let pickId = curFood ? curFood.id : null;
+/* ---------- 记录饮食弹窗：三 tab（我的库 / 系统库 / 新增）+ 共用底栏 ----------
+ * 我的库/系统库 = 只读营养 + 只填「实际吃了多少克」；新增 = 全字段手填。
+ * 后两者带「同时保存到我的食物库」勾选：系统库未拥有的默认勾选（已有的折叠），
+ * 新增默认不勾。入库 src 沿用源条目（USDA/用户），与食物库页「＋我的库」挑入口径一致。
+ * tab 不做跨次记忆：正式入口（饮食页「＋ 添加」）每次打开都停在「我的库」；
+ * opts.tab 只是调用方显式指定的初始分页（供测试与以后复用），不是记忆。 */
+let mdTab = 'mine';        /* 弹窗内当前 tab */
+let mdQuery = '';          /* 当前 tab 的搜索词（切 tab 清空） */
+const MD_PICK_LIMIT = 40;  /* 候选只渲染前 40 条，配合关键字收敛；避免 300+ 行 DOM */
+/* 「同时保存到我的食物库」默认勾选口径：只有从系统库选中、且自己库里还没同名的才默认勾；
+ * 新增 tab 默认不勾（避免手填半成品污染个人库），我的库 tab 压根不给这个选项。 */
+function mealDlgSaveDefault(tab, name){ return tab === 'sys' && !state.foods.some(x => x.name === name); }
+/* 入库勾选可见性（与 mealDlgSaveDefault 配套）：只有非「我的库」分页、且当前食物名在本人的库里
+ * 还没同名时才给勾选；库里已有同名的改成「已有」提示（不静默跳过）。按名判重沿用同一规则。 */
+function mealShowSaveChk(tab, cur){ return tab !== 'mine' && !!cur && !state.foods.some(x => x.name === cur.name); }
+/* 「已有」提示行：只说口径（本次只记这一餐、不重复入库），不写操作指引 */
+function mealOwnedTipHTML(name){ return '<span class="chip b3">已有</span> 我的库里已有「' + esc(name) + '」，本次只记这一餐，不会入库、也不会改库里那份的营养。'; }
+function addMealDialog(date, slot, opts){
+  mdTab = (opts && ['mine','sys','new'].indexOf(opts.tab) >= 0) ? opts.tab : 'mine'; mdQuery = '';
+  let sysFoods = null;     /* 本次弹窗拉到的系统库（走 SYS_LIB 缓存，切 tab 不重下） */
+  let selMine = null;      /* 我的库选中条目 */
+  let selSys = null;       /* 系统库选中条目 */
+  const S = SLOTS.find(s => s.id === slot) || { ic:'🍽️', label:'记录' };
   const html =
     '<div class="row gap8" style="margin-bottom:10px">' +
-      '<span class="chip">' + dateCNW(date) + '</span><span class="chip slot" style="background:' + slotColor(slot) + '22;border-color:transparent">' + SLOTS.find(s=>s.id===slot).ic + ' ' + SLOTS.find(s=>s.id===slot).label + '</span>' +
+      '<span class="chip">' + dateCNW(date) + '</span><span class="chip slot" style="background:' + slotColor(slot) + '22;border-color:transparent">' + S.ic + ' ' + esc(S.label) + '</span>' +
     '</div>' +
-    '<div class="field"><label>从食物库选择（可留空后手动填）</label>' +
+    '<div class="seg" id="md_seg" style="display:flex;width:100%;margin-bottom:12px">' +
+      '<button type="button" data-mtab="mine" style="flex:1">我的库</button>' +
+      '<button type="button" data-mtab="sys" style="flex:1">系统库</button>' +
+      '<button type="button" data-mtab="new" style="flex:1">新增</button>' +
+    '</div>' +
+    '<div id="md_p_mine"><div class="field" style="margin-bottom:8px"><label>搜索并选择（只需填吃了多少克）</label>' +
       '<input class="input" id="mi_q" type="search" placeholder="搜索食物名…">' +
-      '<div class="picklist" id="mi_list"></div></div>' +
-    '<div class="form-grid">' +
-      '<div class="span2"><label>食物名称</label><input class="input" id="mi_name" value="' + (item?esc(item.name):'') + '" placeholder="如：鸡胸肉"></div>' +
-      '<div><label>每100g热量</label><input class="input" id="mi_kcal" type="number" min="0" value="' + (item?item.per100.kcal:'') + '"></div>' +
-      '<div><label>每100g蛋白 g</label><input class="input" id="mi_p" type="number" min="0" step="0.1" value="' + (item?item.per100.p:'') + '"></div>' +
-      '<div><label>每100g碳水 g</label><input class="input" id="mi_c" type="number" min="0" step="0.1" value="' + (item?item.per100.c:'') + '"></div>' +
-      '<div><label>每100g脂肪 g</label><input class="input" id="mi_f" type="number" min="0" step="0.1" value="' + (item?item.per100.f:'') + '"></div>' +
-      '<div class="span2"><label>实际吃了多少（克）</label><input class="input" id="mi_g" type="number" min="1" value="' + (item?item.g:'100') + '">' +
-      '<div class="tiny muted" id="mi_prev" style="margin-top:6px"></div></div>' +
+      '<div class="picklist" id="mi_list"></div></div></div>' +
+    '<div id="md_p_sys" style="display:none"><div class="field" style="margin-bottom:8px"><label>搜索并选择系统库食物（只需填吃了多少克）</label>' +
+      '<input class="input" id="mi_qs" type="search" placeholder="搜索食物名…">' +
+      '<div class="picklist" id="mi_syslist"></div></div></div>' +
+    '<div id="md_p_new" style="display:none"><div class="form-grid" style="margin-bottom:8px">' +
+      '<div class="span2"><label>食物名称</label><input class="input" id="mi_name" placeholder="如：鸡胸肉"></div>' +
+      '<div><label>每100g热量</label><input class="input" id="mi_kcal" type="number" min="0"></div>' +
+      '<div><label>每100g蛋白 g</label><input class="input" id="mi_p" type="number" min="0" step="0.1"></div>' +
+      '<div><label>每100g碳水 g</label><input class="input" id="mi_c" type="number" min="0" step="0.1"></div>' +
+      '<div><label>每100g脂肪 g</label><input class="input" id="mi_f" type="number" min="0" step="0.1"></div>' +
     '</div>' +
-    '<label class="chkline" style="margin-top:2px"><input type="checkbox" id="mi_savefood"> 同时保存到我的食物库</label>' +
-    '<div class="d-f"><button class="btn danger ghost" id="mi_del" style="' + (editing?'':'display:none') + '">删除</button><button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="mi_save">保存</button></div>';
-  const dlg = showDialog(editing ? '修改记录' : '记录饮食', html);
+    '<div class="tiny muted" style="margin-bottom:8px">营养按每 100g 填，留空按 0 记。</div></div>' +
+    '<div class="tiny" id="mi_per100" style="margin-bottom:8px"></div>' +
+    '<div class="form-grid"><div class="span2"><label>实际吃了多少（克）</label>' +
+      '<input class="input" id="mi_g" type="number" min="1" value="100">' +
+      '<div class="tiny muted" id="mi_prev" style="margin-top:6px"></div></div></div>' +
+    '<label class="chkline" id="mi_save_wrap" style="margin-top:2px"><input type="checkbox" id="mi_savefood"> 同时保存到我的食物库</label>' +
+    '<div class="tiny" id="mi_owned" style="display:none;margin-top:6px"></div>' +
+    '<div class="d-f"><button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="mi_save">保存</button></div>';
+  const dlg = showDialog('记录饮食', html);
   const b = dlg.box;
-  function readFood(){ return { name:$('#mi_name', b).value.trim(), kcal:num($('#mi_kcal', b).value), p:num($('#mi_p', b).value), c:num($('#mi_c', b).value), f:num($('#mi_f', b).value) }; }
-  function prevHTML(f, g){ const k = f.kcal*g/100, p=f.p*g/100, c=f.c*g/100, fa=f.f*g/100; return '合计：<b>' + Math.round(k) + ' kcal</b> · 蛋白 ' + round(p,1) + 'g · 碳水 ' + round(c,1) + 'g · 脂肪 ' + round(fa,1) + 'g'; }
-  function refresh(){ const f = readFood(); const g = num($('#mi_g', b).value) || 0; $('#mi_prev', b).innerHTML = prevHTML(f, g); }
-  const PICK_LIMIT = 40;   /* 空搜索先给前 40 条，配合关键字收敛；避免 300+ 行 DOM */
-  function pickFood(id){
-    const fo = libFoods.find(f => f.id === id); if(!fo) return;
-    pickId = fo.id;
-    const per = fo.per100 || {};
-    $('#mi_name', b).value = fo.name;
-    $('#mi_kcal', b).value = (per.kcal === undefined ? '' : per.kcal);
-    $('#mi_p', b).value = (per.p === undefined ? '' : per.p);
-    $('#mi_c', b).value = (per.c === undefined ? '' : per.c);
-    $('#mi_f', b).value = (per.f === undefined ? '' : per.f);
-    refresh(); renderPick();
+  const owned = name => state.foods.some(x => x.name === name);
+  function readNew(){ return { name:$('#mi_name', b).value.trim(), kcal:num($('#mi_kcal', b).value), p:num($('#mi_p', b).value), c:num($('#mi_c', b).value), f:num($('#mi_f', b).value) }; }
+  /* 当前 tab 下的「这一餐吃了什么」：{ name, src, per100 }；未选/未填 → null */
+  function currentFood(){
+    if(mdTab === 'mine') return selMine ? { name:selMine.name, src:selMine.src || FOOD_SRC_USER, per100:selMine.per100 || null } : null;
+    if(mdTab === 'sys')  return selSys  ? { name:selSys.name,  src:selSys.src  || FOOD_SRC_SYS,  per100:selSys.per100  || null } : null;
+    const f = readNew();
+    return f.name ? { name:f.name, src:FOOD_SRC_USER, per100:{ kcal:f.kcal, p:f.p, c:f.c, f:f.f } } : null;
   }
-  function renderPick(){
-    const q = ($('#mi_q', b).value || '').trim().toLowerCase();
-    const hits = q ? libFoods.filter(f => String(f.name).toLowerCase().indexOf(q) >= 0) : libFoods;
+  function refresh(){
+    const cur = currentFood(), per = cur ? cur.per100 : null;
+    $('#mi_prev', b).innerHTML = per ? mealPrevHTML(per, num($('#mi_g', b).value) || 0)
+      : '<span class="muted">' + (!cur ? (mdTab === 'new' ? '填写名称与每100g营养后自动换算合计' : '先选一个食物，再填吃了多少克')
+          : '该条目无营养表，合计按 0 记；要补营养请走「新增」') + '</span>';
+    /* 库条目的每100g 只读回显（新增 tab 的表单自己承载，不重复显示） */
+    const box = $('#mi_per100', b);
+    if(!cur || mdTab === 'new' || !per){ box.style.display = 'none'; box.innerHTML = ''; }
+    else {
+      box.style.display = '';
+      box.innerHTML = '<span class="chip slot" style="margin-right:6px">' + esc(cur.src) + '</span>每100g：'
+        + Math.round(per.kcal || 0) + ' kcal · P' + (per.p || 0) + ' C' + (per.c || 0) + ' F' + (per.f || 0);
+    }
+    /* 入库可见性：我的库不给这个选项；其余 tab 选了/填了名字且库里还没同名的才给勾选。
+     * 已有同名（系统库选中同名条目、或新增填了库里已有的名字）→ 把勾选行换成与系统库行内
+     * 同口径的「已有」提示，说清本次只记这一餐不入库，不静默跳过。 */
+    const showChk = mealShowSaveChk(mdTab, cur);
+    const showTip = !showChk && mdTab !== 'mine' && !!cur;
+    $('#mi_save_wrap', b).style.display = showChk ? '' : 'none';
+    $('#mi_owned', b).style.display = showTip ? '' : 'none';
+    $('#mi_owned', b).innerHTML = showTip ? mealOwnedTipHTML(cur.name) : '';
+    if(!showChk) $('#mi_savefood', b).checked = false;
+    $$('#md_seg [data-mtab]', b).forEach(btn => btn.classList.toggle('active', btn.dataset.mtab === mdTab));
+    ['mine', 'sys', 'new'].forEach(t => { $('#md_p_' + t, b).style.display = (t === mdTab ? '' : 'none'); });
+  }
+  function pickRowHTML(f, attr, selected, badge){
+    return '<button type="button" class="pickrow' + (selected ? ' on' : '') + '" ' + attr + '>' +
+      '<span class="grow">' + esc(f.name) + (badge || '') + '</span>' +
+      '<span class="tiny muted">' + (f.per100 ? Math.round(f.per100.kcal || 0) + ' kcal/100g' : '无营养表') + '</span></button>';
+  }
+  function hitList(arr, q){ return q ? arr.filter(f => String(f.name).toLowerCase().indexOf(q) >= 0) : arr; }
+  function moreHint(total){ return total > MD_PICK_LIMIT
+    ? '<div class="tiny muted" style="padding:6px 12px">还有 ' + (total - MD_PICK_LIMIT) + ' 条，输入关键字继续筛选</div>' : ''; }
+  function renderMine(){
+    const q = mdQuery.trim().toLowerCase();
     let h;
-    if(!libFoods.length){
-      h = '<div class="tiny muted" style="padding:8px 12px">我的食物库是空的，可直接在下方手动填写</div>';
-    } else if(!hits.length){
-      h = '<div class="tiny muted" style="padding:8px 12px">没有匹配「' + esc(q) + '」的食物</div>';
+    if(!state.foods.length){
+      h = '<div class="tiny muted" style="padding:12px">我的食物库是空的，切到「系统库」挑一条，或在「新增」手填（勾选可顺手存进我的库）。</div>';
     } else {
-      h = hits.slice(0, PICK_LIMIT).map(f => '<button type="button" class="pickrow' + (f.id === pickId ? ' on' : '') + '" data-pick="' + esc(f.id) + '">' +
-        '<span class="grow">' + esc(f.name) + '</span>' +
-        '<span class="tiny muted">' + (f.per100 ? Math.round(f.per100.kcal || 0) + ' kcal/100g' : '无营养表') + '</span></button>').join('');
-      if(!q) h = '<div class="tiny muted" style="padding:6px 12px 2px">共 ' + libFoods.length + ' 条，输入关键字筛选</div>' + h;
-      else if(hits.length > PICK_LIMIT) h += '<div class="tiny muted" style="padding:6px 12px">还有 ' + (hits.length - PICK_LIMIT) + ' 条，输入关键字继续筛选</div>';
+      const hits = hitList(state.foods, q);
+      h = hits.length
+        ? hits.slice(0, MD_PICK_LIMIT).map(f => pickRowHTML(f, 'data-mypick="' + esc(f.id) + '"', selMine && selMine.id === f.id)).join('') + moreHint(hits.length)
+        : '<div class="tiny muted" style="padding:8px 12px">没有匹配「' + esc(q) + '」的食物</div>';
+      if(hits.length && !q) h = '<div class="tiny muted" style="padding:6px 12px 2px">共 ' + state.foods.length + ' 条，输入关键字筛选</div>' + h;
     }
     $('#mi_list', b).innerHTML = h;
-    $$('[data-pick]', b).forEach(btn => btn.addEventListener('click', () => pickFood(btn.dataset.pick)));
+    $$('[data-mypick]', b).forEach(btn => btn.addEventListener('click', () => {
+      selMine = state.foods.find(f => f.id === btn.dataset.mypick) || null;
+      selSys = null; renderMine(); refresh();
+    }));
   }
-  $('#mi_q', b).addEventListener('input', renderPick);
-  renderPick();
-  $$('input', b).forEach(i => i.addEventListener('input', refresh));
-  refresh();
-  $('#mi_save', b).addEventListener('click', () => {
-    const f = readFood();
-    if(!f.name){ toast('请填写食物名称', true); return; }
-    const g = num($('#mi_g', b).value); if(!g){ toast('请填写克数', true); return; }
-    const per100 = { kcal:f.kcal, p:f.p, c:f.c, f:f.f };
-    if($('#mi_savefood', b).checked && !state.foods.some(x => x.name === f.name)){
-      const nf = { id:uid(), name:f.name, src:FOOD_SRC_USER, per100 };
-      state.foods.push(nf); toast('已加入食物库');
+  async function renderSys(){
+    if(sysFoods === null){
+      $('#mi_syslist', b).innerHTML = '<div class="tiny muted" style="padding:8px 12px">载入系统库…</div>';
+      const lib = await fetchSysLib();
+      sysFoods = lib ? (lib.foods || []) : false;
+      if(mdTab !== 'sys') return;   /* 载入期间用户切走了 */
     }
-    if(editing){
-      Object.assign(item, { name:f.name, per100, g });
+    if(sysFoods === false){
+      $('#mi_syslist', b).innerHTML = '<div class="tiny muted" style="padding:12px">🔌 服务器离线，暂时看不到系统库；「我的库」与「新增」仍可正常记录。</div>';
+      return;
+    }
+    const q = mdQuery.trim().toLowerCase();
+    const all = sysFoods.map((f, i) => ({ f, i })).filter(x => !q || String(x.f.name).toLowerCase().indexOf(q) >= 0);
+    let h;
+    if(!all.length){
+      h = '<div class="tiny muted" style="padding:8px 12px">' + (sysFoods.length ? '没有匹配「' + esc(q) + '」的食物' : '系统库暂无食物') + '</div>';
     } else {
+      h = '<div class="tiny muted" style="padding:6px 12px 2px">共 ' + all.length + ' 条；标「已有」的说明我的库里同名，选中也不会重复入库。</div>' +
+        all.slice(0, MD_PICK_LIMIT).map(x => pickRowHTML(x.f, 'data-syspick="' + x.i + '"', selSys && selSys.name === x.f.name,
+          owned(x.f.name) ? '<span class="chip b3" style="margin-left:6px;padding:1px 7px;font-size:11px">已有</span>' : '')).join('') + moreHint(all.length);
+    }
+    $('#mi_syslist', b).innerHTML = h;
+    $$('[data-syspick]', b).forEach(btn => btn.addEventListener('click', () => {
+      selSys = sysFoods[num(btn.dataset.syspick)] || null;
+      selMine = null;
+      if(selSys) $('#mi_savefood', b).checked = mealDlgSaveDefault('sys', selSys.name);   /* 未拥有的默认入库 */
+      renderSys(); refresh();
+    }));
+  }
+  function renderList(){ if(mdTab === 'mine') renderMine(); else if(mdTab === 'sys') renderSys(); }
+  function switchTab(t){
+    mdTab = t; mdQuery = '';
+    $('#mi_q', b).value = ''; $('#mi_qs', b).value = '';
+    selMine = null; selSys = null;
+    $('#mi_savefood', b).checked = false;   /* 新增默认不勾（避免污染个人库） */
+    refresh(); renderList();
+  }
+  $$('#md_seg [data-mtab]', b).forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.mtab)));
+  $('#mi_q', b).addEventListener('input', e => { mdQuery = e.target.value; renderMine(); });
+  $('#mi_qs', b).addEventListener('input', e => { mdQuery = e.target.value; renderSys(); });
+  $$('input', b).forEach(i => i.addEventListener('input', refresh));
+  invalidateSysLib();   /* v4.4 口径：每次打开弹窗失效一次，管理员的改动进弹窗即新 */
+  refresh(); renderList();
+  $('#mi_save', b).addEventListener('click', () => {
+    const g = num($('#mi_g', b).value);
+    if(mdTab === 'mine'){
+      if(!selMine){ toast('请从我的库选一个食物', true); return; }
+      if(!g){ toast('请填写克数', true); return; }
+      addMealItem(date, slot, { id:uid(), name:selMine.name, per100:safePer100(selMine.per100), g });
+    } else if(mdTab === 'sys'){
+      if(!selSys){ toast('请从系统库选一个食物', true); return; }
+      if(!g){ toast('请填写克数', true); return; }
+      if($('#mi_savefood', b).checked && !owned(selSys.name)){
+        const nf = { id:uid(), name:selSys.name, src:selSys.src || FOOD_SRC_SYS };   /* 来源随条目一起挑进来 */
+        if(selSys.per100) nf.per100 = Object.assign({}, selSys.per100);
+        state.foods.push(nf); toast('已加入食物库：' + selSys.name);
+      }
+      addMealItem(date, slot, { id:uid(), name:selSys.name, per100:safePer100(selSys.per100), g });
+    } else {
+      const f = readNew();
+      if(!f.name){ toast('请填写食物名称', true); return; }
+      if(!g){ toast('请填写克数', true); return; }
+      const per100 = { kcal:f.kcal, p:f.p, c:f.c, f:f.f };
+      if($('#mi_savefood', b).checked && !owned(f.name)){
+        state.foods.push({ id:uid(), name:f.name, src:FOOD_SRC_USER, per100 }); toast('已加入食物库：' + f.name);
+      }
       addMealItem(date, slot, { id:uid(), name:f.name, per100, g });
     }
     save(); closeDialog(); renderDiet();
   });
-  const md = $('#mi_del', b); if(md) md.addEventListener('click', () => { delMealItem(date, itemId); closeDialog(); });
   const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
 }
+
+/* 修改一条已记录的食物：只改「实际吃了多少克」+ 删除。
+ * 记录是 name+per100+g 的副本，按名匹配回库不可靠，故不开放改营养、也不写回食物库。 */
+function editMealDialog(date, itemId){
+  const item = findMealItem(date, itemId);
+  if(!item) return;
+  const slot = slotOfItem(date, itemId);
+  const S = SLOTS.find(s => s.id === slot) || { ic:'🍽️', label:'记录' };
+  const per = item.per100 || {};
+  const html =
+    '<div class="row gap8" style="margin-bottom:10px">' +
+      '<span class="chip">' + dateCNW(date) + '</span><span class="chip slot" style="background:' + slotColor(slot) + '22;border-color:transparent">' + S.ic + ' ' + esc(S.label) + '</span>' +
+    '</div>' +
+    '<div class="b" style="margin-bottom:4px">' + esc(item.name) + '</div>' +
+    '<div class="tiny muted" style="margin-bottom:10px">每100g：' + Math.round(per.kcal || 0) + ' kcal · P' + (per.p || 0) + ' C' + (per.c || 0) + ' F' + (per.f || 0)
+      + '（记录时已定格，不支持改营养；要改请删掉重记）</div>' +
+    '<div class="form-grid"><div class="span2"><label>实际吃了多少（克）</label>' +
+      '<input class="input" id="me_g" type="number" min="1" value="' + item.g + '">' +
+      '<div class="tiny muted" id="me_prev" style="margin-top:6px"></div></div></div>' +
+    '<div class="d-f"><button class="btn danger ghost" id="me_del">删除</button>' +
+      '<button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="me_save">保存</button></div>';
+  const dlg = showDialog('修改记录', html);
+  const box = dlg.box;
+  function refresh(){ $('#me_prev', box).innerHTML = mealPrevHTML(per, num($('#me_g', box).value) || 0); }
+  $$('input', box).forEach(i => i.addEventListener('input', refresh));
+  refresh();
+  $('#me_save', box).addEventListener('click', () => {
+    const g = num($('#me_g', box).value);
+    if(!g){ toast('请填写克数', true); return; }
+    item.g = g; save(); closeDialog(); renderDiet();
+  });
+  $('#me_del', box).addEventListener('click', () => { delMealItem(date, itemId); closeDialog(); });
+  const cx = $('[data-cancel]', box); if(cx) cx.addEventListener('click', closeDialog);
+}
+function mealPrevHTML(per, g){ const k = (per.kcal || 0) * g / 100, p = (per.p || 0) * g / 100, c = (per.c || 0) * g / 100, fa = (per.f || 0) * g / 100;
+  return '合计：<b>' + Math.round(k) + ' kcal</b> · 蛋白 ' + round(p, 1) + 'g · 碳水 ' + round(c, 1) + 'g · 脂肪 ' + round(fa, 1) + 'g'; }
+/* 库条目可能没有 per100（早期挑入/自录留空），补 0 兜底：itemMacro 不做存在性检查，缺字段会算出 NaN */
+function safePer100(per){ const x = per || {}; return { kcal:num(x.kcal), p:num(x.p), c:num(x.c), f:num(x.f) }; }
 
 /* =====================================================
    系统共享库（v4：管理员维护，普通用户只读；个人库可从中挑入）
@@ -3279,7 +3420,58 @@ function runFTest(){
     if(sleepDur('23:00','07:00','night') !== 480) throw new Error('cross-midnight-wrong'); });
   T('habit', () => { const h = state.habits[0]; h.done[today()] = true; if(habitStreak(h, today()) < 1) throw new Error('streak-fail'); });
   T('aimMode', () => { const tdee = bmrOf(state.profile) * state.activity; openNutritionEditor(); const b = curDialog.box; $('#ne_mode', b).value = 'bulk'; $('#ne_save', b).click(); if(state.goal.mode !== 'bulk') throw new Error('aim-not-saved'); if(state.nutrition.kcal !== Math.round(tdee + GOAL_ADJ.bulk)) throw new Error('aim-calc-wrong'); });
-  T('mealDialog', () => { dietDate = today(); renderDiet(); addMealDialog(today(), 'dinner'); const b = curDialog.box; $('#mi_name', b).value = '测试餐'; $('#mi_kcal', b).value = 100; $('#mi_p', b).value = 10; $('#mi_c', b).value = 10; $('#mi_f', b).value = 5; $('#mi_g', b).value = 200; $('#mi_save', b).click(); if(dayTotals(today()).kcal < 10) throw new Error('meal-dialog-not-saved'); });
+  T('mealDialog', () => {
+    /* 未标版号（2026-09-12）记录饮食三 tab：「新增」全字段 + 勾选入库 → 「我的库」选中后只填克数。
+     * 测试用刚入库的那条食物，账户个人库为空也能跑；结束就地复位，不污染真实数据。 */
+    dietDate = today(); renderDiet();
+    /* 先洗掉历史 residue（上一次跑到一半异常退出时留下的），再取快照 */
+    USERS.shared.foods = USERS.shared.foods.filter(f => f.name !== '测试餐'); state.foods = USERS.shared.foods;
+    const bakMeals = JSON.stringify(state.meals[today()] || null), bakFoods = JSON.stringify(USERS.shared.foods);
+    const before = dayTotals(today()).kcal, nFoods = state.foods.length;
+    addMealDialog(today(), 'dinner');
+    let b = curDialog.box;
+    if(['mine','sys','new'].some(t => b.innerHTML.indexOf('data-mtab="' + t + '"') < 0)) throw new Error('three-tabs-missing');
+    $$('[data-mtab="new"]', b)[0].click();
+    $('#mi_name', b).value = '测试餐'; $('#mi_kcal', b).value = 100; $('#mi_p', b).value = 10; $('#mi_c', b).value = 10; $('#mi_f', b).value = 5; $('#mi_g', b).value = 200;
+    $('#mi_savefood', b).checked = true; $('#mi_save', b).click();
+    if(dayTotals(today()).kcal <= before) throw new Error('meal-dialog-not-saved');
+    if(state.foods.length !== nFoods + 1 || state.foods[nFoods].name !== '测试餐') throw new Error('savefood-not-imported');
+    if(state.foods[nFoods].src !== FOOD_SRC_USER) throw new Error('savefood-src-wrong');
+    addMealDialog(today(), 'snack');
+    b = curDialog.box;
+    if(mdTab !== 'mine') throw new Error('should-open-at-mine-tab');
+    /* 候选只渲染前 40 条，先搜一下再点（真库里条目多，不能赌它在首屏） */
+    const q = $('#mi_q', b); q.value = '测试餐'; q.dispatchEvent(new Event('input', { bubbles: true }));
+    if(mdQuery !== '测试餐') throw new Error('mine-tab-search-not-bound');
+    $$('[data-mypick="' + state.foods[nFoods].id + '"]', b)[0].click();
+    if($('#mi_save_wrap', b).style.display !== 'none') throw new Error('mine-tab-should-hide-savefood');
+    $('#mi_g', b).value = 50; $('#mi_save', b).click();
+    const snack = dayMeals(today()).snack || [];
+    const it = snack[snack.length - 1];
+    if(!it || it.g !== 50 || Math.round(itemMacro(it).kcal) !== 50) throw new Error('mine-tab-not-saved');
+    /* 新增 tab 填了库里已有的名字：不能静默跳过入库——勾选行换成「已有」提示 */
+    addMealDialog(today(), 'dinner', { tab: 'new' });
+    b = curDialog.box;
+    $('#mi_name', b).value = '测试餐'; $('#mi_savefood', b).checked = true;
+    $('#mi_name', b).dispatchEvent(new Event('input', { bubbles: true }));
+    if($('#mi_save_wrap', b).style.display !== 'none') throw new Error('owned-name-should-hide-checkbox');
+    if($('#mi_savefood', b).checked !== false) throw new Error('owned-name-should-uncheck');
+    if($('#mi_owned', b).style.display === 'none') throw new Error('owned-name-should-tip');
+    if($('#mi_owned', b).textContent.indexOf('已有') < 0 || $('#mi_owned', b).textContent.indexOf('测试餐') < 0) throw new Error('owned-tip-text-wrong');
+    $('#mi_name', b).value = '新名字菜'; $('#mi_name', b).dispatchEvent(new Event('input', { bubbles: true }));
+    if($('#mi_save_wrap', b).style.display === 'none' || $('#mi_owned', b).style.display !== 'none') throw new Error('fresh-name-should-show-checkbox');
+    $('#mi_name', b).value = ''; $('#mi_name', b).dispatchEvent(new Event('input', { bubbles: true }));
+    if($('#mi_save_wrap', b).style.display !== 'none') throw new Error('empty-name-should-hide-checkbox');
+    closeDialog();
+    /* 编辑已简化（未标版号：只改克数）：editMealDialog 预填原克数、不写库、不开放改营养 */
+    editMealDialog(today(), it.id);
+    if(curDialog.box.innerHTML.indexOf('id="mi_name"') >= 0) throw new Error('edit-should-not-expose-nutrition');
+    $('#me_g', curDialog.box).value = 80; $('#me_save', curDialog.box).click();
+    if(findMealItem(today(), it.id).g !== 80) throw new Error('edit-g-not-saved');
+    USERS.shared.foods = JSON.parse(bakFoods); state.foods = USERS.shared.foods;
+    if(bakMeals === 'null') delete state.meals[today()]; else state.meals[today()] = JSON.parse(bakMeals);
+    save();
+  });
   T('workoutCore', () => {
     const before = state.workouts.length;
     /* 用未被占用的日期，别撞上真实数据里今天已有的那条 */

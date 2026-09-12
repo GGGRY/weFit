@@ -675,18 +675,92 @@ async function main() {
      !hFoodAdder.startsWith('ERR:') && hFoodAdder.includes('id="nf_name"') && hFoodAdder.includes('id="nf_kcal"')
      && hFoodAdder.includes('id="nf_p"') && hFoodAdder.includes('id="nf_c"') && hFoodAdder.includes('id="nf_f"')
      && hFoodAdder.includes('id="nf_add"') && hFoodAdder.includes('data-cancel'), hFoodAdder.slice(0, 200));
-  let hMeal = '', hPickList = '';
+  /* T12s 记录饮食弹窗（未标版号：三 tab）：我的库 / 系统库 / 新增 + 共用底栏（克数 + 实时合计 + 保存）
+   * 默认停在「我的库」（不做跨次记忆）；弹窗内不是原生下拉而是 .seg + .picklist，避免 300+ 行 DOM */
+  let hMeal = '', hMineList = '';
   try {
     ev('closeDialog && curDialog && closeDialog()');
     ev("addMealDialog(today(), 'dinner')");
     hMeal = ev('curDialog.box.__html');
-    hPickList = ev("$('#mi_list', curDialog.box).__html");
+    hMineList = ev("$('#mi_list', curDialog.box).__html");
   } catch (e) { hMeal = 'ERR:' + e.message; }
+  ok('T12s 记录饮食弹窗：三 tab 分段 + 我的库候选行 + 共用底栏（只填克数）',
+     !hMeal.startsWith('ERR:')
+     && ['data-mtab="mine"', 'data-mtab="sys"', 'data-mtab="new"'].every(s => hMeal.includes(s))
+     && hMeal.includes('id="md_p_mine"') && hMeal.includes('id="md_p_sys"') && hMeal.includes('id="md_p_new"')
+     && hMeal.includes('id="mi_q"') && hMeal.includes('id="mi_list"') && hMeal.includes('class="picklist"')
+     && hMeal.includes('id="mi_g"') && hMeal.includes('id="mi_prev"') && hMeal.includes('id="mi_save"')
+     && hMeal.includes('id="mi_savefood"') && hMeal.includes('id="mi_owned"') && hMeal.includes('同时保存到我的食物库')
+     && !hMeal.includes('营养按库锁定')
+     && ev("mdTab") === 'mine'
+     && ev("$('#md_p_sys', curDialog.box).style.display") === 'none'
+     && ev("$('#md_p_new', curDialog.box).style.display") === 'none'
+     && hMineList.includes('data-mypick='), (hMeal + ' | ' + hMineList).slice(0, 200));
   ev('closeDialog && curDialog && closeDialog()');
-  ok('T12s 记录饮食弹窗：搜索框 + 候选行，无 300+ 项原生下拉',
-     !hMeal.startsWith('ERR:') && hMeal.includes('id="mi_q"') && hMeal.includes('id="mi_list"')
-     && hMeal.includes('class="picklist"') && !hMeal.includes('id="mi_sel"')
-     && hPickList.includes('data-pick='), (hMeal + ' | ' + hPickList).slice(0, 160));
+  /* 空库引导：个人库已清空是常态，我的库 tab 要告诉用户下一步去哪 */
+  const hEmptyMine = (function(){
+    ev('state.foods = []; addMealDialog(today(), "dinner");');
+    const h = ev("$('#mi_list', curDialog.box).__html");
+    ev('closeDialog && curDialog && closeDialog(); state.foods = USERS.shared.foods;');
+    return h;
+  })();
+  ok('T12s2 我的库空库时给引导（去「系统库」挑 / 去「新增」手填），不再是一句「可手动填写」了事',
+     hEmptyMine.includes('我的食物库是空的') && hEmptyMine.includes('系统库') && hEmptyMine.includes('新增'),
+     hEmptyMine.slice(0, 160));
+  /* 系统库 tab：进弹窗时拉一次（opts.tab 显式指定初始分页，不是跨次记忆），
+   * 与自己库同名的标「已有」（与食物库页同一口径），未拥有的可选入 */
+  ev('invalidateSysLib(); addMealDialog(today(), "dinner", { tab:"sys" })');
+  await new Promise(r => setTimeout(r, 20));
+  const hSysMeal = ev("$('#mi_syslist', curDialog.box).__html");
+  const hMealPrev = ev("$('#mi_prev', curDialog.box).__html");
+  const per100Shown = ev("$('#mi_per100', curDialog.box).style.display");
+  ev('closeDialog && curDialog && closeDialog()');
+  ok('T12s3 系统库 tab：候选行走接口缓存，同名标「已有」（与食物库页同口径），未选中时不摆每100g 回显',
+     hSysMeal.includes('data-syspick=') && hSysMeal.includes('系统专属食物')
+     && hSysMeal.includes('>已有<') && hSysMeal.includes('共 2 条')
+     && (hSysMeal.match(/data-syspick=/g) || []).length === 2
+     && per100Shown === 'none'
+     && hMealPrev.includes('先选一个食物'), hSysMeal.slice(0, 240) + ' | ' + hMealPrev);
+  /* 修改已记录的食物（用户裁定：只改克数 + 删除，不开放改营养、不写回库） */
+  ev("(function(){ addMealItem(today(), 'lunch', { id:'t_edit1', name:'测试编辑', per100:{ kcal:200, p:20, c:10, f:5 }, g:120 }); })()");
+  ev("editMealDialog(today(), 't_edit1')");
+  const hMealEdit = ev('curDialog.box.__html');
+  const hEditPrev = ev("$('#me_prev', curDialog.box).__html");
+  ev('closeDialog && curDialog && closeDialog(); delMealItem(today(), "t_edit1")');
+  ok('T12s4 修改记录弹窗只剩「克数 + 删除」（无三 tab、无营养输入、无入库勾选）',
+     hMealEdit.includes('id="me_g"') && hMealEdit.includes('value="120"') && hMealEdit.includes('id="me_del"')
+     && hMealEdit.includes('不支持改营养') && hMealEdit.includes('测试编辑')
+     && !hMealEdit.includes('data-mtab') && !hMealEdit.includes('id="mi_kcal"') && !hMealEdit.includes('id="mi_name"')
+     && !hMealEdit.includes('id="mi_savefood"') && !hMealEdit.includes('id="mi_q"'), hMealEdit.slice(0, 200));
+  ok('T12s5 修改弹窗预填原克数，预览打开即按 per100×g/100 算合计（桩不解析 value 属性，算法走 mealPrevHTML 纯函数）',
+     hMealEdit.includes('value="120"') && hEditPrev.length > 0
+     && ev('mealPrevHTML({ kcal:200, p:20, c:10, f:5 }, 120)') === '合计：<b>240 kcal</b> · 蛋白 24g · 碳水 12g · 脂肪 6g'
+     && ev('mealPrevHTML({}, 120)') === '合计：<b>0 kcal</b> · 蛋白 0g · 碳水 0g · 脂肪 0g', hEditPrev);
+  /* 入库勾选默认口径（用户裁定 C）：只有系统库里「我还没有的」默认勾，
+   * 已有的 / 新增 / 我的库 都不默认勾（新增要用户主动勾，避免手填半成品污染个人库） */
+  ok('T12s6 默认勾选口径：系统库未拥有→默认勾、已有→不勾；新增/我的库→不默认勾',
+     ev("mealDlgSaveDefault('sys','系统专属食物')") === true
+     && ev('mealDlgSaveDefault("sys", state.foods[0].name)') === false
+     && ev("mealDlgSaveDefault('new','自录新食物')") === false
+     && ev('mealDlgSaveDefault("mine", state.foods[0].name)') === false);
+  /* 新增 tab 填了库里已有的名字：不能默默跳过整段——勾选行换成「已有」提示，说清本次只记一餐不入库
+   * （按名判重沿用同一个 owned 规则，不另立口径） */
+  const dupName = ev('state.foods[0].name'), freshName = '图里暂时还没有的菜';
+  ok('T12s8 同名不静默跳过：库里已有同名时不给入库勾选（新增/系统库同口径），新名字才给',
+     ev('mealShowSaveChk("new", ' + JSON.stringify({ name: dupName }) + ')') === false
+     && ev('mealShowSaveChk("new", ' + JSON.stringify({ name: freshName }) + ')') === true
+     && ev('mealShowSaveChk("sys", ' + JSON.stringify({ name: dupName }) + ')') === false
+     && ev('mealShowSaveChk("sys", ' + JSON.stringify({ name: freshName }) + ')') === true
+     && ev('mealShowSaveChk("mine", ' + JSON.stringify({ name: freshName }) + ')') === false
+     && ev('mealShowSaveChk("new", null)') === false);
+  const tipHTML = ev('mealOwnedTipHTML(' + JSON.stringify(dupName) + ')');
+  ok('T12s9 「已有」提示文案：只写口径（不入库/不改库里营养），不写「点「X」可…」操作指引',
+     tipHTML.includes('class="chip b3">已有<') && tipHTML.includes('本次只记这一餐') && tipHTML.includes('不会入库')
+     && !/点「.+」可/.test(tipHTML) && !readPub('js/app.js').includes('营养按库锁定'), tipHTML);
+  ok('T12s7 饮食页 ✏️ 已改走 editMealDialog（只改克数），旧的「按名匹配回库」全字段编辑路径不再存在',
+     (function(){ const a = readPub('js/app.js');
+       return a.includes("editMealDialog(dietDate, b.dataset.edit)") && a.includes("addMealDialog(dietDate, b.dataset.addslot)")
+         && !a.includes('slotOfItem(dietDate') && !a.includes('function addMealDialog(date, slot, itemId)'); })());
   /* 系统分页的「已有」标记（与个人库按名称比，与动作库同一口径）——
    * 桩不能点分页，但分页选择是页面级状态 foodLibTab/exLibTab，直接设好再进页即可。
    * 先重置系统库缓存，否则前面用例拉过的 mock 列表会盖掉本处的断言数据 */
@@ -715,9 +789,10 @@ async function main() {
     " while(state.foods.length > n0) USERS.shared.foods.pop(); save(); return a + '/' + b; })()");
   ok('T12u 从系统库挑入：来源随条目一起进个人库（源条目缺 src 时按 USDA 兜底）', srcKept === 'USDA/USDA', srcKept);
   const appSrcTxt = readPub('js/app.js');
+  /* 自录入库只有两个写库点（添加食物弹窗 + 记录饮食「新增」tab 的勾选入库），两处都得带 src=用户 */
+  const userSrcWrites = appSrcTxt.split('\n').filter(l => l.includes('state.foods.push(') && l.includes('src:FOOD_SRC_USER')).length;
   ok('T12v 用户自录食物写来源「用户」（添加食物弹窗 + 记录饮食弹窗的「同时加入食物库」）',
-     (appSrcTxt.match(/src:FOOD_SRC_USER/g) || []).length === 2,
-     String((appSrcTxt.match(/src:FOOD_SRC_USER/g) || []).length));
+     userSrcWrites === 2, '写库点=' + userSrcWrites);
   ev("invalidateSysLib(); exLibTab = 'sys'; go('exlib')");
   await new Promise(r => setTimeout(r, 20));
   const hSysE = ev("$('#xl_body', $('#xl_host')).__html");
