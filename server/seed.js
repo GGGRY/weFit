@@ -1,7 +1,8 @@
 'use strict';
 /* =====================================================
    系统共享库种子构建
-   系统库由管理员维护;新注册账户的个人库 = 系统库整份拷贝。
+   系统库由管理员维护。2026-09-12 起新注册账户的个人库初始为空（注册不再拷贝系统库），
+   copyLibrary() 只剩一次性工具 reset-food-library.js 在用。
    v4.3：SEED_FOODS / SEED_EXERCISES 不再在本文件另抄一份——
    与前端共用唯一数据源 public/js/seed-data.json（seed-data.js 只做枚举与加载；曾出现两份拷贝数值漂移）。
    v4.11：动作条目携带 cat(大类)/muscle(部位)/mode(计次|计时) 三件套，
@@ -26,7 +27,8 @@ function seedLibrary() {
   };
 }
 
-/* 新注册用户个人库的系统种子条目换前缀 id(避免与用户自增 id 空间纠缠) */
+/* 系统库条目换前缀 id 拷入个人库(避免与用户自增 id 空间纠缠)；2026-09-12 起仅供
+ * 一次性工具 server/test/reset-food-library.js 使用，注册已不再调用 */
 function copyLibrary(lib) {
   const out = {
     foods: (lib.foods || []).map((f, i) => ({

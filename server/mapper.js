@@ -62,7 +62,7 @@ function userRev(db, uid) {
   return row ? row.rev : null;
 }
 
-/* ---------- 注册建档:一条 users 行 + 个人库初值(系统库拷贝) ---------- */
+/* ---------- 注册建档:一条 users 行 + 个人库初值(2026-09-12 起为空,不再拷系统库) ---------- */
 function createUser(db, uid, info) {
   /* v4.3:去掉 seq——v4 起单账户单成员,该列从未被读写,已从新库 schema 移除(老库残留列走 DEFAULT) */
   db.prepare(`INSERT INTO users(id, name, avatar, color, activity, water_target,

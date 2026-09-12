@@ -848,6 +848,28 @@ async function main() {
        empty === true && !!errFlag && errs.length === 1, 'empty=' + empty + ' err=' + errFlag + ' logs=' + errs.length);
   }
 
+  /* T16 个人库初始为空（2026-09-12 用户裁定：注册不再导入系统库，前端同步拆掉两条「空库 → 种子」路径）
+     · adoptRaw：采纳服务器树 / 本机缓存 / 导入备份时，空个人库原样保留；
+     · bootUsers：无本机缓存的首次建档也建空库。
+     旧写法「空就补一份种子」会让新账户在本机凭空长出 321 食物 + 27 动作，
+     首次 save() 又把它们推回服务器——服务端的「注册不导入」就这样被前端悄悄抹掉
+     （实测：改完服务端后注册的新账户个人库仍是 321+27）。 */
+  {
+    const bakUsers = ev('JSON.stringify(USERS)');
+    const adoptEmpty = ev("(function(){ adoptRaw({ theme:'light', onboarded:false, shared:{ foods:[], exercises:[] }, users:{ u_x:{ id:'u_x', name:'新人' } }, active:'u_x' });"
+      + " return USERS.shared.foods.length === 0 && USERS.shared.exercises.length === 0; })()");
+    const adoptMalformed = ev("(function(){ adoptRaw({ theme:'light', onboarded:false, shared:{ foods:null, exercises:'x' }, users:{ u_x:{ id:'u_x', name:'新人' } }, active:'u_x' });"
+      + " return Array.isArray(USERS.shared.foods) && USERS.shared.foods.length === 0"
+      + " && Array.isArray(USERS.shared.exercises) && USERS.shared.exercises.length === 0; })()");
+    const bootEmpty = ev("(function(){ const bk = localStorage.getItem(storeKey()); localStorage.removeItem(storeKey()); bootUsers();"
+      + " const r = USERS.shared.foods.length === 0 && USERS.shared.exercises.length === 0;"
+      + " if(bk) localStorage.setItem(storeKey(), bk); return r; })()");
+    ev('USERS = JSON.parse(' + JSON.stringify(bakUsers) + ')');
+    ok('T16 个人库初始为空：采纳空树/畸形库/无缓存建档都不再拿种子填满（空库 ≠ 321+27 条种子）',
+       adoptEmpty === true && adoptMalformed === true && bootEmpty === true,
+       'adopt=' + adoptEmpty + ' malformed=' + adoptMalformed + ' boot=' + bootEmpty);
+  }
+
   finish();
 }
 

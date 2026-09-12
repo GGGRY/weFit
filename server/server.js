@@ -18,7 +18,7 @@ const os = require('node:os');
 const dbm = require('./db');
 const mapper = require('./mapper');
 const auth = require('./auth');
-const { copyLibrary, FOOD_NUM_KEYS, SEED_CATS, SEED_MUSCLES, SEED_MODES } = require('./seed');
+const { FOOD_NUM_KEYS, SEED_CATS, SEED_MUSCLES, SEED_MODES } = require('./seed');
 
 const DEFAULT_PORT = Number(process.env.PORT || 8123);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -160,7 +160,10 @@ async function handleRegister(db, req, res) {
     sendJson(res, 409, { error: 'username_taken' }); return;
   }
   const uid = auth.genId();
-  const lib = copyLibrary(readSystemLibrary(db));
+  /* 2026-09-12 用户裁定：新注册用户**不再**整份拷贝系统库，个人库初始为空
+   * （旧的 copyLibrary(readSystemLibrary(db)) 已删；系统库不追溯、要什么去系统库页
+   *  「＋我的库」挑入，个人库只装用户自己挑/录的条目）。copyLibrary 仍留在 seed.js
+   *  供一次性工具 server/test/reset-food-library.js 使用。 */
   const pwdHash = await auth.hashPassword(password);   /* v4.3：CPU 密集哈希在开写事务之前完成，不持锁跑 scrypt */
   let isFirst;
   try {
@@ -174,7 +177,7 @@ async function handleRegister(db, req, res) {
       db.exec('ROLLBACK');
       sendJson(res, 409, { error: 'username_taken' }); return;
     }
-    mapper.createUser(db, uid, { name, library: lib });
+    mapper.createUser(db, uid, { name });
     db.prepare('INSERT INTO accounts(username, user_id, pwd, role, created_at) VALUES (?,?,?,?,?)')
       .run(username, uid, pwdHash, isFirst ? 'admin' : 'user', Date.now());
     db.exec('COMMIT');

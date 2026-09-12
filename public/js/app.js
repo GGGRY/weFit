@@ -113,7 +113,9 @@ const HOME_ORDER_DEFAULT = ['diet','workout','water','sleep','habits'];
 
 function seedFoodArr(){ return SEED_FOODS.map((f,i)=>({id:'f'+i, name:f.name, per100:Object.assign({}, f.per100), src:f.src||FOOD_SRC_SYS})); }
 function seedExArr(){ return SEED_EXERCISES.map((e,i)=>({id:'e'+i, name:e.name, cat:e.cat, muscle:e.muscle, mode:e.mode})); }
-function freshShared(){ return { foods: seedFoodArr(), exercises: seedExArr() }; }
+/* 2026-09-12：个人库初始为空——「空库」不再拿种子填满。seedFoodArr/seedExArr 只剩两个
+ * 用途：?demoData 演示数据(demoData)、v4.11 旧个人动作库换新种子(normalizeLegacyShared)。 */
+function freshShared(){ return { foods: [], exercises: [] }; }
 function defaultHabits(){ return [
   {id:'h_water', name:'饮水达标', icon:'💧', color:'var(--cat1)', done:{}},
   {id:'h_work',  name:'完成运动', icon:'🏋️', color:'var(--cat2)', done:{}},
@@ -228,9 +230,12 @@ function ensureUserIntact(u){
 function adoptRaw(raw){
   if(raw && raw.users && raw.shared){
     USERS = raw;
-    if(!(USERS.shared.foods && USERS.shared.foods.length)){ const sf = seedFoodArr(); if(sf.length) USERS.shared.foods = sf; }
-    if(!(USERS.shared.exercises && USERS.shared.exercises.length)){ const se = seedExArr(); if(se.length) USERS.shared.exercises = se; }
-    normalizeLegacyShared(USERS.shared);   /* v4.11：整份旧个人动作库换新种子 */
+    /* 2026-09-12（用户裁定）：个人库为空就让它空着——旧写法「空就补一份种子」会让
+     * 新账户启动时本机凭空长出 321 食物 + 27 动作，首次 save() 又把它们推回服务器，
+     * 等于变相自动导入系统库。这里只把畸形（非数组）收敛成空数组。 */
+    if(!Array.isArray(USERS.shared.foods)) USERS.shared.foods = [];
+    if(!Array.isArray(USERS.shared.exercises)) USERS.shared.exercises = [];
+    normalizeLegacyShared(USERS.shared);   /* v4.11：整份旧个人动作库换新种子（空库不触发） */
     Object.keys(USERS.users).forEach(id => ensureUserIntact(USERS.users[id]));
     if(!USERS.users[USERS.active]) USERS.active = Object.keys(USERS.users)[0] || null;
     return true;

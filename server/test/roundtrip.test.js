@@ -144,10 +144,15 @@ async function main() {
 
   /* ============ 单用户往返 ============ */
   r = await A.req('GET', '/api/state');
-  ok('T7a 新账户 state:rev=0+个人库=系统种子', r.status === 200 && r.json.rev === 0
-    && r.json.data && r.json.data.shared.foods.length === SEED_FOODS.length && r.json.data.shared.exercises.length === SEED_EXERCISES.length
+  ok('T7a 新账户 state:rev=0+个人库初始为空(不自动导入系统库)', r.status === 200 && r.json.rev === 0
+    && r.json.data && r.json.data.shared.foods.length === 0 && r.json.data.shared.exercises.length === 0
     && Object.keys(r.json.data.users).length === 1, JSON.stringify(r.json).slice(0, 160));
   uidA = Object.keys(r.json.data.users)[0];
+  /* 空个人库 ≠ 空系统库：系统库本身仍是完整种子（新用户要条目走「＋我的库」挑入） */
+  r = await A.req('GET', '/api/system/library');
+  ok('T7a2 同一时刻系统库仍为完整种子', r.status === 200
+    && r.json.foods.length === SEED_FOODS.length && r.json.exercises.length === SEED_EXERCISES.length,
+    (r.json.foods || []).length + '/' + (r.json.exercises || []).length);
 
   const stateA = { theme: 'dark', onboarded: true, shared: fixture.shared, users: { [uidA]: fixture.users.u_alice }, active: uidA };
   r = await A.req('PUT', '/api/state', { data: stateA });
@@ -190,7 +195,7 @@ async function main() {
   /* ============ 双账户隔离 ============ */
   r = await B.req('GET', '/api/state');
   ok('T13a B 的初始树与 A 无关', r.status === 200 && r.json.rev === 0 && r.json.data.theme === 'light'
-    && r.json.data.shared.foods.length === SEED_FOODS.length && Object.keys(r.json.data.users).length === 1, JSON.stringify(r.json).slice(0, 120));
+    && r.json.data.shared.foods.length === 0 && Object.keys(r.json.data.users).length === 1, JSON.stringify(r.json).slice(0, 120));
   uidB = Object.keys(r.json.data.users)[0];
   const snapshotB = JSON.stringify(r.json);
   ok('T13b B 看不到 A 的任何数据', snapshotB.indexOf('陈') < 0 && snapshotB.indexOf('u_alice') < 0
@@ -250,7 +255,9 @@ async function main() {
   r = await C.req('POST', '/api/register', { username: 'carol', password: 'pw123456', name: '新来的' });
   ok('T15f 注册成功', r.status === 201);
   r = await C.req('GET', '/api/state');
-  ok('T15g 新注册者个人库含系统库新条目', r.json.data.shared.foods.some(f => f.name === '管理员新菜'));
+  ok('T15g 新注册者个人库为空(含系统库新条目也不导入)', r.status === 200
+    && r.json.data.shared.foods.length === 0 && r.json.data.shared.exercises.length === 0,
+    JSON.stringify(r.json.data.shared).slice(0, 120));
   /* 系统库更新不追溯已注册用户 */
   r = await B.req('GET', '/api/state');
   ok('T15h 已注册用户个人库不受系统库更新影响', !r.json.data.shared.foods.some(f => f.name === '管理员新菜'));
