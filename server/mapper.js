@@ -13,8 +13,10 @@
 const { normalizeSleepDay, SLEEP_MAX_SEGS } = require('../public/js/sleep-shape.js');
 
 const SLOTS = ['breakfast', 'lunch', 'dinner', 'snack'];
-/* 身体指标列（顺序即写库列序，与前端 public/js/app.js 的 MEASURES 对位；新增指标两边同步加） */
-const BODY_KEYS = ['weight', 'chest', 'waist', 'hip', 'arm', 'thigh', 'calf', 'bf'];
+/* 身体指标列（顺序即写库列序，与前端 public/js/app.js 的 MEASURES 对位；新增指标两边同步加）
+ * 2026-09-12 扩充：收缩压 sbp / 舒张压 dbp（mmHg）、空腹血糖 fbg / 餐后血糖 pbg（mmol/L）、静息心率 hr（bpm） */
+const BODY_KEYS = ['weight', 'chest', 'waist', 'hip', 'arm', 'thigh', 'calf', 'bf',
+                   'sbp', 'dbp', 'fbg', 'pbg', 'hr'];
 
 /* 带 user_id 外键的子表(删自己子树用;顺序无关,写事务内完成) */
 /* 睡眠子表 = sleep_sessions（多段）；删账户靠 FK CASCADE 级联清理
@@ -103,13 +105,15 @@ function replaceUser(db, uid, data, expectedRev) {
       deleteUserData(db, uid);
       db.prepare(`UPDATE users SET name = ?, avatar = ?, color = ?, activity = ?, water_target = ?,
                   profile_json = ?, goal_json = ?, nutrition_json = ?, theme = ?, onboarded = ?,
-                  foods_json = ?, exercises_json = ?, home_order_json = ?, rev = ? WHERE id = ?`)
+                  foods_json = ?, exercises_json = ?, home_order_json = ?, body_hidden_json = ?, rev = ? WHERE id = ?`)
         .run(nz(u.name), nz(u.avatar), nz(u.color), nz(u.activity), nz(u.waterTarget),
           jz(u.profile), jz(u.goal), jz(u.nutrition),
           nz(data.theme) || 'light', data.onboarded ? 1 : 0,
           jz(shared.foods || []), jz(shared.exercises || []),
           /* jz 而非 || []：键缺失与空数组必须分别保真（composeUser 侧用 put 对称还原） */
           jz(u.homeOrder),
+          /* 身体页隐藏项：同上（空数组 = 全部显示，与键缺失同义但形状各自保真） */
+          jz(u.bodyHidden),
           nextRev, uid);
       insertUserData(db, uid, u);
       db.exec('COMMIT');
@@ -219,6 +223,7 @@ function composeUser(db, uid) {
   put(u, 'goal', jsonParse(row.goal_json));
   put(u, 'nutrition', jsonParse(row.nutrition_json));
   put(u, 'homeOrder', jsonParse(row.home_order_json));
+  put(u, 'bodyHidden', jsonParse(row.body_hidden_json));
   Object.assign(u, readUserData(db, uid));
 
   const data = {

@@ -105,7 +105,7 @@ const USER_COLORS = [
   {id:'pink',   hex:'#e87ba4'},
 ];
 const USER_AVATARS = ['🙂','😊','🦁','🐱','🐶','🐼','🐯','🦊','🐸','🐰','🦄','⭐','🌱','⚡','💪','🏃','🍀','🌊','🔥','😎'];
-const DATA_FIELDS = ['profile','goal','activity','waterTarget','nutrition','meals','workouts','body','habits','sleep','water','homeOrder'];
+const DATA_FIELDS = ['profile','goal','activity','waterTarget','nutrition','meals','workouts','body','habits','sleep','water','homeOrder','bodyHidden'];
 /* 概览页「今日卡片」的默认顺序（顶部磁贴行不参与拖动，见 renderHome/HOME_CARDS）。
  * 顺序存进本人数树 state.homeOrder＝这 5 个 id 的全排列，与「当前是否显示」无关
  * （饮水目标设 0 时卡不渲染，但它的位次保留，重新打开饮水后回到原位）。 */
@@ -133,6 +133,8 @@ function freshUserData(){
     sleep:{},
     water:{},
     homeOrder: HOME_ORDER_DEFAULT.slice(),
+    /* 身体页隐藏项（空数组 = 全部显示；恒在场的一个数组，无需 null 特殊值，同 homeOrder 一样） */
+    bodyHidden: [],
   };
 }
 function newUser(name, avatar, colorId){
@@ -211,6 +213,8 @@ function ensureUserIntact(u){
   normalizeWorkoutDays(u);   /* 运动：计划/记录合并后的形状清洗（见上） */
   /* 概览卡顺序：去重/丢未知 id/补缺（缓存树/服务器树/导入树共用这一处咽喉，同 sleep 的做法） */
   u.homeOrder = resolveHomeOrder(u.homeOrder);
+  /* 身体页隐藏项：同样在这一道咽喉里清洗（存的是隐藏集，空 = 全部显示） */
+  u.bodyHidden = resolveBodyHidden(u.bodyHidden);
   if(!u.color) u.color = 'green';
   if(!u.avatar) u.avatar = '🙂';
   if(!u.name) u.name = '未命名';
@@ -705,17 +709,60 @@ function delItem(date, itemId){
 }
 
 /* ---------- 身体数据辅助 ---------- */
-/* 指标清单：身体页磁贴 / 趋势图下拉 / 记录表列 / 记录弹窗字段 / 写库白名单 都以此为准 */
+/* 指标清单：身体页磁贴 / 趋势图下拉 / 记录表列 / 记录弹窗字段 / 写库白名单 都以此为准。
+ * dec = 显示小数位（血压/心率是整数）——同时决定输入框 step、磁贴与记录表显示、趋势图刻度。
+ * group/glabel = 展示分组：记录表与记录弹窗里同组指标并成一格（血压 = 收缩压/舒张压 → 120/80），
+ * 存储与磁贴仍是各自独立的指标（2026-09-12 扩充：血压 / 血糖 / 静息心率）。 */
 const MEASURES = [
-  {id:'weight', label:'体重', unit:'kg'},
-  {id:'chest',  label:'胸围', unit:'cm'},
-  {id:'waist',  label:'腰围', unit:'cm'},
-  {id:'hip',    label:'臀围', unit:'cm'},
-  {id:'arm',    label:'臂围', unit:'cm'},
-  {id:'thigh',  label:'大腿围', unit:'cm'},
-  {id:'calf',   label:'小腿围', unit:'cm'},
-  {id:'bf',     label:'体脂率', unit:'%'},
+  {id:'weight', label:'体重', unit:'kg', dec:1},
+  {id:'chest',  label:'胸围', unit:'cm', dec:1},
+  {id:'waist',  label:'腰围', unit:'cm', dec:1},
+  {id:'hip',    label:'臀围', unit:'cm', dec:1},
+  {id:'arm',    label:'臂围', unit:'cm', dec:1},
+  {id:'thigh',  label:'大腿围', unit:'cm', dec:1},
+  {id:'calf',   label:'小腿围', unit:'cm', dec:1},
+  {id:'bf',     label:'体脂率', unit:'%', dec:1},
+  {id:'sbp',    label:'收缩压', unit:'mmHg', dec:0, group:'bp', glabel:'血压'},
+  {id:'dbp',    label:'舒张压', unit:'mmHg', dec:0, group:'bp', glabel:'血压'},
+  {id:'fbg',    label:'空腹血糖', unit:'mmol/L', dec:1},
+  {id:'pbg',    label:'餐后血糖', unit:'mmol/L', dec:1},
+  {id:'hr',     label:'静息心率', unit:'bpm', dec:0},
 ];
+const M_BY_ID = {}; MEASURES.forEach(m => { M_BY_ID[m.id] = m; });   /* id → 指标定义（隐藏集清洗要判合法 id） */
+/* 指标显示值：按 dec 定小数位；空/非数字 → null。返回数值——round 后 toString 自然省掉末尾 .0（保住旧显示） */
+function mText(m, v){
+  if(v === undefined || v === null || v === '') return null;
+  const n = parseFloat(v);
+  if(isNaN(n)) return null;
+  return round(n, m.dec);
+}
+/* 展示分组：同 group 的指标合成一格（血压），其余一列一项。list 缺省 = 全量 MEASURES。
+ * 渲染一律传 bodyMeasures()（用户隐藏项不参与）；设置弹窗必须传全量 MEASURES，
+ * 否则隐藏掉的项在弹窗里就没有勾选行了——再也勾不回来。 */
+function mGroups(list){
+  const cols = [];
+  (list || MEASURES).forEach(m => {
+    const k = m.group || m.id;
+    let c = cols.find(x => x.key === k);
+    if(!c){ c = { key:k, label:m.glabel || m.label, unit:m.unit, ms:[] }; cols.push(c); }
+    c.ms.push(m);
+  });
+  return cols;
+}
+/* ---------- 身体页「显示/记录哪些项」（2026-09-12） ----------
+ * 存的是**隐藏集**（state.bodyHidden / users.body_hidden_json），不是启用集，两个理由：
+ *   ① 空数组 = 全部显示，以后新增指标默认对所有人可见（启用集会需要 null 特殊值或一次性回填）；
+ *   ② 与 homeOrder 同一形状（恒在场的一个数组），PUT↔GET 不会有「键缺失 vs null」的拖拽。
+ * 语义只影响渲染与录入，**不动任何已存数据**：隐藏后重新勾回来，历史值立刻可见。
+ * 体重不可隐藏（记录弹窗的保存门槛是「至少填体重」，隐藏了就填不了）。 */
+function resolveBodyHidden(v){
+  if(!Array.isArray(v)) return [];
+  const out = [];
+  v.forEach(k => { if(k !== 'weight' && M_BY_ID[k] && out.indexOf(k) < 0) out.push(k); });
+  return out;
+}
+function bodyOn(id){ return resolveBodyHidden(state.bodyHidden).indexOf(id) < 0; }
+function bodyMeasures(){ return MEASURES.filter(m => bodyOn(m.id)); }
 function upsertBody(rec){
   const patch = {};
   MEASURES.forEach(m => { const k = m.id; if(rec[k] !== undefined && rec[k] !== '') patch[k] = num(rec[k]); });
@@ -2682,6 +2729,7 @@ function openExEditor(e, after){
 let bodyMetric = 'weight';        /* 趋势图当前选中的指标（MEASURES 里的 id） */
 
 function renderBody(){
+  if(!bodyOn(bodyMetric)) bodyMetric = 'weight';   /* 选中的趋势指标被隐藏后回到体重（体重恒启用） */
   const lb = bodyLatest();
   const bmiV = bmi();
   const last30 = lastNDates(30);
@@ -2690,23 +2738,24 @@ function renderBody(){
   let delta = null, cls = '';
   if(w !== null && weight30ago !== null){ const d = w - weight30ago; delta = (d>0?'+':'') + d.toFixed(1) + ' kg / 近30天'; cls = d>0?'up':(d<0?'down':''); }
 
-  const tileVals = MEASURES.map(m => {
+  const tileVals = bodyMeasures().map(m => {
     const v = lb && lb[m.id] !== undefined ? lb[m.id] : null;
     const prev = bodyVal(m.id, addDays(today(), -7));
     let dlt = ''; let c = '';
-    if(v !== null && prev !== null && v !== prev){ dlt = (v-prev>0?'+':'') + round(v-prev,1) + ' / 7天'; c = v-prev>0 ? 'up' : 'down'; }
-    return '<div class="tile"><div class="lab">' + esc(m.label) + '</div><div class="val">' + (v===null?'--':(m.id==='bf' ? v : round(v,1))) + '<span class="unit">' + m.unit + '</span></div><div class="delta ' + c + '">' + dlt + '</div></div>';
+    if(v !== null && prev !== null && v !== prev){ dlt = (v-prev>0?'+':'') + mText(m, v-prev) + ' / 7天'; c = v-prev>0 ? 'up' : 'down'; }
+    return '<div class="tile"><div class="lab">' + esc(m.label) + '</div><div class="val">' + (v===null?'--':mText(m,v)) + '<span class="unit">' + m.unit + '</span></div><div class="delta ' + c + '">' + dlt + '</div></div>';
   }).join('');
 
-  const metricOpts = MEASURES.map(m => '<option value="' + m.id + '"' + (m.id===bodyMetric?' selected':'') + '>' + esc(m.label) + '</option>').join('');
+  const metricOpts = bodyMeasures().map(m => '<option value="' + m.id + '"' + (m.id===bodyMetric?' selected':'') + '>' + esc(m.label) + '</option>').join('');
   const chart = chartCard('chartBody', (MEASURES.find(m=>m.id===bodyMetric)||{}).label + ' 趋势', '近60条 · 鼠标悬停查看数值',
     '<select class="select" id="bm_select" style="max-width:120px;padding:5px 8px">' + metricOpts + '</select>');
 
-  // 最近记录表
+  // 最近记录表：同组指标并成一格（血压 → 120/80，缺一边显 —），近 14 条
+  const tcols = mGroups(bodyMeasures());
   const rows = [...state.body].sort((a,b) => a.date < b.date ? 1 : -1).slice(0, 14).map(r =>
-    '<tr><td>' + dateCN(r.date) + '</td>' + MEASURES.map(m => '<td>' + (r[m.id] !== undefined && r[m.id] !== null ? round(r[m.id],1) : '—') + '</td>').join('') + '</tr>').join('');
+    '<tr><td>' + dateCN(r.date) + '</td>' + tcols.map(c => '<td>' + c.ms.map(m => { const t = mText(m, r[m.id]); return t === null ? '—' : t; }).join('/') + '</td>').join('') + '</tr>').join('');
   const history = state.body.length ?
-    '<div class="card" style="padding:6px 12px 12px"><div style="overflow:auto"><table class="tbl"><thead><tr><th>日期</th>' + MEASURES.map(m => '<th>' + m.label + '</th>').join('') + '</tr></thead><tbody>' + rows + '</tbody></table></div></div>'
+    '<div class="card" style="padding:6px 12px 12px"><div style="overflow:auto"><table class="tbl"><thead><tr><th>日期</th>' + tcols.map(c => '<th>' + esc(c.label) + '</th>').join('') + '</tr></thead><tbody>' + rows + '</tbody></table></div></div>'
     : '';
 
   /* BMI 显示数值本身，颜色按分档自动选取（bmiTone：18.5/24/28 → 偏瘦蓝/正常绿/超重橙/肥胖红），小字注明正常范围 */
@@ -2732,10 +2781,13 @@ function renderBody(){
     '</div>' +
     '<div class="row mt">' + tileVals + '</div>' +
     '<div class="mt">' + chart + '</div>' +
-    history;
+    history +
+    /* 「显示项」入口放页尾（2026-09-12 用户要求：不占卡头首行，跟记录表的阅读顺序一致） */
+    '<div style="text-align:center;margin-top:16px"><button class="btn ghost" id="bm_cfg">⚙ 显示项</button></div>';
 
   $('#view').innerHTML = html;
   $('#bm_add').addEventListener('click', () => openBodyDialog());
+  const cfg = $('#bm_cfg'); if(cfg) cfg.addEventListener('click', () => openBodyMetricsDialog());
   const sel = $('#bm_select'); if(sel) sel.addEventListener('change', () => { bodyMetric = sel.value; renderBody(); });
   renderBodyChart(bodyMetric);
 }
@@ -2743,12 +2795,16 @@ function renderBody(){
 function openBodyDialog(){
   const lb = bodyLatest();
   const valOf = m => { const v = lb && lb[m.id] !== undefined ? lb[m.id] : null; return v === null ? '' : v; };
-  const fields = MEASURES.map(m =>
-    '<div><label>' + esc(m.label) + (m.unit ? ' <span class="tiny muted">' + m.unit + '</span>' : '') + '</label>' +
-    '<input class="input bd" type="number" data-m="' + m.id + '" step="0.1" min="0" value="' + (m.id==='weight' ? valOf('weight') || '' : valOf(m.id)) + '"' + (m.id==='weight' ? ' placeholder="必填"' : '') + '></div>').join('');
+  /* 同组指标（血压）并在一格里：中间一个 "/"，各自 placeholder 标明哪边是哪边 */
+  const fieldCol = c => {
+    const inputs = c.ms.map(m => '<input class="input bd" type="number" data-m="' + m.id + '" step="' + (m.dec ? '0.1' : '1') + '" min="0" value="' + valOf(m) + '"' +
+      (m.id === 'weight' ? ' placeholder="必填"' : (c.ms.length > 1 ? ' placeholder="' + esc(m.label) + '"' : '')) + '>').join('<span class="muted">/</span>');
+    return '<div' + (c.ms.length > 1 ? ' class="span2"' : '') + '><label>' + esc(c.label) + (c.unit ? ' <span class="tiny muted">' + c.unit + '</span>' : '') + '</label>' +
+      (c.ms.length > 1 ? '<div style="display:flex;align-items:center;gap:8px">' + inputs + '</div>' : inputs) + '</div>';
+  };
   const html =
     '<div class="field"><label>记录日期</label><input class="input" type="date" id="bd_date" value="' + today() + '"></div>' +
-    '<div class="form-grid">' + fields + '</div>' +
+    '<div class="form-grid">' + mGroups(bodyMeasures()).map(fieldCol).join('') + '</div>' +
     '<div class="d-f"><button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="bd_save">保存</button></div>';
   const dlg = showDialog('记录身体数据', html);
   const b = dlg.box;
@@ -2759,6 +2815,44 @@ function openBodyDialog(){
     if(rec.weight === undefined){ toast('至少记录体重', true); return; }
     upsertBody(rec); closeDialog(); renderBody(); toast('已记录 ' + dateCN(date));
   });
+  const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
+}
+
+/* 身体页「⚙ 显示项」：勾选哪些指标出现在身体页（磁贴 / 记录表 / 趋势下拉）与记录弹窗里。
+ * 列表取**全量** MEASURES 分组（不能用 bodyMeasures()——被隐藏的项就再也勾不回来了）；
+ * 血压两项是一个开关（同组一起勾/取消，否则记录表会显出 120/— 这种半格）；
+ * 体重恒勾且 disabled（保存门槛是「至少填体重」）。 */
+function openBodyMetricsDialog(){
+  const cntOf = id => state.body.filter(r => r[id] !== undefined && r[id] !== null).length;
+  const rows = mGroups().map(c => {
+    const fixed = c.ms.every(m => m.id === 'weight');
+    const on = c.ms.every(m => bodyOn(m.id));
+    /* 已有数据的小字：只写口径（已记录 n 条 / 暂无记录 + 体重为何不可关），不写操作指引 */
+    const n = c.ms.reduce((a, m) => a + cntOf(m.id), 0);
+    const tip = (n ? '已记录 ' + n + ' 条' : '暂无记录') + (fixed ? ' · 保存时必填' : '');
+    return '<label class="chkline" style="padding:7px 2px">' +
+      '<input type="checkbox" class="bm_on" data-k="' + c.key + '"' + (on ? ' checked' : '') + (fixed ? ' disabled' : '') + '>' +
+      '<span class="grow">' + esc(c.label) + (c.unit ? ' <span class="tiny muted">' + esc(c.unit) + '</span>' : '') + '</span>' +
+      '<span class="tiny muted">' + tip + '</span></label>';
+  }).join('');
+  const html =
+    '<div class="tiny muted" style="margin-bottom:6px">隐藏只是不显示也不录入，已有记录不会被删除</div>' +
+    rows +
+    '<div class="d-f"><button class="btn ghost" id="bm_all">全部显示</button>' +
+      '<button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="bm_save">保存</button></div>';
+  const dlg = showDialog('身体页显示项', html);
+  const b = dlg.box;
+  /* 血压这类组：一个开关同时勾/去勾组内全部指标 */
+  const groups = mGroups();
+  $('#bm_save', b).addEventListener('click', () => {
+    const onKeys = {};
+    $$('.bm_on', b).forEach(i => { onKeys[i.dataset.k] = i.checked; });
+    const hidden = [];
+    groups.forEach(c => { if(!onKeys[c.key]) c.ms.forEach(m => hidden.push(m.id)); });
+    state.bodyHidden = resolveBodyHidden(hidden);   /* 体重会被这里过滤掉，恒不在隐藏集里 */
+    save(); closeDialog(); renderBody(); toast('已更新身体页显示项');
+  });
+  $('#bm_all', b).addEventListener('click', () => { $$('.bm_on', b).forEach(i => { i.checked = true; }); });
   const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
 }
 
@@ -2774,7 +2868,7 @@ function renderBodyChart(metric){
     color: 'var(--brand)',
     fill: true,
     yUnit: mdef.unit,
-    fmtY: v => mdef.id === 'bf' ? v.toFixed(0) : (v < 10 ? v.toFixed(1) : v.toFixed(0)),
+    fmtY: v => mdef.dec === 0 ? v.toFixed(0) : (v < 10 ? v.toFixed(1) : v.toFixed(0)),
   });
   $('#chartBody').innerHTML = '<div class="cc-h"><div class="cc-t">' + esc(mdef.label) + ' 趋势</div><span class="cc-s">近' + out.length + '条 · 悬停看数值</span></div>' + svg;
 }

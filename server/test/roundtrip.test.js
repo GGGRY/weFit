@@ -237,6 +237,32 @@ async function main() {
   ok('T14g 树里无 homeOrder 键 → 读回也不凭空多出该键',
      !('homeOrder' in r.json.data.users[uidA]) && deepEq(normalizeExpected(noHO, uidA), r.json.data), LAST_FAIL);
 
+  /* 2026-09-12（未标版号）新增 users.body_hidden_json（身体页隐藏项 = 显示项开关的反面）：
+     与 homeOrder 完全同一套读写（jz / put），所以形状谱系也一致：数组保真、空数组保真、键缺失不多出 */
+  const withBH = JSON.parse(JSON.stringify(noHO));
+  withBH.users[uidA].bodyHidden = ['calf', 'dbp'];
+  let bhRev = (await A.req('GET', '/api/state')).json.rev;
+  r = await A.req('PUT', '/api/state', { rev: bhRev, data: withBH });
+  ok('T14i bodyHidden 落库 → rev+1', r.status === 200 && r.json.rev === bhRev + 1, JSON.stringify(r.json).slice(0, 120));
+  r = await A.req('GET', '/api/state');
+  ok('T14j bodyHidden 原序读出（新列不是只写不读）',
+     deepEq(normalizeExpected(withBH, uidA), r.json.data)
+     && JSON.stringify(r.json.data.users[uidA].bodyHidden) === JSON.stringify(['calf', 'dbp']),
+     LAST_FAIL || JSON.stringify(r.json.data.users[uidA].bodyHidden));
+  const emptyBH = JSON.parse(JSON.stringify(withBH));
+  emptyBH.users[uidA].bodyHidden = [];
+  r = await A.req('PUT', '/api/state', { data: emptyBH });
+  r = await A.req('GET', '/api/state');
+  ok('T14k bodyHidden 空数组（= 全部显示）也保真',
+     Array.isArray(r.json.data.users[uidA].bodyHidden) && r.json.data.users[uidA].bodyHidden.length === 0,
+     JSON.stringify(r.json.data.users[uidA].bodyHidden));
+  const noBH = JSON.parse(JSON.stringify(emptyBH));
+  delete noBH.users[uidA].bodyHidden;
+  r = await A.req('PUT', '/api/state', { data: noBH });
+  r = await A.req('GET', '/api/state');
+  ok('T14l 树里无 bodyHidden 键 → 读回也不凭空多出该键',
+     !('bodyHidden' in r.json.data.users[uidA]) && deepEq(normalizeExpected(noBH, uidA), r.json.data), LAST_FAIL);
+
   /* ============ 系统库 ============ */
   r = await anon.req('GET', '/api/system/library');
   ok('T15a 未登录读系统库→401', r.status === 401);

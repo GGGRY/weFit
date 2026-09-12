@@ -1169,26 +1169,96 @@ async function main() {
      JSON.stringify(pure.sort) + ' ' + pure.badge);
   ok('T13e weeklyMinutes/Distances 只累计各自口径', pure.wk[0] === 45 && pure.wk[1] === 5, JSON.stringify(pure.wk));
 
-  /* T14 身体指标清单（v4.14）：新增「小腿围」= MEASURES 单一来源
-     （磁贴/趋势下拉/记录表头/记录弹窗字段/upsertBody 白名单 五处同源） */
+  /* T14 身体指标清单（v4.14 加「小腿围」；未标版号批次加血压/血糖/静息心率）：
+     MEASURES = 单一来源（磁贴 / 趋势下拉 / 记录表列 / 记录弹窗字段 / upsertBody 白名单 五处同源） */
   ev("go('body')");
   const bHtml = view.__html;
   const mIds = ev('JSON.stringify(MEASURES.map(m => m.id))');
-  ok('T14a 指标清单 8 项、含 calf、体脂率仍排最后',
-     mIds === '["weight","chest","waist","hip","arm","thigh","calf","bf"]', mIds);
+  ok('T14a 指标清单 13 项：围度之后接血压(sbp/dbp)、血糖(fbg/pbg)、心率(hr)',
+     mIds === '["weight","chest","waist","hip","arm","thigh","calf","bf","sbp","dbp","fbg","pbg","hr"]', mIds);
   ok('T14b 身体页磁贴/趋势下拉/记录表头都有「小腿围」，且磁贴显示夹具里的 37.5',
      (bHtml.match(/小腿围/g) || []).length >= 3 && bHtml.includes('>37.5<span class="unit">cm</span>'),
      'n=' + (bHtml.match(/小腿围/g) || []).length + ' v=' + bHtml.includes('37.5'));
   const hBody = dlgHTML('openBodyDialog()');
   ok('T14c 记录弹窗有小腿围输入框（data-m="calf"），体重仍标必填',
      !hBody.startsWith('ERR:') && hBody.includes('data-m="calf"') && hBody.includes('data-m="weight"')
-     && (hBody.match(/class="input bd"/g) || []).length === 8,
+     && (hBody.match(/class="input bd"/g) || []).length === 13,
      hBody.startsWith('ERR:') ? hBody : 'bd=' + (hBody.match(/class="input bd"/g) || []).length);
   ok('T14d upsertBody 白名单跟着 MEASURES 走（calf 能写入，state 复原）',
      ev("(function(){ const bak = JSON.parse(JSON.stringify(state.body)), kg = state.profile.currentKg;" +
         " upsertBody({ date:'2030-01-01', weight:70, calf:36.5 });" +
         " const r = state.body.find(x => x.date === '2030-01-01'); const okk = !!r && r.calf === 36.5;" +
         " state.body = bak; state.profile.currentKg = kg; return okk; })()") === true);
+
+  /* T14e 新增指标（2026-09-12，未标版号）：血压 = 两列存储、磁贴各一格，但记录表并成一格 128/82；
+     血糖两项、心率照旧各自成格；整数指标显示不带小数点，小数指标保留一位。 */
+  const bpTile = bHtml.includes('>128<span class="unit">mmHg</span>') && bHtml.includes('>82<span class="unit">mmHg</span>');
+  const tableHead = bHtml.slice(bHtml.indexOf('<table class="tbl">'), bHtml.indexOf('</thead>', bHtml.indexOf('<table class="tbl">')));
+  ok('T14e 磁贴：血压两项各一格（128 / 82 mmHg）、血糖 mmol/L、心率整数 bpm',
+     bpTile && bHtml.includes('>5.4<span class="unit">mmol/L</span>') && bHtml.includes('>62<span class="unit">bpm</span>'),
+     'bp=' + bpTile);
+  ok('T14f 记录表：表头有「血压」一格（不含「收缩压/舒张压」两列），该行显示 128/82',
+     tableHead.includes('>血压<') && !tableHead.includes('>收缩压<') && !tableHead.includes('>舒张压<')
+     && bHtml.includes('<td>128/82</td>') && tableHead.includes('>空腹血糖<') && tableHead.includes('>静息心率<'),
+     tableHead);
+  ok('T14g 记录弹窗：血压两项并在一格（span2 + data-m="sbp"/"dbp" 共用 / 分隔），整数指标 step=1、小数 step=0.1',
+     !hBody.startsWith('ERR:') && hBody.includes('class="span2"><label>血压')
+     && /data-m="sbp"[^>]*step="1"/.test(hBody) && /data-m="dbp"[^>]*step="1"/.test(hBody)
+     && /data-m="hr"[^>]*step="1"/.test(hBody) && /data-m="weight"[^>]*step="0\.1"/.test(hBody),
+     hBody.startsWith('ERR:') ? hBody : 'span2=' + hBody.includes('class="span2"><label>血压'));
+  ok('T14h 血压缺一边时该格显 120/—（不整体吞掉）',
+     ev("(function(){ const bak = JSON.parse(JSON.stringify(state.body));" +
+        " state.body.push({ date:'2030-02-02', weight:70, sbp:120 }); go('body');" +
+        " const hit = $('#view').__html.includes('<td>120/—</td>');" +
+        " state.body = bak; go('body'); return hit; })()") === true);
+
+  /* T14i–T14m 身体页「显示项」（2026-09-12，未标版号）：state.bodyHidden = 隐藏集（空 = 全部显示），
+     磁贴 / 记录表列 / 趋势下拉 / 记录弹窗四处共用同一个启用集；隐藏只影响渲染与录入，不动 state.body */
+  const bodyCount = () => {
+    const h = view.__html;   /* go('body') 已在上方调过 */
+    return {
+      tiles: (h.match(/class="tile"/g) || []).length,
+      cols: (h.slice(h.indexOf('<table class="tbl">'), h.indexOf('</thead>')).match(/<th>/g) || []).length,
+      opts: (h.match(/<option value="/g) || []).length,
+    };
+  };
+  ev("state.bodyHidden = []; go('body')");
+  const full = bodyCount();
+  ok('T14i 默认（隐藏集空）= 全开：13 格磁贴 / 记录表 13 列（血压合一格 + 日期）/ 13 项趋势下拉，页尾有「显示项」入口',
+     full.tiles === 13 && full.cols === 13 && full.opts === 13 && bHtml.includes('id="bm_cfg"') && bHtml.includes('⚙ 显示项'),
+     JSON.stringify(full));
+  const iBtn = view.__html.indexOf('id="bm_cfg"');
+  ok('T14i2 「显示项」入口在页面末尾（最近记录表之后）、卡头不再占首行',
+     iBtn > view.__html.lastIndexOf('</table>') && iBtn > view.__html.indexOf('✏️ 记录今天')
+     && !view.__html.includes('>📏 身体数据<'),
+     'btn=' + iBtn + ' tbl=' + view.__html.lastIndexOf('</table>'));
+  const bodyBak = ev('JSON.stringify(state.body)');
+  ev("state.bodyHidden = ['calf','bf','sbp','dbp']; go('body')");
+  const hid = bodyCount();
+  ok('T14j 隐藏小腿围/体脂率/血压后：磁贴 13→9、记录表 13→10 列（血压那格整体消失，只剩 9 项各一格 + 日期）、下拉 13→9；体重恒在',
+     hid.tiles === 9 && hid.cols === 10 && hid.opts === 9
+     && !view.__html.includes('小腿围') && !view.__html.includes('体脂率') && !view.__html.includes('>血压<')
+     && view.__html.includes('>体重<') && view.__html.includes('静息心率'),
+     JSON.stringify(hid));
+  ok('T14k 隐藏不动数据：state.body 逐字节不变（重新勾回来历史值立刻可见）',
+     ev('JSON.stringify(state.body)') === bodyBak, '数据被改动了');
+  const hCfg = dlgHTML('openBodyMetricsDialog()');
+  ok('T14l 显示项弹窗列出**全量** MEASURES（12 格：血压合一格），隐藏中的小腿围/体脂率仍可勾回',
+     !hCfg.startsWith('ERR:') && (hCfg.match(/class="bm_on"/g) || []).length === 12
+     && hCfg.includes('data-k="calf"') && hCfg.includes('data-k="bf"') && hCfg.includes('data-k="bp"')
+     && !hCfg.includes('data-k="sbp"') && hCfg.includes('全部显示'),
+     hCfg.startsWith('ERR:') ? hCfg : 'n=' + (hCfg.match(/class="bm_on"/g) || []).length);
+  ok('T14m 弹窗里体重那行恒勾且 disabled（保存门槛是「至少填体重」）+ 已记录条数小字',
+     /data-k="weight" checked disabled/.test(hCfg) && hCfg.includes('已记录 2 条 · 保存时必填'),
+     hCfg.slice(0, 400));
+  ok('T14n 隐藏集清洗：丢未知 id / 去重 / 体重不可隐藏 / 非数组当空',
+     ev('JSON.stringify([resolveBodyHidden(["calf","calf","weight","nope","hr"]), resolveBodyHidden(null), resolveBodyHidden("bp")])')
+       === '[["calf","hr"],[],[]]',
+     ev('JSON.stringify([resolveBodyHidden(["calf","calf","weight","nope","hr"]), resolveBodyHidden(null), resolveBodyHidden("bp")])'));
+  ev("state.bodyHidden = ['bf']; bodyMetric = 'bf'; go('body')");
+  ok('T14o 被隐藏的指标不能继续当着趋势选中项：自动回到体重（下拉里没有 bf）',
+     ev('bodyMetric') === 'weight' && !view.__html.includes('>体脂率<'), 'bodyMetric=' + ev('bodyMetric'));
+  ev("state.bodyHidden = []; bodyMetric = 'weight'; go('body')");
 
   /* T15a 用户路径不带调试代码、不注入 js/dev.js、也不下载种子数据本体（v4.16）：
      演示数据与自测已拆到 js/dev.js（按需注入），主包不应出现这些全局；

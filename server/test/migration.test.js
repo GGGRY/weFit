@@ -160,6 +160,10 @@ function assertCommonIntact(db, label) {
   ok(label + ' 身体记录逐值完好', !!body && body.weight === 72.1 && body.waist === 88.2, JSON.stringify(body));
   ok(label + ' 身体新增列「小腿围」已补上且旧值为 NULL',
     cols(db, 'body_records').includes('calf') && body.calf === null, cols(db, 'body_records'));
+  /* 2026-09-12 扩充：血压/血糖/心率同样走存量库补列，旧记录保持 NULL */
+  ok(label + ' 身体新增列血压/血糖/心率已补上（sbp/dbp/fbg/pbg/hr）且旧值为 NULL',
+    ['sbp', 'dbp', 'fbg', 'pbg', 'hr'].every(c => cols(db, 'body_records').includes(c) && body[c] === null),
+    cols(db, 'body_records'));
   const slp = db.prepare('SELECT * FROM sleep_sessions WHERE user_id=?').get(UID);
   ok(label + ' 睡眠段逐值完好', !!slp && slp.mins === 490 && slp.quality === 4, JSON.stringify(slp));
   ok(label + ' 饮水/习惯/账户/会话完好',

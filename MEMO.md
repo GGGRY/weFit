@@ -68,10 +68,13 @@
 - 每次运动容量统计 Σ(重量×次数)
 
 ### 4. 身体数据 📏
-- 8 项指标：体重/胸围/腰围/臀围/臂围/大腿围/小腿围/体脂率（清单单一来源 = `MEASURES`：磁贴/趋势下拉/记录表头/记录弹窗字段/`upsertBody` 白名单都以此为准）；可按任意日期补记，同日再存自动合并覆盖
+- 13 项指标：体重/胸围/腰围/臀围/臂围/大腿围/小腿围/体脂率 + **收缩压/舒张压**（mmHg）+ **空腹血糖/餐后血糖**（mmol/L）+ **静息心率**（bpm）（清单单一来源 = `MEASURES`：磁贴/趋势下拉/记录表列/记录弹窗字段/`upsertBody` 白名单都以此为准）；可按任意日期补记，同日再存自动合并覆盖。
+- `MEASURES` 每项带 `dec`（显示小数位：血压/心率 0 位，其余 1 位）——输入框 `step`、磁贴与记录表显示、趋势图刻度三处同源；带 `group:'bp'` 的两项**只并显示不并存储**：记录表里并成一格「血压」显示 `128/82`（缺一边显 `120/—`），记录弹窗里也并在一格（`.span2`，两个输入框中间一个 `/`）。
 - BMI 圆环；各指标最新值 + 7 天变化
 - 任选指标近 60 条趋势折线；历史表格 + 查看全部
+- **「⚙ 显示项」自选指标**（2026-09-12）：**身体页页尾**一颗按钮打开勾选弹窗，决定哪些指标出现在身体页与记录弹窗里（**一套启用集管显示 + 录入**：磁贴 / 记录表列 / 趋势下拉 / 记录弹窗四处同源）。存本人状态树 `state.bodyHidden`（与服务端 `users.body_hidden_json` 列对称往返），**存的是隐藏集**：空数组 = 全部显示（以后新增的身体指标默认对所有人可见），与 `homeOrder` 同一形状、同一套 `jz`/`put` 读写，老账户零迁移。血压 `sbp`/`dbp` 是**一个**开关（同组一起勾/去勾，否则记录表会显出 `120/—` 这种半格）；**体重恒勾且不可取消**（保存门槛是「至少填体重」）；弹窗每行带「已记录 n 条 / 暂无记录」、一键「全部显示」。隐藏只影响渲染与录入，**不动任何已存数据**（重新勾回历史值立刻可见），被隐藏的指标若正被趋势图选中会自动回到体重；清洗规则 `resolveBodyHidden()`：丢未知 id / 去重 / 体重强制剔除 / 非数组当空。
 - 记录体重自动同步「当前体重」（供 BMR 计算）
+- 记录保存仍要求**至少填体重**（2026-09-12 裁定保留）
 
 ### 5. 睡眠😴（记录在概览页完成）
 - **睡眠多段**：一天可记多段，每段 `{t, bed, wake, mins, quality}`；类型固定三档——夜间睡眠🌙/午睡⛅/其他休息🛋️（`SLEEP_TYPES`，图标 2026-09-12 换过：原 😴/😌 两张睡脸在 38px thumb 里分不出、还跟同行质量表情撞，现为「弯月 / 云后太阳 / 沙发」）。卡头 = 全天合计小时 + 达标（≥10h 总时长口径）；逐段一行（图标 + **时长大字** + 质量星等小签（金 ★ 个数 = 档位 + 灰 ☆ 补足 5 格，`qStarsHTML()`；2026-09-12 由 😖😕😐🙂😄 五张脸改成星等，原表情小字号下中间三档分不出；无评分不显）+ 类型/起止小字 + ✏️），修改/删除走弹窗 `sleepSessionEditor(d, idx, after)`；卡底「＋ 记录一段」追加；**当日无段时不内嵌快速表单**，只显一句空态提示 + 同一个「＋ 记录一段」按钮——新增/修改一律走弹窗。弹窗里的「入睡/起床」是自绘**时间滚轮**（`timeWheelHTML()` 出结构、`timeWheelMount()` 挂载/重画并绑监听、`twSet()` 程序改值；2026-09-12 起替代原生 time 输入——手机端点它弹的是系统「圆盘」时钟）：两列上下滑 + 中线高亮、列高 5 项、分钟档位 5 分，值仍写在同名隐藏 input（`sq_bed`/`sq_wake`）里，`sleepDur`/时长预览照旧读 `.value`；**字段标题「入睡/起床」在滚轮下面居中**（`.tw-grid .tw-cell`，2026-09-12 用户要求）。弹窗里的质量是 `.stars` 五颗 ★ 按钮（`QUALITY` 同一套，亮起颗数 = 档位，金/灰对比）。遇三档之外的 `t`（如导入的异常数据）卡面如实显 ❓+原始值，编辑保存不悄悄改写；弹窗内时长预览超过 12h 且非夜间档时提醒"超过 12 小时，检查是否填反"
@@ -181,14 +184,14 @@ weFit/
 | 表 | 主键 | 说明 |
 |---|---|---|
 | `app` | id（恒为 1，单行） | 全局单行：`system_json`（**系统共享库**，管理员维护） |
-| `users` | id | 成员档案：name, avatar, color, activity, water_target + `profile_json` / `goal_json` / `nutrition_json` + `rev`（每用户乐观并发）/ `theme` / `onboarded` / `foods_json` / `exercises_json`（**个人食物/动作库**） |
+| `users` | id | 成员档案：name, avatar, color, activity, water_target + `profile_json` / `goal_json` / `nutrition_json` + `rev`（每用户乐观并发）/ `theme` / `onboarded` / `foods_json` / `exercises_json`（**个人食物/动作库**）/ `home_order_json`（概览卡顺序）/ `body_hidden_json`（**身体页隐藏项**，NULL 或空数 = 全部显示） |
 | `accounts` | username | **登录账户**：user_id（绑定档案，CASCADE）/ pwd（`scrypt$盐$哈希`）/ role（首个注册 = `admin`，其余 `user`）/ created_at |
 | `sessions` | token | **会话**：username / created_at / expires_at（30 天，存库 = 服务器重启不掉线） |
 | `meal_days` | (user_id, date) | "日期被打开过"标记——餐次 4 槽全空也要能原样还原 |
 | `meals` | (user_id, date, slot, seq) | 饮食条目：slot=早/午/晚/加餐, item_id, name, kcal, p, c, f, g |
 | `workouts` | (user_id, date) | **运动安排**：day_id, name, seq（保数组顺序）；**一天一条**；`done` 列 v4.12 起废弃（存量库保留死列） |
 | `workout_items` | (user_id, date, seq) | 运动动作项：item_id, ex_id, ex_name, cat, muscle, reps, weight, mins, km, **done**（1 = 该项已打勾；任一打勾即算该日已运动） |
-| `body_records` | (user_id, seq) | 身体 8 项：weight/chest/waist/hip/arm/thigh/calf/bf（`calf` = 小腿围，存量库由 `migrate()` ALTER 补列）；主键用 seq 因同日可能多条；索引 `idx_body_date(user_id, date)` |
+| `body_records` | (user_id, seq) | 身体 13 项：weight/chest/waist/hip/arm/thigh/calf/bf/sbp/dbp/fbg/pbg/hr（`calf` 与 `sbp/dbp/fbg/pbg/hr` = 后加列，存量库由 `migrate()` ALTER 补列、旧值 NULL；列名与顺序 = `mapper.BODY_KEYS`，与前端 `MEASURES` 对位）；主键用 seq 因同日可能多条；索引 `idx_body_date(user_id, date)` |
 | `sleep_sessions` | (user_id, date, seq) | **睡眠多段**：t(night/nap/rest), bed, wake, mins, quality(1-5)；seq = 录入顺序 |
 | `water_records` | (user_id, date) | cups |
 | `habits` | (user_id, habit_id) | 习惯定义：seq, name, icon, color |

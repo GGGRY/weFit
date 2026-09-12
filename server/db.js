@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS body_records (
   seq INTEGER NOT NULL,
   date TEXT NOT NULL,
   weight REAL, chest REAL, waist REAL, hip REAL, arm REAL, thigh REAL, calf REAL, bf REAL,
+  sbp REAL, dbp REAL, fbg REAL, pbg REAL, hr REAL,   /* 血压(收缩/舒张) / 血糖(空腹/餐后) / 静息心率 */
   PRIMARY KEY (user_id, seq)
 );
 /* 睡眠多段：一天可有多段（夜间/午睡/其他休息），seq 保录入顺序 */
@@ -207,10 +208,15 @@ function migrate(db) {
   addColumn(db, 'users', 'exercises_json', 'TEXT');
   /* 概览页「今日卡片」的拖动顺序（5 个 card id 的 JSON 数组；NULL = 用客户端默认序） */
   addColumn(db, 'users', 'home_order_json', 'TEXT');
+  /* 身体页隐藏项（指标 id 数组；NULL 或空数 = 全部显示）——与 home_order_json 同一套读写（jz / put） */
+  addColumn(db, 'users', 'body_hidden_json', 'TEXT');
   /* 系统共享库：单行 app 上整存 {foods, exercises}，管理员维护 */
   addColumn(db, 'app', 'system_json', 'TEXT');
   /* 身体数据新增「小腿围」（存量库 ALTER 补列，旧值保持 NULL） */
   addColumn(db, 'body_records', 'calf', 'REAL');
+  /* 身体数据扩充（2026-09-12，未标版号）：血压 / 血糖 / 静息心率——同为存量库补列，旧值 NULL。
+   * 列名与顺序必须跟 server/mapper.js 的 BODY_KEYS、public/js/app.js 的 MEASURES 一致 */
+  for (const c of ['sbp', 'dbp', 'fbg', 'pbg', 'hr']) addColumn(db, 'body_records', c, 'REAL');
   /* v4.12 第二步（就地补列）：完成粒度由「一天」下放到「每一项」。
    * ① 给存量库补 workout_items.done（新库已在 SCHEMA 里带上，这里是 no-op）；
    * ② 把旧的「整天已完成」下放到它的每一项——数据零丢失，不破坏性重置。
