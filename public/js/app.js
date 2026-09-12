@@ -1683,7 +1683,7 @@ function delMealItem(date, id){
  * opts.tab 只是调用方显式指定的初始分页（供测试与以后复用），不是记忆。 */
 let mdTab = 'mine';        /* 弹窗内当前 tab */
 let mdQuery = '';          /* 当前 tab 的搜索词（切 tab 清空） */
-const MD_PICK_LIMIT = 40;  /* 候选只渲染前 40 条，配合关键字收敛；避免 300+ 行 DOM */
+const PICK_LIMIT = 40;     /* 弹窗候选只渲染前 40 条（记录饮食 / 添加运动共用），配合关键字收敛；避免 300+ 行 DOM */
 /* 「同时保存到我的食物库」默认勾选口径：只有从系统库选中、且自己库里还没同名的才默认勾；
  * 新增 tab 默认不勾（避免手填半成品污染个人库），我的库 tab 压根不给这个选项。 */
 function mealDlgSaveDefault(tab, name){ return tab === 'sys' && !state.foods.some(x => x.name === name); }
@@ -1770,8 +1770,8 @@ function addMealDialog(date, slot, opts){
       '<span class="tiny muted">' + (f.per100 ? Math.round(f.per100.kcal || 0) + ' kcal/100g' : '无营养表') + '</span></button>';
   }
   function hitList(arr, q){ return q ? arr.filter(f => String(f.name).toLowerCase().indexOf(q) >= 0) : arr; }
-  function moreHint(total){ return total > MD_PICK_LIMIT
-    ? '<div class="tiny muted" style="padding:6px 12px">还有 ' + (total - MD_PICK_LIMIT) + ' 条，输入关键字继续筛选</div>' : ''; }
+  function moreHint(total){ return total > PICK_LIMIT
+    ? '<div class="tiny muted" style="padding:6px 12px">还有 ' + (total - PICK_LIMIT) + ' 条，输入关键字继续筛选</div>' : ''; }
   function renderMine(){
     const q = mdQuery.trim().toLowerCase();
     let h;
@@ -1780,7 +1780,7 @@ function addMealDialog(date, slot, opts){
     } else {
       const hits = hitList(state.foods, q);
       h = hits.length
-        ? hits.slice(0, MD_PICK_LIMIT).map(f => pickRowHTML(f, 'data-mypick="' + esc(f.id) + '"', selMine && selMine.id === f.id)).join('') + moreHint(hits.length)
+        ? hits.slice(0, PICK_LIMIT).map(f => pickRowHTML(f, 'data-mypick="' + esc(f.id) + '"', selMine && selMine.id === f.id)).join('') + moreHint(hits.length)
         : '<div class="tiny muted" style="padding:8px 12px">没有匹配「' + esc(q) + '」的食物</div>';
       if(hits.length && !q) h = '<div class="tiny muted" style="padding:6px 12px 2px">共 ' + state.foods.length + ' 条，输入关键字筛选</div>' + h;
     }
@@ -1808,7 +1808,7 @@ function addMealDialog(date, slot, opts){
       h = '<div class="tiny muted" style="padding:8px 12px">' + (sysFoods.length ? '没有匹配「' + esc(q) + '」的食物' : '系统库暂无食物') + '</div>';
     } else {
       h = '<div class="tiny muted" style="padding:6px 12px 2px">共 ' + all.length + ' 条；标「已有」的说明我的库里同名，选中也不会重复入库。</div>' +
-        all.slice(0, MD_PICK_LIMIT).map(x => pickRowHTML(x.f, 'data-syspick="' + x.i + '"', selSys && selSys.name === x.f.name,
+        all.slice(0, PICK_LIMIT).map(x => pickRowHTML(x.f, 'data-syspick="' + x.i + '"', selSys && selSys.name === x.f.name,
           owned(x.f.name) ? '<span class="chip b3" style="margin-left:6px;padding:1px 7px;font-size:11px">已有</span>' : '')).join('') + moreHint(all.length);
     }
     $('#mi_syslist', b).innerHTML = h;
@@ -1947,6 +1947,27 @@ function foodRowHTML(f, dataAttr, srcFallback){
     '</div><div class="sub">' + esc(sub) + '</div></div>';
 }
 
+/* ---------- 库页共用小工具（食物库 / 动作库两页同款：名称搜索 + 分页条） ----------
+ * 两页的分页口径一致（20 条/页、换搜索词或切分页回第 1 页），抽出来免得各自漂移。 */
+function libMatchName(query, name){
+  const q = String(query == null ? '' : query).trim().toLowerCase();
+  return !q || String(name == null ? '' : name).toLowerCase().indexOf(q) >= 0;
+}
+function libClampPage(page, size, n){
+  const pages = Math.max(1, Math.ceil(n / size));
+  return Math.min(Math.max(1, page), pages);
+}
+function libPagerHTML(page, size, n){
+  const pages = Math.max(1, Math.ceil(n / size));
+  const from = n ? (page - 1) * size + 1 : 0;
+  const to = Math.min(n, page * size);
+  return '<div class="pager">' +
+    '<button class="btn sm ghost" data-fpage="prev"' + (page <= 1 ? ' disabled' : '') + '>‹ 上一页</button>' +
+    '<span class="tiny">第 ' + page + '/' + pages + ' 页 · 共 ' + n + ' 条' + (n ? '（' + from + '–' + to + '）' : '') + '</span>' +
+    '<button class="btn sm ghost" data-fpage="next"' + (page >= pages ? ' disabled' : '') + '>下一页 ›</button>' +
+    '</div>';
+}
+
 /* 食物库管理（设置页 → 💾 数据管理 → 本页）：我的库（可增删）| 系统库（只读 + 挑入我的库）。
  * v4.15：由弹窗改为独立页面——页头第一行是「返回 + 数据管理-食物库」，返回落回设置页。 */
 let foodLibTab = 'mine';   /* 页面级状态：切到系统库后再进来仍停在原分页 */
@@ -1983,27 +2004,13 @@ function renderFoodLibPage(){
     paintSeg();
   });
   $('#fl_search', b).addEventListener('input', e => { foodLibQuery = e.target.value; foodLibPage = 1; render(); });
-  function matchName(name){
-    const q = foodLibQuery.trim().toLowerCase();
-    return !q || String(name).toLowerCase().indexOf(q) >= 0;
-  }
+  function matchName(name){ return libMatchName(foodLibQuery, name); }
   function pageSlice(arr){
-    const pages = Math.max(1, Math.ceil(arr.length / FOOD_PAGE_SIZE));
-    if(foodLibPage > pages) foodLibPage = pages;
-    if(foodLibPage < 1) foodLibPage = 1;
+    foodLibPage = libClampPage(foodLibPage, FOOD_PAGE_SIZE, arr.length);
     const start = (foodLibPage - 1) * FOOD_PAGE_SIZE;
     return arr.slice(start, start + FOOD_PAGE_SIZE);
   }
-  function pagerHTML(n){
-    const pages = Math.max(1, Math.ceil(n / FOOD_PAGE_SIZE));
-    const from = n ? (foodLibPage - 1) * FOOD_PAGE_SIZE + 1 : 0;
-    const to = Math.min(n, foodLibPage * FOOD_PAGE_SIZE);
-    return '<div class="pager">' +
-      '<button class="btn sm ghost" data-fpage="prev"' + (foodLibPage <= 1 ? ' disabled' : '') + '>‹ 上一页</button>' +
-      '<span class="tiny">第 ' + foodLibPage + '/' + pages + ' 页 · 共 ' + n + ' 条' + (n ? '（' + from + '–' + to + '）' : '') + '</span>' +
-      '<button class="btn sm ghost" data-fpage="next"' + (foodLibPage >= pages ? ' disabled' : '') + '>下一页 ›</button>' +
-      '</div>';
-  }
+  function pagerHTML(n){ return libPagerHTML(foodLibPage, FOOD_PAGE_SIZE, n); }
   function bindPager(){
     $$('[data-fpage]', b).forEach(btn => btn.addEventListener('click', () => {
       foodLibPage += (btn.dataset.fpage === 'next' ? 1 : -1);
@@ -2272,19 +2279,21 @@ function dayCardHTML(date, w, todayStr){
 }
 
 
+/* 排序口径：大类 → 部位 → 名称（中文）。比较器单列出来：库页「系统分页」要在带上原索引的
+ * 数组上排序（好按索引挑入），不能直接用 exLibSort 的返回形状。 */
+function exLibCmp(a, b){
+  const ca = CAT_RANK[a.cat], cb = CAT_RANK[b.cat];
+  const ma = MUSCLE_RANK[a.muscle], mb = MUSCLE_RANK[b.muscle];
+  return (ca === undefined ? 99 : ca) - (cb === undefined ? 99 : cb)
+      || (ma === undefined ? 99 : ma) - (mb === undefined ? 99 : mb)
+      || String(a.name).localeCompare(String(b.name), 'zh');
+}
+function exLibSort(arr){ return arr.slice().sort(exLibCmp); }
+
 /* ---------- 运动项形状辅助（单项编辑弹窗与清洗共用） ----------
  * v4.11：一次记录 = 一条汇总。力量 = 总次数 + 重量（**可选**，不填就是空键、不显示「自重」）；计时 = 总时长(分钟) + 距离 km(可选)。
  * 空输入一律删键（服务端 NULL↔缺键保真，空值不能落成 0）；
  * _mode 是编辑期提示（形态由库条目的 mode 设定），入库前由 collectItems 剥掉。 */
-function exLibSort(arr){
-  return arr.slice().sort((a, b) => {
-    const ca = CAT_RANK[a.cat], cb = CAT_RANK[b.cat];
-    const ma = MUSCLE_RANK[a.muscle], mb = MUSCLE_RANK[b.muscle];
-    return (ca === undefined ? 99 : ca) - (cb === undefined ? 99 : cb)
-        || (ma === undefined ? 99 : ma) - (mb === undefined ? 99 : mb)
-        || String(a.name).localeCompare(String(b.name), 'zh');
-  });
-}
 function setItemField(it, k, v){ const n = num(v); if(n > 0) it[k] = n; else delete it[k]; }   /* 空/0/负数/NaN 一律删键（服务端 NULL↔缺键保真） */
 /* 行形态切换时清掉另一种形态的残留，否则会存出"既有次数又有分钟"的混合项 */
 function setItemMode(m, mode){
@@ -2311,9 +2320,33 @@ function collectItems(model, needEx){
 
 
 /* ---------- 逐项弹窗：添加 / 修改一个运动项 ----------
- * 一次只编辑一个动作（用户裁定 2026-09-11），且**只能从动作库选**：
- * 动作名与「力量 / 计时」方式都来自库条目，用户不能手填名称、也不能自己切换方式（2026-09-11 加固）。
+ * 添加态分三 tab：我的库 / 系统库 / 新增（与「记录饮食」同一套交互，用户裁定 2026-09-12）——
+ * 动作名与「计次 / 计时」方式都来自选中条目或新增表单，用户不能自造方式。从系统库选 / 新增的动作
+ * 在保存时由 ensureExId() 并入我的动作库（不给「同时保存」勾选框，弹窗里只写一句说明）。
+ * 修改态收敛成「只改数值 + 删除」（与 editMealDialog 一致）——要换动作就删掉重加。
  * 那天的容器按需创建，删空后由 delItem 回收；完成状态不在弹窗里改（行首圆钮就地勾）。 */
+
+/* 库条目三件套兜底：缺字段的存量条目按大类默认值补齐（别让形态落到 undefined / 非法 mode） */
+function exTriple(e){
+  const cat = CATS.indexOf(e.cat) >= 0 ? e.cat : '其他';
+  return { cat:cat,
+    muscle: MUSCLES.indexOf(e.muscle) >= 0 ? e.muscle : defaultMuscle(cat),
+    mode: MODES.indexOf(e.mode) >= 0 ? e.mode : defaultMode(cat) };
+}
+/* 添加运动弹窗三面板共用的取数（纯函数，便于测试）：我的库/系统库选中条目、或「新增」表单，
+ * 统一成 { name, cat, muscle, mode }（我的库还带 exId）。没选 / 没填名 → null。 */
+function itPickOf(tab, selMine, selSys, form){
+  const src = tab === 'mine' ? selMine : (tab === 'sys' ? selSys : (form && form.name ? form : null));
+  const name = src && src.name ? String(src.name).trim() : '';
+  if(!name) return null;
+  const t = exTriple(src);
+  const pick = { name:name, cat:t.cat, muscle:t.muscle, mode:t.mode };
+  if(tab === 'mine' && src.id) pick.exId = src.id;
+  return pick;
+}
+/* 「已有」提示行（与 mealOwnedTipHTML 同口径）：只说本次不入库、不改库里那份，不写操作指引 */
+function exOwnedTipHTML(name){ return '<span class="chip b3">已有</span> 我的动作库里已有「' + esc(name) + '」，本次只记这一次运动，不会改库里那份的大类/部位/方式。'; }
+
 function ensureExId(it){
   if(it.exId) return;
   const ex = state.exercises.find(e => e.name === it.exName);
@@ -2324,13 +2357,14 @@ function ensureExId(it){
   it.exId = nid; it.cat = ne.cat; it.muscle = ne.muscle;
 }
 const QUICK_MINS = [15, 20, 30, 45, 60];   /* 计时项时长的下拉预设（20 分 = 默认值，datalist 挂在输入框上） */
-const DEFAULT_MINS = 20, DEFAULT_REPS = 30;   /* 添加时的起步值：计时 20 分钟 / 力量 30 次（用户裁定 2026-09-11） */
+const DEFAULT_MINS = 20, DEFAULT_REPS = 30;   /* 添加时的起步值：计时 20 分钟 / 计次 30 次（用户裁定 2026-09-11） */
 /* 按方式补起步值：只补空缺，不覆盖用户或旧数据里已有的值 */
 function defaultForMode(m){
   if(m._mode === 'time' && !m.mins) m.mins = DEFAULT_MINS;
   if(m._mode === 'reps' && !m.reps) m.reps = DEFAULT_REPS;
   return m;
 }
+let itTab = 'mine';   /* 弹窗内当前分页：每次打开都落「我的库」（不做跨次记忆，与记录饮食一致） */
 function openItemDlg(date, itemId){
   const w = workoutForDate(date);
   const src = itemId && w ? w.items.find(x => x.id === itemId) : null;
@@ -2344,9 +2378,33 @@ function openItemDlg(date, itemId){
     ['reps','weight','mins','km'].forEach(k => { if(src[k]) m[k] = src[k]; });
     if(src.done) m.done = true;
   }
+  itTab = 'mine';
+  let itQuery = '';          /* 库分页共用搜索词（切分页清空） */
+  let sysExs = null;         /* 本次弹窗拉到的系统库；false = 拉失败（不缓存，切分页再试） */
+  let selMine = null, selSys = null;
   const html =
     '<div class="row gap8" style="margin-bottom:10px"><span class="chip">' + dateCNW(date) + '</span>' +
       '<span class="chip slot">' + (editing ? '修改这一项' : '新增一项') + '</span></div>' +
+    (editing ? '' :
+      '<div class="seg" id="it_seg" style="display:flex;width:100%;margin-bottom:12px">' +
+        '<button type="button" data-ittab="mine" style="flex:1">我的库</button>' +
+        '<button type="button" data-ittab="sys" style="flex:1">系统库</button>' +
+        '<button type="button" data-ittab="new" style="flex:1">新增</button>' +
+      '</div>' +
+      '<div id="it_p_mine"><div class="field" style="margin-bottom:8px"><label>搜索并选择</label>' +
+        '<input class="input" id="it_q" type="search" placeholder="搜索动作名…">' +
+        '<div class="picklist" id="it_mylist"></div></div></div>' +
+      '<div id="it_p_sys" style="display:none"><div class="field" style="margin-bottom:8px"><label>搜索并选择系统库动作</label>' +
+        '<input class="input" id="it_qs" type="search" placeholder="搜索动作名…">' +
+        '<div class="picklist" id="it_syslist"></div></div></div>' +
+      '<div id="it_p_new" style="display:none"><div class="form-grid" style="margin-bottom:8px">' +
+        '<div class="span2"><label>动作名称</label><input class="input" id="it_new_name" placeholder="如：窄距俯卧撑"></div>' +
+        '<div><label>大类</label><select class="select" id="it_new_cat">' + CATS.map(c => '<option>' + c + '</option>').join('') + '</select></div>' +
+        '<div><label>部位</label><select class="select" id="it_new_muscle">' + MUSCLES.map(x => '<option>' + x + '</option>').join('') + '</select></div>' +
+        '<div><label>记录方式</label><select class="select" id="it_new_mode">' + MODES.map(x => '<option value="' + x + '">' + MODE_CN[x] + '</option>').join('') + '</select></div>' +
+      '</div>' +
+      '<div class="tiny muted" style="margin-bottom:8px">换大类会自动带出默认部位与记录方式，仍可手改；系统库与新增的动作保存后会自动加入我的动作库。</div></div>' +
+      '<div class="tiny" id="it_owned" style="display:none;margin-bottom:8px"></div>') +
     '<div id="it_body"></div>' +
     '<div class="tiny muted" id="it_prev" style="margin-top:8px;min-height:18px"></div>' +
     '<div class="d-f">' +
@@ -2358,22 +2416,18 @@ function openItemDlg(date, itemId){
   const bodyBox = $('#it_body', b);
   function bodyHTML(){
     const picked = !!m.exName;
-    const pick = '<div class="field">' +
-      '<div class="row gap8" style="align-items:center">' +
-        '<button type="button" class="btn sm' + (picked ? ' ghost' : ' primary') + '" id="it_pick">' +
-          (picked ? '🔄 更换动作' : '📚 选择动作') + '</button>' +
-        (picked ? '<span class="b">' + esc(m.exName) + '</span>' +
-                  '<span class="chip">' + (m._mode === 'time' ? '⏱ 计时' : '🏋 力量') + '</span>'
-                : '<span class="tiny muted">还没选动作</span>') +
+    const head = '<div class="row gap8" style="align-items:center">' +
+        '<span class="b">' + (picked ? esc(m.exName) : '还没选动作') + '</span>' +
+        (picked ? '<span class="chip">' + (m._mode === 'time' ? '⏱ ' : '🔢 ') + esc(MODE_CN[m._mode] || '计次') + '</span>'
+                : '<span class="tiny muted">从上面的分页里选一个</span>') +
       '</div>' +
-      (picked && itemSub(m) ? '<div class="tiny muted" style="margin-top:6px">' + esc(itemSub(m)) + ' · 方式随动作自动设定</div>' : '') +
-      '</div>';
-    if(!picked) return pick + '<div class="tiny muted">先从动作库选一个动作。</div>';
+      (picked && itemSub(m) ? '<div class="tiny muted" style="margin-top:6px">' + esc(itemSub(m)) + ' · 方式随动作自动设定</div>' : '');
+    if(!picked) return '<div class="field">' + head + '</div><div class="tiny muted">先从动作库选一个动作，或在「新增」里填一个。</div>';
     if(m._mode === 'time'){
       /* 时长的常用值 = 输入框右侧自绘下拉（不用原生 datalist：各浏览器对 list/autocomplete 的支持
        * 差别大，用户反馈点开没有可选项）。点 ▾ 或输入框右侧打开，选一项填进框，也可以直接敲数字/小数 */
-      return pick + '<div class="form-grid">' +
-        '<div class="span2"><label>总时长（分钟）</label>' +
+      return '<div class="field">' + head + '</div><div class="form-grid">' +
+        '<div><label>总时长（分钟）</label>' +
           '<div class="mins-wrap">' +
             '<input class="input" id="it_mins" type="text" inputmode="decimal" autocomplete="off" value="' + (m.mins || '') + '" placeholder="如 20" style="padding-right:36px">' +
             '<button type="button" class="mins-toggle" id="it_mins_btn" title="常用时长" aria-label="常用时长">▾</button>' +
@@ -2381,9 +2435,9 @@ function openItemDlg(date, itemId){
               '<button type="button" data-min="' + v + '">' + v + ' 分钟</button>').join('') + '</div>' +
           '</div>' +
         '</div>' +
-        '<div class="span2"><label>距离 km（可选）</label><input class="input" id="it_km" type="number" min="0" step="0.1" value="' + (m.km || '') + '" placeholder="如 5"></div></div>';
+        '<div><label>距离 km（可选）</label><input class="input" id="it_km" type="number" min="0" step="0.1" value="' + (m.km || '') + '" placeholder="如 5"></div></div>';
     }
-    return pick + '<div class="form-grid">' +
+    return '<div class="field">' + head + '</div><div class="form-grid">' +
       '<div><label>总次数</label><input class="input" id="it_reps" type="number" min="0" value="' + (m.reps || '') + '" placeholder="如 32"></div>' +
       '<div><label>重量 kg（可选，不填就留空）</label><input class="input" id="it_w" type="number" min="0" step="0.5" value="' + (m.weight || '') + '" placeholder="如 70"></div></div>';
   }
@@ -2420,21 +2474,136 @@ function openItemDlg(date, itemId){
         closeMinsMenu(); paintPrev();
       }));
     }
-    const pickBtn = $('#it_pick', bodyBox);
-    if(pickBtn) pickBtn.addEventListener('click', () => openExercisePicker(ex => {
-      syncModel();
-      m.exId = ex.id; m.exName = ex.name;
-      if(ex.cat) m.cat = ex.cat;
-      if(ex.muscle) m.muscle = ex.muscle;
-      setItemMode(m, ex.mode === 'time' ? 'time' : 'reps');   /* 方式随动作自动设定，用户不选 */
-      defaultForMode(m);                                       /* 起步值：计时 20 分钟 / 力量 30 次 */
-      paintFields();
-    }));
   }
   function paintFields(){ bodyBox.innerHTML = bodyHTML(); bindFields(); paintPrev(); }
-  paintFields();
+  /* 「新增」tab 的表单 → 候选（名称 + 三件套；换大类由下方 bindNewForm 带出默认值） */
+  function readNew(){
+    const val = id => { const el = $('#' + id, b); return el ? el.value : ''; };
+    return { name: val('it_new_name').trim(), cat: val('it_new_cat'), muscle: val('it_new_muscle'), mode: val('it_new_mode') };
+  }
+  /* 面板选择 → 编辑期模型（三面板共用）：先落地已填数值免得重绘丢掉，再写名称/三件套/方式并补起步值。
+   * 传 null（切分页）时连数值一起清：不做跨分页记忆，免得上一页填的 30 次惄惄带到下一条动作上 */
+  function applyPick(pick){
+    syncModel();
+    if(!pick){
+      delete m.exId; m.exName = ''; delete m.cat; delete m.muscle;
+      ['reps', 'weight', 'mins', 'km'].forEach(k => { delete m[k]; });
+      paintFields(); return;
+    }
+    if(pick.exId) m.exId = pick.exId; else delete m.exId;
+    m.exName = pick.name; m.cat = pick.cat; m.muscle = pick.muscle;
+    setItemMode(m, pick.mode === 'time' ? 'time' : 'reps');   /* 方式随动作自动设定，用户不选 */
+    defaultForMode(m);                                        /* 起步值：计时 20 分钟 / 计次 30 次 */
+    paintFields();
+  }
+  function pickRowHTML(ex, attr, selected, badge){
+    const t = exTriple(ex);
+    return '<button type="button" class="pickrow' + (selected ? ' on' : '') + '" ' + attr + '>' +
+      '<span class="grow">' + esc(ex.name) + (badge || '') + '</span>' +
+      '<span class="tiny muted">' + esc([t.cat, t.muscle, MODE_CN[t.mode]].join(' · ')) + '</span></button>';
+  }
+  function moreHint(total){ return total > PICK_LIMIT
+    ? '<div class="tiny muted" style="padding:6px 12px">还有 ' + (total - PICK_LIMIT) + ' 条，输入关键字继续筛选</div>' : ''; }
+  function renderMine(){
+    const q = itQuery.trim().toLowerCase();
+    let h;
+    if(!state.exercises.length){
+      h = '<div class="tiny muted" style="padding:12px">我的动作库是空的，切到「系统库」挑一个，或在「新增」手填。</div>';
+    } else {
+      const hits = q ? state.exercises.filter(e => String(e.name).toLowerCase().indexOf(q) >= 0) : exLibSort(state.exercises);
+      h = hits.length
+        ? hits.slice(0, PICK_LIMIT).map(e => pickRowHTML(e, 'data-mypick="' + esc(e.id) + '"', !!selMine && selMine.id === e.id)).join('') + moreHint(hits.length)
+        : '<div class="tiny muted" style="padding:8px 12px">没有匹配「' + esc(q) + '」的动作</div>';
+      if(hits.length && !q) h = '<div class="tiny muted" style="padding:6px 12px 2px">共 ' + state.exercises.length + ' 条，输入关键字筛选</div>' + h;
+    }
+    $('#it_mylist', b).innerHTML = h;
+    $$('[data-mypick]', b).forEach(btn => btn.addEventListener('click', () => {
+      selMine = state.exercises.find(e => e.id === btn.dataset.mypick) || null;
+      selSys = null;
+      applyPick(itPickOf('mine', selMine, null, null));
+      renderMine(); paintOwned();
+    }));
+  }
+  async function renderSys(){
+    if(sysExs === null){
+      $('#it_syslist', b).innerHTML = '<div class="tiny muted" style="padding:8px 12px">载入系统库…</div>';
+      const lib = await fetchSysLib();
+      sysExs = lib ? (lib.exercises || []) : false;
+      if(!$('#it_syslist', b) || itTab !== 'sys') return;   /* 载入期间用户切走了 / 弹窗关了 */
+    }
+    if(sysExs === false){ $('#it_syslist', b).innerHTML = '<div class="tiny muted" style="padding:12px">🔌 服务器离线，暂时看不到系统库；「我的库」与「新增」仍可正常记录。</div>'; return; }
+    const q = itQuery.trim().toLowerCase();
+    const all = sysExs.map((e, i) => ({ e, i })).filter(x => !q || String(x.e.name).toLowerCase().indexOf(q) >= 0);
+    all.sort((x, y) => exLibCmp(x.e, y.e));
+    let h;
+    if(!all.length){
+      h = '<div class="tiny muted" style="padding:8px 12px">' + (sysExs.length ? '没有匹配「' + esc(q) + '」的动作' : '系统库暂无动作') + '</div>';
+    } else {
+      h = '<div class="tiny muted" style="padding:6px 12px 2px">共 ' + all.length + ' 条；选中保存后会自动加入我的动作库，同名的标「已有」。</div>' +
+        all.slice(0, PICK_LIMIT).map(x => pickRowHTML(x.e, 'data-syspick="' + x.i + '"', !!selSys && selSys.name === x.e.name,
+          exDupInMine(x.e.name) ? '<span class="chip b3" style="margin-left:6px;padding:1px 7px;font-size:11px">已有</span>' : '')).join('') + moreHint(all.length);
+    }
+    $('#it_syslist', b).innerHTML = h;
+    $$('[data-syspick]', b).forEach(btn => btn.addEventListener('click', () => {
+      selSys = sysExs[num(btn.dataset.syspick)] || null;
+      selMine = null;
+      applyPick(itPickOf('sys', null, selSys, null));
+      renderSys(); paintOwned();
+    }));
+  }
+  function renderList(){ if(itTab === 'mine') renderMine(); else if(itTab === 'sys') renderSys(); }
+  /* 「已有」提示（非「我的库」分页、且名字已在库里）：只说口径，不摆勾选框——运动项本就靠库条目落 exId */
+  function paintOwned(){
+    const el = $('#it_owned', b);
+    if(!el) return;
+    const pick = editing ? null : itPickOf(itTab, selMine, selSys, readNew());
+    const own = itTab !== 'mine' && !!pick && exDupInMine(pick.name);
+    el.style.display = own ? '' : 'none';
+    el.innerHTML = own ? exOwnedTipHTML(pick.name) : '';
+  }
+  function switchTab(t){
+    itTab = t; itQuery = '';
+    const q = $('#it_q', b), qs = $('#it_qs', b);
+    if(q) q.value = '';
+    if(qs) q.value = '';
+    selMine = null; selSys = null;
+    applyPick(null);   /* 换分页清空已选动作（不做跨分页记忆，与记录饮食一致） */
+    $$('#it_seg [data-ittab]', b).forEach(btn => btn.classList.toggle('active', btn.dataset.ittab === itTab));
+    ['mine', 'sys', 'new'].forEach(k => { const p = $('#it_p_' + k, b); if(p) p.style.display = (k === itTab ? '' : 'none'); });
+    renderList(); paintOwned();
+  }
+  /* 「新增」tab：换大类带出默认部位/方式；名称与三件套任一变化都重算候选（数值区与合计跟着走） */
+  function bindNewForm(){
+    const catSel = $('#it_new_cat', b), musSel = $('#it_new_muscle', b), modSel = $('#it_new_mode', b), nameEl = $('#it_new_name', b);
+    if(!catSel || !nameEl) return;
+    const syncDefaults = () => { musSel.value = defaultMuscle(catSel.value); modSel.value = defaultMode(catSel.value); };
+    syncDefaults();
+    catSel.addEventListener('change', () => { syncDefaults(); applyPick(itPickOf('new', null, null, readNew())); paintOwned(); });
+    [nameEl, musSel, modSel].forEach(el => el.addEventListener('input', () => { applyPick(itPickOf('new', null, null, readNew())); paintOwned(); }));
+  }
+  /* 库分页搜索 + 三 tab 切换：仅添加态；修改态收敛成「只改数值 + 删除」（不再有更换动作入口） */
+  if(!editing){
+    const q = $('#it_q', b), qs = $('#it_qs', b);
+    if(q) q.addEventListener('input', e => { itQuery = e.target.value; renderMine(); });
+    if(qs) qs.addEventListener('input', e => { itQuery = e.target.value; renderSys(); });
+    $$('#it_seg [data-ittab]', b).forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.ittab)));
+    bindNewForm();
+    invalidateSysLib();   /* v4.4 口径：每次打开弹窗失效一次，管理员的改动进弹窗即新 */
+    switchTab('mine');    /* 默认落「我的库」并画出首屏列表/数值区 */
+  } else {
+    paintFields();
+  }
   $('#it_save', b).addEventListener('click', () => {
     syncModel();
+    if(!editing){
+      /* 添加态：以当前分页选中的那条为准写进模型（名称/三件套/方式）；
+       * exId 缺省时由 ensureExId() 按名称并入我的动作库（系统库/新增同理） */
+      const pick = itPickOf(itTab, selMine, selSys, readNew());
+      if(!pick){ toast(itTab === 'new' ? '请填写动作名称' : '请先从动作库选择动作', true); return; }
+      if(pick.exId) m.exId = pick.exId; else delete m.exId;
+      m.exName = pick.name; m.cat = pick.cat; m.muscle = pick.muscle;
+      setItemMode(m, pick.mode === 'time' ? 'time' : 'reps');
+    }
     if(!m.exName){ toast('请先从动作库选择动作', true); return; }
     const it = collectItems([m], false)[0];
     if(!it){ toast('请填写数值', true); return; }
@@ -2454,76 +2623,130 @@ function openItemDlg(date, itemId){
   const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
 }
 
-/* ---------- 动作库列表：我的库 / 系统库 / 选择器 三处共用同一张平铺表格 ----------
- * v4.11：不再有分组树——大类与部位只是表格里的两列（按 大类→部位→名称 排序）。
- * rows[].action 是**裸 HTML**（三个调用方各自拼按钮）；里面插值的一律走 esc()——
- * 条目 id 可来自「导入备份」的 JSON（用户可控），裸拼属性会得到构造型 XSS。 */
-function libTableHTML(rows){
-  const body = rows.map(r => '<tr>' +
-      '<td>' + esc(r.ex.name) + '</td>' +
-      '<td class="tiny muted">' + esc([r.ex.cat, r.ex.muscle].filter(Boolean).join(' · ') || '—') + '</td>' +
-      '<td class="tiny muted">' + esc(MODE_CN[r.ex.mode] || '—') + '</td>' +
-      '<td class="ta-r">' + r.action + '</td></tr>').join('');
-  return '<table class="libtable"><thead><tr><th>名称</th><th>分类</th><th>方式</th><th></th></tr></thead><tbody>' +
-    (body || '<tr><td colspan="4" class="tiny muted" style="text-align:center;padding:14px">暂无动作</td></tr>') + '</tbody></table>';
+/* 动作库行内 = 名称 + 「大类 · 部位 · 方式」小字一行（与食物库的 lrow 同一版式，不再用表格）。 */
+function exLibRowHTML(e, dataAttr, actionHTML){
+  const sub = [e.cat, e.muscle, MODE_CN[e.mode]].filter(Boolean).join(' · ') || '—';
+  return '<div class="lrow" ' + dataAttr + '><div class="grow"><div class="b">' + esc(e.name) + '</div>' +
+    '<div class="sub">' + esc(sub) + '</div></div>' + (actionHTML || '') + '</div>';
 }
 
-/* 动作选择器 */
-function openExercisePicker(cb){
-  const rows = exLibSort(state.exercises).map(e => ({
-    ex: e,
-    action: '<button class="btn sm ghost" data-pick="' + esc(e.id) + '">选</button>',
-  }));
-  const dlg = showDialog('选择动作', libTableHTML(rows), {size:'lg'});
-  $$('[data-pick]', dlg.box).forEach(el => el.addEventListener('click', () => {
-    const e = state.exercises.find(x => x.id === el.dataset.pick);
-    closeDialog(); if(e) cb(e);
-  }));
-}
-
-/* ---------- 动作库（设置页 → 💾 数据管理 → 本页）：我的库（可增删）| 系统库（只读 + 挑入我的库） ----------
- * v4.15：由弹窗改为独立页面——页头第一行是「返回 + 数据管理-动作库」。 */
+/* ---------- 动作库（设置页 → 💾 数据管理 → 本页）：我的库（可增删改）| 系统库（只读 + 挑入我的库） ----------
+ * v4.15：由弹窗改为独立页面——页头第一行是「返回 + 数据管理-动作库」。
+ * 与食物库同一套交互（用户裁定 2026-09-12）：两个分页共用名称搜索、20 条/页分页、tab 带条数，
+ * 「我的库」每行 ✏️ 单项编辑；异步回来前一律过 alive()（代次 + #xl_body 是否还在）。 */
+let exLibTab = 'mine';     /* 页面级状态：切到系统库后再进来仍停在原分页 */
+let exLibQuery = '';       /* 搜索词：两个分页共用，切分页保留 */
+let exLibPage = 1;         /* 当前页码：换搜索词/切分页时回到第 1 页 */
+let exLibSysCount = null;  /* 本次进页拉到的系统库条数（tab 上显示）；未拉到就只写「系统动作库」 */
+let exLibGen = 0;          /* 页面代次：系统库异步回来时若已切走页面，就别再碰旧 DOM */
+const EX_PAGE_SIZE = 20;   /* 与食物库同口径：移动端一屏能扫完的行数 */
 function renderExLibPage(){
   invalidateSysLib();   /* v4.4:每次进页拉一次系统库即可,页内切分页不再重下 */
+  const gen = ++exLibGen;
+  exLibSysCount = null;
   $('#view').innerHTML =
     '<div class="pagehead"><button class="iconbtn2" id="xl_back" title="返回设置">‹</button><div class="ph-t">数据管理-动作库</div></div>' +
-    '<div id="xl_host"></div>';
+    '<div class="card">' +
+      '<div class="row" style="margin-bottom:10px"><div class="seg" id="xl_seg"></div></div>' +
+      '<div class="field" style="margin:0 0 4px"><input class="input" id="xl_search" type="search" placeholder="搜索动作名称…" value="' + esc(exLibQuery) + '"></div>' +
+      '<div id="xl_body"><div class="tiny muted">载入中…</div></div>' +
+    '</div>';
   $('#xl_back').addEventListener('click', () => go('settings'));
-  renderExLib($('#xl_host'));
-}
-let exLibTab = 'mine';
-function renderExLib(body){
-  body.innerHTML =
-    '<div class="seg" style="margin-bottom:12px" id="xl_seg">' +
-      '<button data-xlt="mine" class="' + (exLibTab==='mine'?'active':'') + '">我的动作库</button>' +
-      '<button data-xlt="sys" class="' + (exLibTab==='sys'?'active':'') + '">系统动作库</button>' +
-    '</div><div id="xl_body"></div>';
-  $$('[data-xlt]', body).forEach(btn => btn.addEventListener('click', () => { exLibTab = btn.dataset.xlt; renderExLib(body); }));
-  const sub = $('#xl_body', body);
-  if(exLibTab === 'mine') renderExLibMine(sub);
-  else renderExLibSys(sub);
-}
-function renderExLibMine(body){
-  const rows = exLibSort(state.exercises).map(e => ({
-    ex: e,
-    action: '<button class="iconbtn2" data-delx="' + esc(e.id) + '" title="删除" style="width:26px;height:26px;font-size:11px;color:var(--danger)">🗑</button>',
-  }));
-  /* 添加表单收进弹窗（卡头一颗「＋ 添加动作」），页面上只留表格与计数 */
-  body.innerHTML = '<div class="card" style="margin-bottom:0"><h3><span>📚 我的动作库（' + state.exercises.length + '）</span><span class="grow"></span>' +
-    '<button class="btn sm primary" id="nx_open">＋ 添加动作</button></h3>' +
-    libTableHTML(rows) +
-    '<div class="tiny muted" style="margin-top:10px">运动中保存的新动作会自动进入这里；「系统动作库」分页可挑入管理员维护的公共动作。</div></div>';
-  $('#nx_open', body).addEventListener('click', () => openExAdder(() => renderExLib($('#xl_host'))));
-  $$('[data-delx]', body).forEach(b => b.addEventListener('click', () => {
-    const id = b.dataset.delx;
-    /* 注意:必须改 USERS.shared.exercises 本体(再重新取引用),只换 state.exercises 指向会同步不生效 */
-    USERS.shared.exercises = USERS.shared.exercises.filter(e => e.id !== id);
-    state.exercises = USERS.shared.exercises;
-    save(); renderExLib($('#xl_host'));
-  }));
+  const b = $('#view');
+  let tab = exLibTab;
+  let sysCache = null;   /* 本次进页拉到的系统库：切分页/改搜索词不再重下 */
+  let sysReady = null;   /* 进页那次拉取（tab 条数与系统库分页共用同一份）；失败置回 null 以便重试 */
+  const alive = () => gen === exLibGen && !!$('#xl_body', b);
+  const loadSys = () => (sysReady = sysReady || fetchSysLib());
+  /* 进页就把系统库拉回来：tab 上要显示它的条数（与食物库同口径），切到系统库分页时也复用它 */
+  loadSys().then(sys => {
+    if(!alive()) return;   /* 页面已切走：不碰旧 DOM */
+    if(!sys){ sysReady = null; return; }   /* 离线/失败：tab 数字留空（不写 0），切分页时重试 */
+    exLibSysCount = (sys.exercises || []).length;
+    paintSeg();
+  });
+  $('#xl_search', b).addEventListener('input', e => { exLibQuery = e.target.value; exLibPage = 1; render(); });
+  function pageSlice(arr){
+    exLibPage = libClampPage(exLibPage, EX_PAGE_SIZE, arr.length);
+    const start = (exLibPage - 1) * EX_PAGE_SIZE;
+    return arr.slice(start, start + EX_PAGE_SIZE);
+  }
+  function paintSeg(){
+    const seg = $('#xl_seg', b);
+    if(!seg) return;   /* 页面已切走（换页会清 #view）：别往旧 DOM 上写 */
+    seg.innerHTML =
+      '<button data-xlt="mine" class="' + (tab==='mine'?'active':'') + '">我的动作库（' + state.exercises.length + '）</button>' +
+      '<button data-xlt="sys" class="' + (tab==='sys'?'active':'') + '">系统动作库' +
+        (exLibSysCount === null ? '' : '（' + exLibSysCount + '）') + '</button>';
+    $$('#xl_seg [data-xlt]', b).forEach(btn => btn.addEventListener('click', () => { tab = exLibTab = btn.dataset.xlt; exLibPage = 1; paintSeg(); render(); }));
+  }
+  function bindPager(){
+    $$('[data-fpage]', b).forEach(btn => btn.addEventListener('click', () => {
+      exLibPage += (btn.dataset.fpage === 'next' ? 1 : -1);
+      render();
+    }));
+  }
+  function renderMine(){
+    const hits = exLibSort(state.exercises.filter(e => libMatchName(exLibQuery, e.name)));
+    const rows = pageSlice(hits).map(e =>
+      exLibRowHTML(e, 'data-id="' + esc(e.id) + '"',
+        '<button class="iconbtn2" data-editx="' + esc(e.id) + '" title="修改">✏️</button>' +
+        '<button class="iconbtn2" data-delx="' + esc(e.id) + '" title="删除" style="color:var(--danger)">🗑</button>')).join('');
+    /* 添加表单收进弹窗（卡头一颗「＋ 添加动作」），列表与计数留给页面 */
+    $('#xl_body', b).innerHTML =
+      '<h3><span>📚 我的动作库（' + state.exercises.length + '）</span><span class="grow"></span>' +
+        '<button class="btn sm primary" id="nx_open">＋ 添加动作</button></h3>' +
+      '<div class="tiny muted" style="margin-bottom:8px">运动中保存的新动作会自动进来；「系统动作库」分页可挑入管理员维护的公共动作。</div>' +
+      (rows || (state.exercises.length
+        ? '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">🔍</div>没有匹配「' + esc(exLibQuery.trim()) + '」的动作</div>'
+        : '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">📚</div>我的动作库是空的，去「系统动作库」挑一些吧</div>')) +
+      (hits.length ? libPagerHTML(exLibPage, EX_PAGE_SIZE, hits.length) : '');
+    $('#nx_open', b).addEventListener('click', () => openExAdder(() => { paintSeg(); exLibPage = 1; renderMine(); }));
+    $$('[data-editx]', b).forEach(btn => btn.addEventListener('click', () => {
+      const e = state.exercises.find(x => x.id === btn.dataset.editx);
+      if(e) openExEditor(e, () => { paintSeg(); renderMine(); });
+    }));
+    $$('[data-delx]', b).forEach(btn => btn.addEventListener('click', () => {
+      const id = btn.dataset.delx;
+      /* 注意:必须改 USERS.shared.exercises 本体(再重新取引用),只换 state.exercises 指向会同步不生效 */
+      USERS.shared.exercises = USERS.shared.exercises.filter(e => e.id !== id);
+      state.exercises = USERS.shared.exercises;
+      save(); paintSeg(); renderMine();
+    }));
+    bindPager();
+  }
+  async function renderSys(){
+    if(!sysCache){
+      $('#xl_body', b).innerHTML = '<div class="tiny muted">载入系统库…</div>';
+      sysCache = await loadSys();   /* 进页时已发起（见上），这里复用同一份，不再重下 */
+      if(!alive()) return;   /* 载入期间用户离开了本页（换页 / 重进） */
+      if(tab !== 'sys') return;   /* 载入期间用户切回了我的库 */
+      if(!sysCache) sysReady = null;   /* 离线/失败：这次不缓存，下次切分页再试一次 */
+    }
+    if(!sysCache){ $('#xl_body', b).innerHTML = '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">🔌</div>服务器离线，暂时看不到系统库</div>'; return; }
+    /* 已在我的库（同名）= 只读标记，与食物库系统分页同一口径；用 Set 一次建索引，避免逐行 O(n) 扫 */
+    const sysEx = sysCache.exercises || [];
+    const ownedNames = new Set(USERS.shared.exercises.map(x => x.name));
+    const all = sysEx.map((e, i) => ({ e, i })).sort((x, y) => exLibCmp(x.e, y.e)).filter(x => libMatchName(exLibQuery, x.e.name));
+    const rows = pageSlice(all).map(x => exLibRowHTML(x.e, 'data-sysx="' + x.i + '"',
+      ownedNames.has(x.e.name)
+        ? '<span class="chip b3" style="padding:2px 9px;font-size:12px">已有</span>'
+        : '<button class="btn sm ghost" data-impex="' + x.i + '">＋我的库</button>')).join('');
+    $('#xl_body', b).innerHTML =
+      '<div class="tiny muted" style="margin-bottom:8px">系统共享库由管理员在后台维护，只读。点「＋我的库」把它挑进自己的动作库；与你库里同名的直接标「已有」。</div>' +
+      (rows || '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">' + (sysEx.length ? '🔍' : '🗂') + '</div>' +
+        (sysEx.length ? '没有匹配「' + esc(exLibQuery.trim()) + '」的动作' : '系统库暂无动作') + '</div>') +
+      (all.length ? libPagerHTML(exLibPage, EX_PAGE_SIZE, all.length) : '');
+    $$('[data-impex]', b).forEach(btn => btn.addEventListener('click', () => {
+      if(importExerciseFromSys(sysEx[num(btn.dataset.impex)])){ paintSeg(); render(); }
+    }));
+    bindPager();
+  }
+  function render(){ if(tab === 'mine') renderMine(); else renderSys(); }
+  paintSeg(); render();   /* 按 tab 渲染：exLibTab 会被记住，再进页可能停在「系统库」 */
 }
 /* 添加动作弹窗（我的库）：名称必填；换大类即把 部位/记录方式 拨到该大类的默认值（仍可手改：核心+计时 = 平板支撑）。
- * 写入本人动作库后立即落库并关闭，after() 让页面表格与「我的动作库（n）」计数即时刷新。 */
+ * 写入本人动作库后立即落库并关闭，after() 让页面列表与「我的动作库（n）」计数即时刷新。 */
 function openExAdder(after){
   const dlg = showDialog('添加动作',
     '<div class="field"><label>动作名称</label><input class="input" id="nx_name" placeholder="如：窄距俯卧撑"></div>' +
@@ -2542,6 +2765,7 @@ function openExAdder(after){
   const add = () => {
     const name = $('#nx_name', b).value.trim();
     if(!name){ toast('请填写动作名', true); return; }
+    if(exDupInMine(name)){ toast('该动作已存在', true); return; }   /* 与编辑共用同一口径 */
     state.exercises.push({ id:uid(), name, cat:catSel.value, muscle:musSel.value, mode:modSel.value });
     save(); closeDialog(); if(after) after(); toast('已添加：' + name);
   };
@@ -2549,27 +2773,53 @@ function openExAdder(after){
   $('#nx_add', b).addEventListener('click', add);
   $('#nx_name', b).addEventListener('keydown', e => { if(e.key === 'Enter') add(); });   /* 桌面端回车即添加 */
 }
-async function renderExLibSys(body){
-  body.innerHTML = '<div class="tiny muted">载入系统库…</div>';
-  const sys = await fetchSysLib();   /* v4.4:进页入口已失效缓存,本页首拉一次即可 */
-  if(exLibTab !== 'sys') return;
-  if(!sys){ body.innerHTML = '<div class="card"><div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">🔌</div>服务器离线，暂时看不到系统库</div></div>'; return; }
-  paintSysLib(body, sys);
+/* 库内判重口径（添加 / 编辑 / 挑入共用）：按 name 比对，两侧都 trim（存量条目可能带多余空白）。
+ * exceptId 用于编辑时排掉自己；一处实现，免得两条入口各自漂移。 */
+function exDupInMine(name, exceptId){
+  const nm = String(name == null ? '' : name).trim();
+  return USERS.shared.exercises.some(x => x.id !== exceptId && String(x.name == null ? '' : x.name).trim() === nm);
 }
-/* 渲染系统动作库列表(数据在内存,导入/切换分页后重绘,不再整库重下) */
-function paintSysLib(body, sys){
-  const rows = exLibSort(sys.exercises).map(e => {
-    const owned = USERS.shared.exercises.some(x => x.name === e.name);
-    return { ex: e, action: owned
-      ? '<span class="chip b3" style="padding:2px 9px;font-size:12px">已有</span>'
-      : '<button class="btn sm ghost" data-impex="' + sys.exercises.indexOf(e) + '">＋我的库</button>' };
-  });
-  body.innerHTML = '<div class="card" style="margin-bottom:0"><h3>🗂 系统动作库（只读）</h3>' +
-    '<div class="tiny muted" style="margin-bottom:8px">由管理员通过后台维护，改动不影响你已有的个人库。</div>' +
-    libTableHTML(rows) + '</div>';
-  $$('[data-impex]', body).forEach(btn => btn.addEventListener('click', () => {
-    if(importExerciseFromSys(sys.exercises[num(btn.dataset.impex)])){ paintSysLib(body, sys); }
-  }));
+/* 编辑保存口径（纯函数，便于测试）：名称必填、不得与库里其他条目重名（库内一律按 name 比对）；
+ * 大类/部位/记录方式只在取值合法（在枚举内）时写入，非法值保持原样。
+ * 返回 '' 表示已写入，'name' / 'dup' 为拒绝原因。 */
+function applyExEdit(e, name, cat, muscle, mode){
+  const nm = String(name == null ? '' : name).trim();
+  if(!nm) return 'name';
+  if(exDupInMine(nm, e.id)) return 'dup';
+  e.name = nm;
+  if(CATS.indexOf(cat) >= 0) e.cat = cat;
+  if(MUSCLES.indexOf(muscle) >= 0) e.muscle = muscle;
+  if(MODES.indexOf(mode) >= 0) e.mode = mode;
+  return '';
+}
+/* 编辑我的库里的动作（行内 ✏️）：名称与 大类/部位/记录方式 都能改；同名（除自己）仍拒绝。
+ * 三件套缺字段的存量条目（老数据）预选该大类的默认值，而不是让浏览器默默落到第一项。 */
+function openExEditor(e, after){
+  const curCat = CATS.indexOf(e.cat) >= 0 ? e.cat : '其他';
+  const curMuscle = MUSCLES.indexOf(e.muscle) >= 0 ? e.muscle : defaultMuscle(curCat);
+  const curMode = MODES.indexOf(e.mode) >= 0 ? e.mode : defaultMode(curCat);
+  const opts = (list, cur, cn) => list.map(v => '<option value="' + v + '"' + (v === cur ? ' selected' : '') + '>' + (cn ? MODE_CN[v] : v) + '</option>').join('');
+  const dlg = showDialog('编辑动作',
+    '<div class="field"><label>动作名称</label><input class="input" id="ex_name" value="' + esc(e.name) + '"></div>' +
+    '<div class="form-grid">' +
+      '<div><label>大类</label><select class="select" id="ex_cat">' + opts(CATS, curCat, false) + '</select></div>' +
+      '<div><label>部位</label><select class="select" id="ex_muscle">' + opts(MUSCLES, curMuscle, false) + '</select></div>' +
+      '<div><label>记录方式</label><select class="select" id="ex_mode">' + opts(MODES, curMode, true) + '</select></div>' +
+    '</div>' +
+    '<div class="tiny muted" style="margin-top:10px">换大类会自动带出该大类的默认部位与记录方式，仍可手改（如「核心 + 计时」= 平板支撑）；与库里其他动作重名会被拒绝。</div>' +
+    '<div class="d-f"><button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="ex_save">保存</button></div>');
+  const b = dlg.box;
+  const catSel = $('#ex_cat', b), musSel = $('#ex_muscle', b), modSel = $('#ex_mode', b);
+  const syncDefaults = () => { musSel.value = defaultMuscle(catSel.value); modSel.value = defaultMode(catSel.value); };
+  catSel.addEventListener('change', syncDefaults);
+  const saveEdit = () => {
+    const err = applyExEdit(e, $('#ex_name', b).value, catSel.value, musSel.value, modSel.value);
+    if(err){ toast(err === 'dup' ? '该动作已存在' : '请填写动作名', true); return; }
+    save(); closeDialog(); if(after) after(); toast('已保存：' + e.name);
+  };
+  const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
+  $('#ex_save', b).addEventListener('click', saveEdit);
+  $('#ex_name', b).addEventListener('keydown', evt => { if(evt.key === 'Enter') saveEdit(); });   /* 桌面端回车即保存 */
 }
 
 /* =====================================================
@@ -3573,27 +3823,29 @@ function runFTest(){
     if(state.workouts.length !== before) throw new Error('not-cleaned');
   });
   T('itemDlg', () => {
-    /* 逐项添加：只允许从动作库选（名称与「力量 / 计时」方式都由库条目决定）→
-     * 同日再加一项 → 改一项保 done → 逐项删到空那天回收 */
+    /* 逐项添加：三 tab 录入（名称与「计次 / 计时」方式由选中条目/新增表单决定）→
+     * 同日再加一项 → 改一项保 done → 逐项删到空那天回收。
+     * 个人库可能为空（v4.15 起新账户默认空库）：优先点「我的库」第一条，空了就走「新增」手填 */
     let d = addDays(today(), 1);
     for(let i = 0; i < 400 && workoutForDate(d); i++) d = addDays(d, 1);
     const before = state.workouts.length;
     function pickFirst(){
-      let ovs = $$('.overlay');
-      const pickBtn = $('#it_pick', ovs[ovs.length-1]);
-      if(!pickBtn) throw new Error('no-pick-entry');
-      pickBtn.click();
-      ovs = $$('.overlay');
-      const btn = $('[data-pick]', ovs[ovs.length-1]);
-      if(!btn) throw new Error('no-picker-item');
-      btn.click();
-      ovs = $$('.overlay');
-      return ovs[ovs.length-1];
+      const box = $$('.overlay').slice(-1)[0];
+      const row = $('[data-mypick]', box);
+      if(row){ row.click(); return box; }
+      const newTab = $('[data-ittab="new"]', box);
+      if(!newTab) throw new Error('no-tab-new');
+      newTab.click();
+      const nameEl = $('#it_new_name', box);
+      if(!nameEl) throw new Error('no-new-name');
+      nameEl.value = '自测动作' + (state.exercises.length + 1);
+      nameEl.dispatchEvent(new Event('input', { bubbles:true }));   /* 触发 applyPick → 画出数值区 */
+      return box;
     }
     openItemDlg(d);
     let box = pickFirst();
     const isTime = !!$('#it_mins', box);                 /* 方式由库条目自动设定 */
-    /* 起步值由 defaultForMode 补上：计时 20 分钟 / 力量 30 次 */
+    /* 起步值由 defaultForMode 补上：计时 20 分钟 / 计次 30 次 */
     if(isTime ? $('#it_mins', box).value !== String(DEFAULT_MINS) : $('#it_reps', box).value !== String(DEFAULT_REPS)) throw new Error('default-not-applied');
     if(isTime) $('#it_mins', box).value = '30'; else $('#it_reps', box).value = '12';
     $('#it_save', box).click();

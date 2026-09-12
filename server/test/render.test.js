@@ -228,7 +228,7 @@ async function main() {
     head: view.__html.includes('id="fl_back"') && view.__html.includes('数据管理-食物库'),
   };
   ev("go('exlib')");
-  subNav.view2 = ev('curView') === 'exlib' && view.__html.includes('id="xl_back"') && view.__html.includes('数据管理-动作库') && view.__html.includes('<div id="xl_host">');
+  subNav.view2 = ev('curView') === 'exlib' && view.__html.includes('id="xl_back"') && view.__html.includes('数据管理-动作库') && view.__html.includes('id="xl_search"');
   ev("go('settings')");
   ok('T2g 数据管理子页面：不占导航项、高亮父级设置、落盘记父级', Object.values(subNav).every(Boolean), JSON.stringify(subNav));
 
@@ -558,11 +558,11 @@ async function main() {
      gap.includes('><div><div class="chart-card') && !gap.includes('grid cols-2'),
      'between=' + (gap ? gap.slice(-70) : '未找到两张图'));
 
-  /* T10 v4.11 动作库平铺表格：大类/部位/方式三列，不再有分组树 */
-  const libTbl = ev("libTableHTML(state.exercises.slice(0,2).map(e => ({ ex:e, action:'<button>选</button>' })))");
-  ok('T10 库列表为平铺表格(名称/分类/方式/操作)', libTbl.includes('<th>名称</th>') && libTbl.includes('<th>分类</th>')
-     && libTbl.includes('<th>方式</th>') && libTbl.includes('力量 · 胸') && libTbl.includes('计次'),
-     libTbl.slice(0, 160));
+  /* T10 动作库行内版式：名称 + 「大类 · 部位 · 方式」小字（v4.15 的平铺表格已换成食物库同款 lrow） */
+  const libRow = ev("exLibRowHTML(state.exercises.find(e => e.name === '杠铃卧推'), 'data-id=\"e0\"', '<button>✏️</button>')");
+  ok('T10 动作库行内 = lrow（名称 + 大类 · 部位 · 方式小字）+ 行内按钮',
+     libRow.includes('class="lrow"') && libRow.includes('data-id="e0"') && libRow.includes('杠铃卧推')
+     && libRow.includes('力量 · 胸 · 计次') && libRow.includes('<button>✏️</button>'), libRow.slice(0, 200));
 
   /* T11 项文案契约（力量有重量/力量无重量/计时/秒级四条分支） */
   const fmt = JSON.parse(ev(`JSON.stringify({
@@ -595,12 +595,14 @@ async function main() {
      && !hItem.includes('wl_date') && !hItem.includes('wl_name') && !hItem.includes('复制已有安排')
      && hItem.includes('新增一项') && hItem.includes('it_save'),
      hItem.startsWith('ERR:') ? hItem : hItem.slice(0, 200));
-  /* 新建：未选动作前只给选择入口，不先摆出数值框 */
+  /* 新建：三 tab 录入（我的库 / 系统库 / 新增）；未选动作前只给选择入口，不先摆出数值框 */
   const fNew = itemFields('openItemDlg(today())');
-  ok('T12b 新建态：只有「选择动作」入口 + 提示，无动作名输入框与数值框', !fNew.startsWith('ERR:')
-     && fNew.includes('it_pick') && fNew.includes('先从动作库选一个动作')
-     && !fNew.includes('由它自动决定')
-     && !fNew.includes('it_reps') && !fNew.includes('it_w'),
+  ok('T12b 新建态：三 tab + 两个库分页的搜索框/候选列表（在外层弹窗）；未选前只给选择入口 + 提示（无手填名称框、无数值框）', !fNew.startsWith('ERR:')
+     && ['data-ittab="mine"', 'data-ittab="sys"', 'data-ittab="new"'].every(t => hItem.includes(t))
+     && hItem.includes('id="it_q"') && hItem.includes('id="it_mylist"') && hItem.includes('id="it_qs"')
+     && hItem.includes('id="it_syslist"') && hItem.includes('class="picklist"')
+     && fNew.includes('还没选动作') && fNew.includes('先从动作库选一个动作')
+     && !fNew.includes('id="it_reps"') && !fNew.includes('id="it_mins"'),
      fNew.startsWith('ERR:') ? fNew : fNew.slice(0, 240));
   /* 编辑 w3 第二项（拉伸 10 分钟，已完成）：计时形态 + 预填 + 15/30/45/60 快捷档 */
   const fTime = itemFields("openItemDlg('2026-09-03', 'wi4')");
@@ -608,14 +610,16 @@ async function main() {
      && fTime.includes('⏱ 计时') && fTime.includes('value="10"') && fTime.includes('it_km')
      && fTime.includes('id="it_mins"') && fTime.includes('id="it_mins_btn"') && fTime.includes('id="it_mins_menu"')
      && fTime.includes('class="mins-wrap"') && fTime.includes('class="mins-menu"')
+     && !fTime.includes('span2')   /* 计时与计次同版式：时长 + 距离 一行并排，不再各占整行 */
      && [15, 20, 30, 45, 60].every(n => fTime.includes('data-min="' + n + '">' + n + ' 分钟</button>'))
      && !fTime.includes('<datalist') && !fTime.includes('it_quick'),
      fTime.startsWith('ERR:') ? fTime : fTime.slice(0, 320));
-  /* 编辑 w4 第一项（杠铃卧推 32 次 @70kg，已勾）：力量形态预填 + 选中态 + 更换动作入口 */
+  /* 编辑 w4 第一项（杠铃卧推 32 次 @70kg，已勾）：力量形态预填 + 选中态；修改态不再有「更换动作」 */
   const fReps = itemFields("openItemDlg('2026-09-05', 'wi5')");
-  ok('T12d 编辑力量项：选中动作名回显 + 预填 32 次 / 70 kg，无计时字段', !fReps.startsWith('ERR:')
-     && fReps.includes('杠铃卧推') && fReps.includes('🔄 更换动作') && fReps.includes('🏋 力量')
-     && fReps.includes('value="32"') && fReps.includes('value="70"') && !fReps.includes('it_mins'),
+  ok('T12d 编辑力量项：选中动作名回显 + 预填 32 次 / 70 kg，方式 chip 按「计次/计时」而非大类、无更换动作入口', !fReps.startsWith('ERR:')
+     && fReps.includes('杠铃卧推') && fReps.includes('🔢 计次') && !fReps.includes('更换动作')
+     && fReps.includes('value="32"') && fReps.includes('value="70"') && !fReps.includes('it_mins')
+     && !fReps.includes('span2'),   /* 与计时同版式：两个数值框一行并排 */
      fReps.startsWith('ERR:') ? fReps : fReps.slice(0, 240));
   const hEdit = dlgHTML("openItemDlg('2026-09-05', 'wi5')");
   ok('T12e 编辑态：带「删除这一项」，无天级完成勾选框',
@@ -648,19 +652,50 @@ async function main() {
   ok('T12j 添加起步值：力量 30 次 / 计时 20 分钟，且不覆盖已有值、切方式后重新给值',
      defs.reps === 30 && defs.time === 20 && defs.keptReps === 12 && defs.keptTime === 45
      && defs.crossed[0] === false && defs.crossed[1] === 20, JSON.stringify(defs));
-  const hPick = dlgHTML('openExercisePicker(function(){})');  ok('T12f 动作选择器为平铺表格', !hPick.startsWith('ERR:') && hPick.includes('<th>分类</th>') && hPick.includes('杠铃卧推'), hPick.slice(0, 140));
-  /* 动作库页面（v4.15 由弹窗改独立页）：页头「返回 + 数据管理-动作库」，内容在 #xl_host → #xl_body */
+  /* T12f 添加运动三 tab：结构 + 取数纯函数 + 「已有」提示（交互在桩里点不到，验结构与决策口径） */
+  const hAdd = dlgHTML('openItemDlg(today())');
+  const ownTip = ev("exOwnedTipHTML('杠铃卧推')");
+  const picks = JSON.parse(ev(`JSON.stringify({
+    mine: itPickOf('mine', { id:'e0', name:'杠铃卧推', cat:'力量', muscle:'胸', mode:'reps' }, null, null),
+    sys: itPickOf('sys', null, { name:'系统专属动作', cat:'力量', muscle:'腿', mode:'reps' }, null),
+    bare: itPickOf('sys', null, { name:'缺三件套的旧条目' }, null),
+    newf: itPickOf('new', null, null, { name:'  新动作  ', cat:'有氧', muscle:'全身', mode:'time' }),
+    aero: itPickOf('new', null, null, { name:'快走', cat:'有氧', muscle:'全身', mode:'reps' }),
+    none: itPickOf('mine', null, null, null) === null && itPickOf('new', null, null, { name:'  ' }) === null
+  })`));
+  ok('T12f 添加运动三 tab：新增表单字段齐全 + 「保存后自动入库」说明；取数口径（我的库带 exId、系统库/新增不带，缺三件套按大类兜底）',
+     !hAdd.startsWith('ERR:') && hAdd.includes('data-ittab="new"')
+     && hAdd.includes('id="it_new_name"') && hAdd.includes('id="it_new_cat"') && hAdd.includes('id="it_new_muscle"') && hAdd.includes('id="it_new_mode"')
+     && hAdd.includes('保存后会自动加入我的动作库') && !hAdd.includes('同时保存到我的动作库')
+     && ownTip.includes('class="chip b3">已有<') && ownTip.includes('本次只记这一次运动')
+     && picks.mine.exId === 'e0' && picks.mine.mode === 'reps'
+     && picks.sys.exId === undefined && picks.sys.cat === '力量' && picks.sys.muscle === '腿'
+     && picks.bare.cat === '其他' && picks.bare.muscle === '全身' && picks.bare.mode === 'reps'
+     && picks.newf.name === '新动作' && picks.newf.mode === 'time' && picks.none === true
+     && picks.aero.cat === '有氧' && picks.aero.mode === 'reps', JSON.stringify(picks));
+  /* 修改态收敛：与 editMealDialog 一致——只改数值 + 删除，不再有换动作入口（旧的 openExercisePicker 已删） */
+  const hItemEdit = dlgHTML("openItemDlg('2026-09-05', 'wi5')");
+  ok('T12f2 修改态收敛：无三 tab、无「选择动作 / 更换动作」入口，只有数值 + 删除',
+     !hItemEdit.startsWith('ERR:') && !hItemEdit.includes('data-ittab=') && !hItemEdit.includes('it_pick')
+     && !hItemEdit.includes('更换动作') && !hItemEdit.includes('选择动作')
+     && hItemEdit.includes('修改这一项') && hItemEdit.includes('it_del')
+     && !readPub('js/app.js').includes('openExercisePicker') && !readPub('js/app.js').includes('libTableHTML'),
+     hItemEdit.slice(0, 200));
+  /* 动作库页面（v4.15 由弹窗改独立页；2026-09-12 起与食物库同一版式）：页头「返回 + 数据管理-动作库」，
+   * 卡内 = seg tab（带条数）+ 搜索框 + #xl_body 列表行 */
   let hLib = '';
-  try { ev("go('exlib')"); hLib = ev("$('#xl_body', $('#xl_host')).__html"); }
+  try { ev("go('exlib')"); hLib = ev("$('#xl_body', $('#view')).__html"); }
   catch (e) { hLib = 'ERR:' + e.message; }
-  ok('T12h 动作库页面：表格 + 卡头「＋ 添加动作」（录入表单已收进弹窗，页面上不再有输入框）',
-     !hLib.startsWith('ERR:') && hLib.includes('我的动作库') && hLib.includes('<th>方式</th>')
+  ok('T12h 动作库页面：行内列表（名称 + 分类/方式小字）+ 卡头「＋ 添加动作」（录入表单已收进弹窗，页面上不再有输入框）',
+     !hLib.startsWith('ERR:') && hLib.includes('我的动作库') && hLib.includes('class="lrow"')
+     && hLib.includes('杠铃卧推') && hLib.includes('力量 · 胸 · 计次')
      && hLib.includes('id="nx_open"') && !hLib.includes('id="nx_name"') && !hLib.includes('id="nx_add"'), hLib.slice(0, 160));
   const hExAdder = dlgHTML('openExAdder()');
-  ok('T12m 添加动作弹窗：名称 + 大类/部位/方式三件套 + 取消/添加',
+  ok('T12m 添加动作弹窗：名称 + 大类/部位/方式三件套 + 取消/添加（同名走 exDupInMine 拒绝，与编辑同口径）',
      !hExAdder.startsWith('ERR:') && hExAdder.includes('id="nx_name"') && hExAdder.includes('id="nx_cat"')
      && hExAdder.includes('id="nx_muscle"') && hExAdder.includes('id="nx_mode"')
-     && hExAdder.includes('id="nx_add"') && hExAdder.includes('data-cancel'), hExAdder.slice(0, 200));
+     && hExAdder.includes('id="nx_add"') && hExAdder.includes('data-cancel')
+     && readPub('js/app.js').includes('if(exDupInMine(name))'), hExAdder.slice(0, 200));
   /* 食物库页面：同一套页头契约（返回钮 + 标题），我的库分页有列表与逐行按钮，录入收进弹窗 */
   let hFood = '';
   try { ev("go('foodlib')"); hFood = ev("$('#fl_body', $('#view')).__html"); }
@@ -863,10 +898,71 @@ async function main() {
      userSrcWrites === 2, '写库点=' + userSrcWrites);
   ev("invalidateSysLib(); exLibTab = 'sys'; go('exlib')");
   await new Promise(r => setTimeout(r, 20));
-  const hSysE = ev("$('#xl_body', $('#xl_host')).__html");
+  const hSysE = ev("$('#xl_body', $('#view')).__html");
   const sysECount = { owned: (hSysE.match(/>已有<\/span>/g) || []).length, add: (hSysE.match(/>＋我的库<\/button>/g) || []).length };
   ok('T12p 动作库系统分页：同名的标「已有」（与食物库同口径）',
      sysECount.owned === 1 && sysECount.add === 1 && hSysE.indexOf('系统专属动作') < hSysE.indexOf('＋我的库</button>'), JSON.stringify(sysECount));
+  /* 动作库 tab 两个分页都带条数（与食物库同口径：系统库条数由进页那次拉取回填）；离线时不写 0 */
+  ev("exLibTab = 'mine'; exLibQuery = ''; exLibPage = 1; go('exlib')");
+  await new Promise(r => setTimeout(r, 20));
+  const segEx = ev("$('#xl_seg', $('#view')).__html");
+  ok('T12y3 动作库 tab 两个分页都显示条数（系统库条数由进页那次拉取回填，不靠切分页触发）',
+     segEx.includes('我的动作库（5）') && segEx.includes('系统动作库（2）'), segEx);
+  sandbox.fetch = (u, o) => (String(u).includes('/system/library') ? Promise.resolve(res(500, { error: 'offline' })) : realFetch(u, o));
+  ev("invalidateSysLib(); exLibTab = 'mine'; go('exlib')");
+  await new Promise(r => setTimeout(r, 20));
+  const segExOff = ev("$('#xl_seg', $('#view')).__html");
+  sandbox.fetch = realFetch;
+  ok('T12y4 动作库系统库拉不到时 tab 不显示条数（不写 0，也不缓存失败）',
+     segExOff.includes('我的动作库（5）') && segExOff.includes('>系统动作库</button>'), segExOff);
+  /* 行内 ✏️ 编辑（排在 🗑 左边）+ 编辑弹窗预填（三件套缺字段的旧条目预选默认值） */
+  ev("exLibTab = 'mine'; go('exlib')");
+  const hExMine = ev("$('#xl_body', $('#view')).__html");
+  ok('T12z3 动作库我的库：每行 ✏️（排在 🗑 左边）+ 名称与「大类 · 部位 · 方式」小字',
+     hExMine.includes('data-editx=') && hExMine.includes('data-delx=')
+     && hExMine.indexOf('data-editx=') < hExMine.indexOf('data-delx=')
+     && hExMine.includes('力量 · 胸 · 计次'), hExMine.slice(0, 200));
+  const hExEditor = dlgHTML("openExEditor(state.exercises.find(e => e.name === '杠铃卧推'), function(){})");
+  const hExEditorBare = dlgHTML("openExEditor(state.exercises.find(e => e.name === '缺三件套的裸条目'), function(){})");
+  ok('T12z4 编辑动作弹窗：名称 + 大类/部位/方式预选原值 + 取消/保存；三件套缺字段的旧条目预选默认值（其他/全身/计次）',
+     !hExEditor.startsWith('ERR:') && hExEditor.includes('id="ex_name"') && hExEditor.includes('value="杠铃卧推"')
+     && hExEditor.includes('id="ex_cat"') && hExEditor.includes('id="ex_muscle"') && hExEditor.includes('id="ex_mode"')
+     && hExEditor.includes('<option value="力量" selected>力量</option>')
+     && hExEditor.includes('<option value="胸" selected>胸</option>')
+     && hExEditor.includes('<option value="reps" selected>计次</option>')
+     && hExEditor.includes('id="ex_save"') && hExEditor.includes('data-cancel')
+     && !hExEditorBare.startsWith('ERR:')
+     && hExEditorBare.includes('<option value="其他" selected>其他</option>')
+     && hExEditorBare.includes('<option value="全身" selected>全身</option>')
+     && hExEditorBare.includes('<option value="reps" selected>计次</option>'), hExEditor.slice(0, 240));
+  ev('closeDialog && curDialog && closeDialog()');
+  /* 保存口径：空名/重名拒绝、三件套写入、非法枚举保持原样、不动别的条目；测完原样还原 */
+  const exEdit = JSON.parse(ev(`(function(){
+    const exs = state.exercises;
+    const e = exs.find(x => x.name === '引体向上');
+    const before = { name:e.name, cat:e.cat, muscle:e.muscle, mode:e.mode };
+    const shot = () => JSON.stringify(exs.filter(x => x !== e).map(x => ({ id:x.id, name:x.name, cat:x.cat, muscle:x.muscle, mode:x.mode })));
+    const othersBefore = shot();
+    const out = {};
+    try {
+      out.dup = applyExEdit(e, '杠铃卧推', '力量', '背', 'reps');
+      out.emptyName = applyExEdit(e, '   ', '力量', '背', 'reps');
+      out.ok = applyExEdit(e, '引体向上（改）', '有氧', '全身', 'time');
+      out.after = { name:e.name, cat:e.cat, muscle:e.muscle, mode:e.mode };
+      out.badEnum = applyExEdit(e, '引体向上（改）', '不存在的大类', '不存在的部位', 'bogus');
+      out.kept = { cat:e.cat, muscle:e.muscle, mode:e.mode };
+      out.othersSame = shot() === othersBefore;
+    } finally {
+      e.name = before.name; e.cat = before.cat; e.muscle = before.muscle; e.mode = before.mode;
+    }
+    return JSON.stringify(out);
+  })()`));
+  ok('T12z5 动作编辑保存：重名/空名拒绝、三件套写入、非法枚举保持原样、不动别的条目',
+     exEdit.dup === 'dup' && exEdit.emptyName === 'name' && exEdit.ok === ''
+     && exEdit.after.name === '引体向上（改）' && exEdit.after.cat === '有氧' && exEdit.after.muscle === '全身' && exEdit.after.mode === 'time'
+     && exEdit.badEnum === '' && exEdit.kept.cat === '有氧' && exEdit.kept.muscle === '全身' && exEdit.kept.mode === 'time'
+     && exEdit.othersSame === true, JSON.stringify(exEdit));
+  ev("exLibQuery = ''; exLibPage = 1");
   ev("foodLibTab = 'mine'; exLibTab = 'mine'; go('settings')");
   /* 入口不再是弹窗：进入两个库页面不会往弹窗栈里加层；入口绑定直接走 go() */
   ev("closeDialog && curDialog && closeDialog()");   /* 先清掉上面两个录入弹窗 */
@@ -893,6 +989,20 @@ async function main() {
   ok('T12r 食物库搜索过滤：45 → 6 条（测试食物4 + 40..44）',
      (hFiltered.match(/class="lrow"/g) || []).length === 6 && hFiltered.includes('共 6 条'), hFiltered.slice(0, 120));
   ev("USERS.shared.foods = JSON.parse(__bakFoods); state.foods = USERS.shared.foods; foodLibQuery=''; foodLibPage=1; foodLibTab='mine'; go('settings')");
+
+  /* T12q2/T12r2 动作库搜索 + 分页（与食物库同一套交互：20 条/页、两分页共用搜索词） */
+  ev('__bakEx = JSON.stringify(USERS.shared.exercises)');
+  ev("(function(){ const many = []; for(let i=0;i<45;i++) many.push({ id:'x'+i, name:'测试动作'+i, cat:'力量', muscle:'胸', mode:'reps' });" +
+     " USERS.shared.exercises = many; state.exercises = many; exLibTab='mine'; exLibQuery=''; exLibPage=1; go('exlib'); })()");
+  const hExPaged = ev("$('#xl_body', $('#view')).__html");
+  ok('T12q2 动作库分页：搜索框 + 20 行/页 + 分页条（与食物库同一口径）',
+     view.__html.includes('id="xl_search"') && (hExPaged.match(/class="lrow"/g) || []).length === 20
+     && hExPaged.includes('第 1/3 页 · 共 45 条') && hExPaged.includes('data-fpage="next"'), hExPaged.slice(0, 120));
+  ev("exLibQuery='测试动作4'; exLibPage=1; go('exlib')");
+  const hExFiltered = ev("$('#xl_body', $('#view')).__html");
+  ok('T12r2 动作库搜索过滤：45 → 6 条（测试动作4 + 40..44）',
+     (hExFiltered.match(/class="lrow"/g) || []).length === 6 && hExFiltered.includes('共 6 条'), hExFiltered.slice(0, 120));
+  ev("USERS.shared.exercises = JSON.parse(__bakEx); state.exercises = USERS.shared.exercises; exLibQuery=''; exLibPage=1; exLibTab='mine'; go('settings')");
 
   /* T13 v4.12 纯函数契约：旧形状清洗 / 项收集（含 done 保真）/ 字段写入 / 排序 / 完成进度 / 周聚合。
    * 对话框交互（点 chip/保存）在桩里点不到，但这几个决策函数零成本可直接断言。 */
