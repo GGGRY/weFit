@@ -431,6 +431,15 @@ async function main() {
      && !view.__html.includes('＋ 添加<'),
      'n=' + (view.__html.match(/class="btn plus"/g) || []).length);
 
+  /* T3b3 卡头顺序：图标+餐名 → 紧贴右侧的合计 kcal → grow → ＋（kcal 不再被 grow 推到最右） */
+  ok('T3b3 四餐卡头里合计 kcal 紧贴餐名右侧（label + hint + grow + ＋）',
+     ['breakfast', 'lunch', 'dinner', 'snack'].every(id => {
+       const s = ev('SLOTS').find(x => x.id === id);
+       const kcal = ev('mealSlotTotals(today(), "' + id + '")').kcal;
+       return view.__html.includes(s.ic + ' ' + s.label + '<span class="hint">' + kcal + ' kcal</span><span class="grow"></span>');
+     })
+     && !view.__html.includes('<span class="grow"></span><span class="hint">'));
+
   /* T3c 概览「今日饮食」卡：有记录时卡底右对齐一个「＋ 记录一下」（与运动/睡眠卡同款同位；
    * 空态仍是卡体内居中的 primary「去记录」；绑定用单元素 querySelector,同页恰好一个 data-go2="diet"） */
   ev('renderHome()');
