@@ -669,12 +669,79 @@ async function main() {
      && view.__html.includes('id="fl_back"') && view.__html.includes('数据管理-食物库')
      && view.__html.includes('id="fl_seg"') && hFood.includes('id="nf_open"')
      && !hFood.includes('id="nf_name"') && !hFood.includes('id="nf_add"')
-     && hFood.includes('data-delf=') && !hFood.includes('data-add='), hFood.slice(0, 160));
+     && hFood.includes('data-delf=') && hFood.includes('data-editf=') && !hFood.includes('data-add=')
+     && hFood.indexOf('data-editf=') < hFood.indexOf('data-delf=')   /* ✏️ 在 🗑 左边 */
+     , hFood.slice(0, 160));
   const hFoodAdder = dlgHTML('openFoodAdder()');
   ok('T12n 添加食物弹窗：名称 + 四项营养 + 取消/添加',
      !hFoodAdder.startsWith('ERR:') && hFoodAdder.includes('id="nf_name"') && hFoodAdder.includes('id="nf_kcal"')
      && hFoodAdder.includes('id="nf_p"') && hFoodAdder.includes('id="nf_c"') && hFoodAdder.includes('id="nf_f"')
      && hFoodAdder.includes('id="nf_add"') && hFoodAdder.includes('data-cancel'), hFoodAdder.slice(0, 200));
+  /* 两个分页的 tab 都带条数：我的库同步就有（内存），系统库要等进页那次 fetch 回来才填上 */
+  ev('closeDialog && curDialog && closeDialog()');
+  ev("foodLibTab = 'mine'; go('foodlib')");
+  await new Promise(r => setTimeout(r, 20));
+  const segTxt = ev("$('#fl_seg', $('#view')).__html");
+  ok('T12y 食物库 tab 两个分页都显示条数（系统库条数由进页那次拉取回填，不靠切分页触发）',
+     segTxt.includes('我的库（3）') && segTxt.includes('系统库（2）'), segTxt);
+  /* 离线（系统库请求失败）：tab 上不许写 0（没数就不写），也不许把这次失败缓存住 */
+  const realFetch = sandbox.fetch;
+  sandbox.fetch = (u, o) => (String(u).includes('/system/library') ? Promise.resolve(res(500, { error: 'offline' })) : realFetch(u, o));
+  ev("invalidateSysLib(); foodLibTab = 'mine'; go('foodlib')");
+  await new Promise(r => setTimeout(r, 20));
+  const segOff = ev("$('#fl_seg', $('#view')).__html");
+  sandbox.fetch = realFetch;
+  ok('T12y2 系统库拉不到时 tab 不显示条数（不写 0，也不缓存失败）',
+     segOff.includes('我的库（3）') && segOff.includes('>系统库</button>'), segOff);
+  /* 行内 ✏️ 编辑：名称 + 四项营养预填；没有营养表的旧条目不冒充 0 */
+  const hFoodEditor = dlgHTML("openFoodEditor(state.foods.find(f => f.name === '米饭'), function(){})");
+  const hFoodEditorEmpty = dlgHTML("openFoodEditor(state.foods.find(f => f.name === '无营养表食品'), function(){})");
+  ok('T12z 编辑食物弹窗：名称 + 四项营养（已填的带原值、无营养表的留空）+ 取消/保存',
+     !hFoodEditor.startsWith('ERR:') && hFoodEditor.includes('id="ef_name"') && hFoodEditor.includes('value="米饭"')
+     && hFoodEditor.includes('id="ef_kcal"') && hFoodEditor.includes('value="116"')
+     && hFoodEditor.includes('id="ef_p"') && hFoodEditor.includes('id="ef_c"') && hFoodEditor.includes('id="ef_f"')
+     && hFoodEditor.includes('id="ef_save"') && hFoodEditor.includes('data-cancel')
+     && !/不再跟随/.test(hFoodEditor)   /* 改来源是行为，不写成弹窗提示 */
+     && !hFoodEditorEmpty.startsWith('ERR:') && (hFoodEditorEmpty.match(/inputmode="decimal" value=""/g) || []).length === 4
+     && !hFoodEditorEmpty.includes('value="0"'), hFoodEditor.slice(0, 200));
+  /* 保存口径：改完来源翻成「用户」（USDA 挑入的也不例外），重名/空名拒绝，写库由外面统一 save()；
+   * 测完必须把改过的两条原样还原（后面的用例共用 state.foods） */
+  const editRes = ev(`(function(){
+    const foods = state.foods;
+    const f = foods.find(x => x.name === '米饭');
+    const bare = foods.find(x => x.name === '无营养表食品');
+    const beforeF = { name: f.name, src: f.src, per100: f.per100 };
+    const beforeBare = { name: bare.name, src: bare.src, per100: bare.per100 };
+    const shot = () => JSON.stringify(foods.filter(x => x !== f && x !== bare).map(x => ({ id: x.id, name: x.name, src: x.src, per100: x.per100 || null })));
+    const othersBefore = shot();
+    const out = {};
+    try {
+      out.dup = applyFoodEdit(f, '无营养表食品', { kcal: 1, p: 1, c: 1, f: 1 });
+      out.emptyName = applyFoodEdit(f, '   ', { kcal: 1 });
+      out.ok = applyFoodEdit(f, '米饭（改）', { kcal: 150, p: 3, c: 28, f: 0.5 });
+      out.name = f.name; out.src = f.src; out.per = f.per100;
+      out.bare = applyFoodEdit(bare, '无营养表食品（改）', { kcal: '', p: '', c: '', f: '' });
+      out.bareName = bare.name; out.bareHasPer = !!bare.per100; out.bareSrc = bare.src;
+      const pad = { id: 'tmp_pad', name: '米饭 ', src: FOOD_SRC_USER, per100: { kcal: 1, p: 1, c: 1, f: 1 } };
+      foods.push(pad);
+      try { out.padded = applyFoodEdit(bare, '米饭', { kcal: 1 }); } finally { foods.pop(); }
+      out.pushN = foods.length;
+      out.othersSame = shot() === othersBefore;
+    } finally {
+      f.name = beforeF.name; f.src = beforeF.src;
+      if (beforeF.per100 === undefined) delete f.per100; else f.per100 = beforeF.per100;
+      bare.name = beforeBare.name; bare.src = beforeBare.src;
+      if (beforeBare.per100 === undefined) delete bare.per100; else bare.per100 = beforeBare.per100;
+    }
+    return JSON.stringify(out);
+  })()`);
+  const er = JSON.parse(editRes);
+  ok('T12z2 编辑保存：来源改记「用户」、重名/空名拒绝、无营养表留空仍无营养表、不动别的条目',
+     er.dup === 'dup' && er.emptyName === 'name' && er.ok === '' && er.name === '米饭（改）'
+     && er.src === '用户' && er.per.kcal === 150 && er.per.p === 3 && er.per.c === 28 && er.per.f === 0.5
+     && er.bare === '' && er.bareName === '无营养表食品（改）' && er.bareHasPer === false && er.bareSrc === '用户'
+     && er.padded === 'dup' && er.pushN === 3 && er.othersSame === true, editRes);
+  ev('closeDialog && curDialog && closeDialog()');
   /* T12s 记录饮食弹窗（未标版号：三 tab）：我的库 / 系统库 / 新增 + 共用底栏（克数 + 实时合计 + 保存）
    * 默认停在「我的库」（不做跨次记忆）；弹窗内不是原生下拉而是 .seg + .picklist，避免 300+ 行 DOM */
   let hMeal = '', hMineList = '';
@@ -768,8 +835,9 @@ async function main() {
   await new Promise(r => setTimeout(r, 20));
   const hSysF = ev("$('#fl_body', $('#view')).__html");
   const sysCount = { owned: (hSysF.match(/>已有<\/span>/g) || []).length, add: (hSysF.match(/>＋我的库<\/button>/g) || []).length };
-  ok('T12o 食物库系统分页：与我的库同名的标「已有」，其余给「＋我的库」',
+  ok('T12o 食物库系统分页：与我的库同名的标「已有」，其余给「＋我的库」；系统分页只读（没有 ✏️/🗑）',
      !hSysF.startsWith('ERR:') && sysCount.owned === 1 && sysCount.add === 1
+     && !hSysF.includes('data-editf=') && !hSysF.includes('data-delf=')
      && hSysF.indexOf('系统专属食物') < hSysF.indexOf('＋我的库</button>'), JSON.stringify(sysCount) + ' | ' + hSysF.slice(0, 120));
   /* 营养来源(src)：我的库每行名称旁显示来源小签（夹具条目无 src → 兜「用户」）；系统库条目为 USDA
    * （s1 是条目自带 src，s2 缺字段走 FOOD_SRC_SYS 兜底，两条都要显出来） */

@@ -1707,10 +1707,10 @@ function addMealDialog(date, slot, opts){
       '<button type="button" data-mtab="sys" style="flex:1">系统库</button>' +
       '<button type="button" data-mtab="new" style="flex:1">新增</button>' +
     '</div>' +
-    '<div id="md_p_mine"><div class="field" style="margin-bottom:8px"><label>搜索并选择（只需填吃了多少克）</label>' +
+    '<div id="md_p_mine"><div class="field" style="margin-bottom:8px"><label>搜索并选择</label>' +
       '<input class="input" id="mi_q" type="search" placeholder="搜索食物名…">' +
       '<div class="picklist" id="mi_list"></div></div></div>' +
-    '<div id="md_p_sys" style="display:none"><div class="field" style="margin-bottom:8px"><label>搜索并选择系统库食物（只需填吃了多少克）</label>' +
+    '<div id="md_p_sys" style="display:none"><div class="field" style="margin-bottom:8px"><label>搜索并选择系统库食物</label>' +
       '<input class="input" id="mi_qs" type="search" placeholder="搜索食物名…">' +
       '<div class="picklist" id="mi_syslist"></div></div></div>' +
     '<div id="md_p_new" style="display:none"><div class="form-grid" style="margin-bottom:8px">' +
@@ -1952,9 +1952,13 @@ function foodRowHTML(f, dataAttr, srcFallback){
 let foodLibTab = 'mine';   /* 页面级状态：切到系统库后再进来仍停在原分页 */
 let foodLibQuery = '';     /* 搜索词：两个分页共用，切分页保留 */
 let foodLibPage = 1;       /* 当前页码：换搜索词/切分页时回到第 1 页 */
+let foodLibSysCount = null;/* 本次进页拉到的系统库条数（tab 上显示）；未拉到就只写「系统库」 */
+let foodLibGen = 0;        /* 页面代次：系统库异步回来时若已切走页面，就别再碰旧 DOM */
 const FOOD_PAGE_SIZE = 20; /* 移动端一屏能扫完的行数 */
 function renderFoodLibPage(){
   invalidateSysLib();   /* v4.4:每次进页拉一次系统库即可,页内切分页不再重下 */
+  const gen = ++foodLibGen;
+  foodLibSysCount = null;
   $('#view').innerHTML =
     '<div class="pagehead"><button class="iconbtn2" id="fl_back" title="返回设置">‹</button><div class="ph-t">数据管理-食物库</div></div>' +
     '<div class="card">' +
@@ -1966,6 +1970,18 @@ function renderFoodLibPage(){
   const b = $('#view');
   let tab = foodLibTab;
   let sysCache = null;   /* 本次进页拉到的系统库：切分页/改搜索词不再重下 */
+  let sysReady = null;   /* 进页那次拉取（tab 条数与系统库分页共用同一份）；失败置回 null 以便重试 */
+  /* 页面是否还在：换页只换 #view 的 innerHTML（代次只在本页重进时自增），两个都得查——
+   * 否则异步回来时会往已经不在的 #fl_seg / #fl_body 上写（null.innerHTML → TypeError）。 */
+  const alive = () => gen === foodLibGen && !!$('#fl_body', b);
+  const loadSys = () => (sysReady = sysReady || fetchSysLib());
+  /* 进页就把系统库拉回来：tab 上要显示它的条数（用户裁定），切到系统库分页时也直接复用这一份 */
+  loadSys().then(sys => {
+    if(!alive()) return;   /* 页面已切走：不碰旧 DOM */
+    if(!sys){ sysReady = null; return; }   /* 离线/失败：tab 数字留空（不写 0），切分页时重试 */
+    foodLibSysCount = (sys.foods || []).length;
+    paintSeg();
+  });
   $('#fl_search', b).addEventListener('input', e => { foodLibQuery = e.target.value; foodLibPage = 1; render(); });
   function matchName(name){
     const q = foodLibQuery.trim().toLowerCase();
@@ -1995,16 +2011,20 @@ function renderFoodLibPage(){
     }));
   }
   function paintSeg(){
-    $('#fl_seg', b).innerHTML =
+    const seg = $('#fl_seg', b);
+    if(!seg) return;   /* 页面已切走（换页会清 #view）：别往旧 DOM 上写 */
+    seg.innerHTML =
       '<button data-ft="mine" class="' + (tab==='mine'?'active':'') + '">我的库（' + state.foods.length + '）</button>' +
-      '<button data-ft="sys" class="' + (tab==='sys'?'active':'') + '">系统库</button>';
+      '<button data-ft="sys" class="' + (tab==='sys'?'active':'') + '">系统库' +
+        (foodLibSysCount === null ? '' : '（' + foodLibSysCount + '）') + '</button>';
     $$('#fl_seg [data-ft]', b).forEach(btn => btn.addEventListener('click', () => { tab = foodLibTab = btn.dataset.ft; foodLibPage = 1; paintSeg(); render(); }));
   }
   function renderMine(){
     const hits = state.foods.filter(f => matchName(f.name));
     const list = pageSlice(hits).map(f =>
       foodRowHTML(f, 'data-id="' + f.id + '"', FOOD_SRC_USER) +
-        '<button class="iconbtn2" data-delf="' + f.id + '" style="color:var(--danger)">🗑</button></div>').join('');
+        '<button class="iconbtn2" data-editf="' + f.id + '" title="修改">✏️</button>' +
+        '<button class="iconbtn2" data-delf="' + f.id + '" title="删除" style="color:var(--danger)">🗑</button></div>').join('');
     /* 添加表单收进弹窗（卡头一颗「＋ 添加食物」），列表与计数留给页面 */
     $('#fl_body', b).innerHTML =
       '<h3><span>📚 我的食物库（' + state.foods.length + '）</span><span class="grow"></span>' +
@@ -2015,6 +2035,10 @@ function renderFoodLibPage(){
         : '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">📚</div>我的食物库是空的，去「系统库」挑一些吧</div>')) +
       (hits.length ? pagerHTML(hits.length) : '');
     $('#nf_open', b).addEventListener('click', () => openFoodAdder(() => { paintSeg(); foodLibPage = 1; renderMine(); }));
+    $$('[data-editf]', b).forEach(btn => btn.addEventListener('click', () => {
+      const f = state.foods.find(x => x.id === btn.dataset.editf);
+      if(f) openFoodEditor(f, () => { paintSeg(); renderMine(); });
+    }));
     $$('[data-delf]', b).forEach(btn => btn.addEventListener('click', () => {
       const id = btn.dataset.delf;
       USERS.shared.foods = USERS.shared.foods.filter(f => f.id !== id);
@@ -2026,8 +2050,10 @@ function renderFoodLibPage(){
   async function renderSys(){
     if(!sysCache){
       $('#fl_body', b).innerHTML = '<div class="tiny muted">载入系统库…</div>';
-      sysCache = await fetchSysLib();   /* v4.4:本次进页已失效过缓存,首拉后切分页走内存 */
+      sysCache = await loadSys();   /* 进页时已发起（见上），这里复用同一份，不再重下 */
+      if(!alive()) return;   /* 载入期间用户离开了本页（换页 / 重进） */
       if(tab !== 'sys') return;   /* 载入期间用户切回了我的库 */
+      if(!sysCache) sysReady = null;   /* 离线/失败：这次不缓存，下次切分页再试一次 */
     }
     if(!sysCache){ $('#fl_body', b).innerHTML = '<div class="empty" style="padding:14px"><div class="e-ic" style="font-size:24px">🔌</div>服务器离线，暂时看不到系统库</div>'; return; }
     /* 已在我的库（同名）= 只读标记，与动作库系统分页同一口径；用 Set 一次建索引，避免逐行 O(n) 扫 */
@@ -2069,13 +2095,61 @@ function openFoodAdder(after){
   const b = dlg.box;
   const add = () => {
     const name = $('#nf_name', b).value.trim(); if(!name){ toast('请填名称', true); return; }
-    if(state.foods.some(x => x.name === name)){ toast('该食物已存在', true); return; }
+    if(foodDupInMine(name)){ toast('该食物已存在', true); return; }   /* 与编辑共用同一口径 */
     state.foods.push({ id:uid(), name, src:FOOD_SRC_USER, per100:{ kcal:num($('#nf_kcal', b).value), p:num($('#nf_p', b).value), c:num($('#nf_c', b).value), f:num($('#nf_f', b).value) } });
     save(); closeDialog(); if(after) after(); toast('已添加：' + name);
   };
   const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
   $('#nf_add', b).addEventListener('click', add);
   $('#nf_name', b).addEventListener('keydown', e => { if(e.key === 'Enter') add(); });   /* 桌面端回车即添加 */
+}
+
+/* 库内判重口径（添加 / 编辑共用）：按 name 比对，两侧都 trim（存量条目可能带多余空白）。
+ * exceptId 用于编辑时排掉自己；一处实现，免得两条入口各自漂移。 */
+function foodDupInMine(name, exceptId){
+  const nm = String(name == null ? '' : name).trim();
+  return USERS.shared.foods.some(x => x.id !== exceptId && String(x.name == null ? '' : x.name).trim() === nm);
+}
+/* 编辑我的库里的食物（行内 ✏️）：名称与四项营养都能改。同名（除自己）仍拒绝——
+ * 库内条目一律按 name 比对（挑入/「已有」判断都走 name）。 */
+/* 编辑保存的口径（纯函数，便于测试）：名称必填、不得与库里其他条目重名（库内比对一律走 name），
+ * 通过后写回名称/营养，并且来源一律改记「用户」。返回 '' 表示已写入，'name' / 'dup' 为拒绝原因。
+ * 四项都留空且原本就没有营养表 → 保持「无营养表」（不写成 0 冒充）。 */
+function applyFoodEdit(f, name, per){
+  const nm = String(name == null ? '' : name).trim();
+  if(!nm) return 'name';
+  if(foodDupInMine(nm, f.id)) return 'dup';
+  const raw = k => String((per && per[k]) == null ? '' : per[k]).trim();
+  const blank = ['kcal', 'p', 'c', 'f'].every(k => raw(k) === '');
+  f.name = nm;
+  if(blank && !f.per100) delete f.per100;
+  else f.per100 = { kcal:num(per && per.kcal), p:num(per && per.p), c:num(per && per.c), f:num(per && per.f) };
+  f.src = FOOD_SRC_USER;   /* 改过的条目不再是原样挑进来的那份（USDA） */
+  return '';
+}
+function openFoodEditor(f, after){
+  const per = safePer100(f.per100);
+  const v = k => f.per100 ? String(per[k]) : '';   /* 无营养表的旧条目留空，不冒充 0 */
+  const dlg = showDialog('编辑食物',
+    '<div class="field"><label>食物名称</label><input class="input" id="ef_name" value="' + esc(f.name) + '"></div>' +
+    '<div class="form-grid">' +
+      '<div><label>热量 kcal / 100g</label><input class="input" id="ef_kcal" type="number" min="0" inputmode="decimal" value="' + v('kcal') + '"></div>' +
+      '<div><label>蛋白质 g / 100g</label><input class="input" id="ef_p" type="number" min="0" inputmode="decimal" value="' + v('p') + '"></div>' +
+      '<div><label>碳水 g / 100g</label><input class="input" id="ef_c" type="number" min="0" inputmode="decimal" value="' + v('c') + '"></div>' +
+      '<div><label>脂肪 g / 100g</label><input class="input" id="ef_f" type="number" min="0" inputmode="decimal" value="' + v('f') + '"></div>' +
+    '</div>' +
+    '<div class="tiny muted" style="margin-top:10px">留空按 0 记；与库里其他食物重名会被拒绝。</div>' +
+    '<div class="d-f"><button class="btn ghost" data-cancel>取消</button><button class="btn primary" id="ef_save">保存</button></div>');
+  const b = dlg.box;
+  const saveEdit = () => {
+    const err = applyFoodEdit(f, $('#ef_name', b).value,
+      { kcal: $('#ef_kcal', b).value, p: $('#ef_p', b).value, c: $('#ef_c', b).value, f: $('#ef_f', b).value });
+    if(err){ toast(err === 'dup' ? '该食物已存在' : '请填名称', true); return; }
+    save(); closeDialog(); if(after) after(); toast('已保存：' + f.name);
+  };
+  const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
+  $('#ef_save', b).addEventListener('click', saveEdit);
+  $('#ef_name', b).addEventListener('keydown', e => { if(e.key === 'Enter') saveEdit(); });
 }
 
 /* =====================================================
