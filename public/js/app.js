@@ -2763,14 +2763,21 @@ function renderBody(){
 
   const html =
     '<div class="card">' +
-      /* 两列统一的三行节奏（标签 → hero 大字 → 小字说明，间距同为 6px），保证体重与 BMI 行行对齐 */
-      '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">' +
-        '<div class="grow" style="min-width:190px">' +
+      /* 两列等分（grid，2026-09-12 修）：原写法是两个硬 min-width（190+120）+ 一个在本卡**不生效**的
+         .grow（.grow 只在 .card h3 / .lrow / .pickrow 这三处有作用域规则）——合计 326px，而手机内容宽
+         = 视口−58，>383px 才放得下；否则 BMI 整块折到第二行并顶死左边（实测 360px 时右空 183px）。
+         等分列（minmax(0,1fr)）永不换行；**左列贴左、右列右对齐**（text-align:right）——
+         只等分不对齐是不够的：块盒左右空隙早已 1px/1px，可字形并不贴边（左列字贴死左边，
+         右列左对齐的字离右边还差 33~48px，看上去仍是「左右留白不一样」）。
+         max-width 不再设（曾试过 420px 上限把两列收在一起，但那样在视口 ≥478px 又会重新不对称：
+         行盒被封在 420px，BMI 就贴不到卡片右边了）——两列始终各占一半，左右留白才在任何宽度下都相等。 */
+      '<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px 16px;align-items:center">' +
+        '<div>' +
           '<div class="tiny muted">当前体重</div>' +
           '<div class="hero" style="color:var(--brand-ink);margin-top:6px">' + (w===null?'--':w.toFixed(1)) + '<span class="unit">kg</span></div>' +
           '<div class="delta ' + cls + '" style="font-size:12.5px;margin-top:6px">' + (delta || '&nbsp;') + '</div>' +
         '</div>' +
-        '<div style="min-width:120px;text-align:center">' +
+        '<div style="text-align:right">' +
           '<div class="tiny muted">BMI</div>' +
           '<div class="hero" style="color:' + (bmiInfo ? bmiInfo.c : 'var(--ink-2)') + ';margin-top:6px">' + (bmiV === null ? '--' : bmiV) + '</div>' +
           '<div class="tiny muted" style="margin-top:6px">' + (bmiInfo ? (bmiInfo.ok ? '✓ 正常范围 18.5~24' : '⚠ 正常范围 18.5~24') : '记录体重后查看') + '</div>' +

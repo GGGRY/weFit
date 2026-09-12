@@ -120,6 +120,12 @@ a{color:var(--brand-ink)}
 .card h3 .grow{flex:1}
 .card h3 .hint{font-weight:500;color:var(--ink-3);font-size:12px}
 .row{display:flex;gap:12px;flex-wrap:wrap}
+/* 同行里的伸缩项（把后面那颗按钮/小字推到右边）。
+   2026-09-12：补上这条**全局**规则——此前 .grow 只在 .card h3 / .lrow / .pickrow 三处有作用域规则，
+   其它地方用了它就是空类、静默失效（身体卡头那行因此两个硬 min-width 撑着，手机窄屏 BMI 掉行顶左；
+   身体页「显示项」弹窗的 .chkline 行也同样失效）。现在任何 flex 行里都能直接用。
+   下面 .lrow/.pickrow 的作用域规则只当细化保留（.pickrow 那条还带 ellipsis）。 */
+.grow{flex:1;min-width:0}
 .grid{display:grid;gap:14px}
 .cols-2{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
 .mt{margin-top:14px}

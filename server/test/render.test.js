@@ -1260,6 +1260,23 @@ async function main() {
      ev('bodyMetric') === 'weight' && !view.__html.includes('>体脂率<'), 'bodyMetric=' + ev('bodyMetric'));
   ev("state.bodyHidden = []; bodyMetric = 'weight'; go('body')");
 
+  /* T14p/T14q 卡头两列版式与 .grow 作用域（2026-09-12）：
+     原写法 = 两个硬 min-width（190+120）+ 一个在 .card h3/.lrow/.pickrow 之外**不生效**的 .grow
+     → 合计 326px > 手机内容宽（视口−58），视口 ≤383px 时 BMI 折到第二行并顶死左边（实测右空 183px）。 */
+  /* 切片到「记录今天」那颗按钮的外层 div 之前（那个 div 是 text-align:center，不能算进卡头） */
+  const headSlice = bHtml.slice(bHtml.indexOf('<div class="card">'), bHtml.indexOf('<div style="text-align:center'));
+  ok('T14p 卡头两列等分 grid（不留不生效的 .grow / 硬 min-width），左列贴左、右列右对齐（墨迹两侧才一样宽）',
+     /display:grid;grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\)/.test(headSlice)
+     && /<\/div><div style="text-align:right">/.test(headSlice)
+     && !headSlice.includes('class="grow"') && !headSlice.includes('min-width:190px')
+     && !headSlice.includes('min-width:120px') && !headSlice.includes('text-align:center')
+     && !headSlice.includes('text-align:left'),
+     headSlice.slice(0, 160));
+  const cssSrc = readPub('css/style.css');
+  ok('T14q .grow 改成全局规则（不再只在那三处作用域里有效，新写一行不会再静默失效）',
+     /^\.grow\{flex:1;min-width:0\}/m.test(cssSrc) && cssSrc.includes('.chkline{display:flex'),
+     (cssSrc.match(/^\..*grow\{[^}]*\}/gm) || []).join(' | '));
+
   /* T15a 用户路径不带调试代码、不注入 js/dev.js、也不下载种子数据本体（v4.16）：
      演示数据与自测已拆到 js/dev.js（按需注入），主包不应出现这些全局；
      用户端要系统库走 /api/system/library。
