@@ -186,5 +186,6 @@ weFit/
 - **跑测试**：`cd server && npm test`（sleep-shape 17 + slices 27 + migration 41 + roundtrip 121 + admin 46 + render 214 + sync-http 35 项断言）；浏览器 `?ftest` 15 项功能自测（会覆盖为演示数据）
 - **同步回归**：`test/sync-http.test.js` = **真链路**端到端（真 `app.js` 同步层 × 真 http 服务 × 真 SQLite，两个 vm 「设备」各带自己的 localStorage 与 Cookie），守「改不同片不互相覆盖 / 只拉变过的片 / 同片冲突只冲突同片 / 旧缓存走整树 PUT 迁移」
 - **渲染回归**：`test/render.test.js`（零依赖 `node:vm` + DOM/fetch 桩）守「数据 → 页面 HTML」，布局/配色等视觉表现仍靠目测
+- **备份/回滚**：`server/data/jjhealth.db.bak-<日期>-<主题>` 是逐次留的库备份；**agent 在会让启动跑迁移的重启前必须先新备一份**（见 AGENTS.md）；回滚 = 停服务 → 用 `.bak` 覆盖 `jjhealth.db` → 启服务。目录不在同步盘里，**没有云端版本历史兜底**
 - **清零重来**：设置页 → 数据管理 → 清空数据（仅本账户，先导出留底）；全库重来 = 停服务后删 `server/data/jjhealth.db`
 - **忘记密码**：找管理员在后台「重置密码」；管理员全失联则停服务删库重来（最后手段）
