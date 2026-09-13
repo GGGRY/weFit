@@ -37,9 +37,10 @@
 - 浏览器侧**不加载**种子数据本体：`SEED_FOODS`/`SEED_EXERCISES`/`seed-data.json` 只归服务端（`server/seed.js`）；用户端要系统库走 `GET /api/system/library`；调试钩子（`?selftest`/`?ftest`/`?shot`/`?probe`）与演示数据住在 `public/js/dev.js`，按需注入（要改演示库就改 dev.js 里的 `DEMO_FOODS`/`DEMO_EXERCISES`），不要把这些加回 app.js。
 - **同步切片的规则只写一份**：哪一块状态算哪片、值长什么样、怎么读怎么写，全部住在 `public/js/slices.js`（浏览器先于 app.js 加载 + `mapper.js` require）。新增字段/新集合时：先决定它属于哪片（无特殊理由就放进 `profile` 那片）→ 两边共用 `sliceValue`/`writeSlice` → 再让 `mapper.js` 的逐片 SQL 读写跟上；**禁止**在服务端另抄一份切片边界或在客户端手写脏标记（写入口有几十处，漏一处就是静默不同步）。
 - `mapper.js` 的**整树写与逐片写必须复用同一批小函数**（`insertUserData`→`writeMealDay`… / `readUserData`→`readMealDay`…）：两条路写出不同形状 = 整树客户端与按片客户端互相洗数据。改逐片函数后跑 `npm test` 里的 `roundtrip` T19 系列（拿前端 `writeSlice` 对账）。
+- 修改后必须跑 `cd server && npm test` 确认通过
 
 ## 每次提交前必做
-- 跑 `cd server && npm test` 确认通过;检查并按需更新文档:CHANGELOG.md、MEMO.md、README.md、PLANS.md。
+- 检查并按需更新文档:CHANGELOG.md、MEMO.md、README.md、PLANS.md。
 
 ## 文档分工 (请按需读取)
 - 架构与功能详情 → MEMO.md;版本历史 → CHANGELOG.md;后续计划 → PLANS.md。本文件只放 agent 必须遵守的规则。
