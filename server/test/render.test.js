@@ -175,7 +175,7 @@ async function main() {
   /* 2026-09-12 起饮水/睡眠也是整行卡（宽屏下不再并排）：5 张卡全带 data-wide */
   ok('T1e1 默认顺序 饮食→运动→饮水→睡眠→打卡，磁贴行在容器外',
      ho() === 'diet,workout,water,sleep,habits'
-     && view.__html.includes('<div class="home-cards" id="home_cards"><div class="card" data-hcard="diet" data-wide="1">')
+     && view.__html.includes('<div class="home-cards sortable" id="home_cards"><div class="card" data-hcard="diet" data-wide="1">')
      && ['diet','workout','water','sleep','habits'].every(id => view.__html.includes('data-hcard="' + id + '" data-wide="1"'))
      && view.__html.indexOf('data-hcard="water"') < view.__html.indexOf('data-hcard="sleep"')
      && view.__html.indexOf('data-hcard="sleep"') < view.__html.indexOf('data-hcard="habits"')
@@ -638,25 +638,86 @@ async function main() {
   ok('T9b 周图横轴为 W1…W12（不得出现 Wundefined）',
      /\>W\d+</.test(volSVG) && /\>W\d+</.test(minsSVG) && !volSVG.includes('undefined') && !minsSVG.includes('undefined'),
      'volX=' + (volSVG.match(/\>W\w*</g) || []).join(','));
-  /* 2026-09-12 起睡眠时长卡调到体重趋势后面，睡眠/饮水不再相邻 → 不再用「两张图之间」取切片，
-   * 改成对每张卡各自判它的外层包裹（卡内 `chart-card` 之前那层）= 普通 `<div>`、不是 `cols-2` 网格 */
-  const soloWrap = id => {
-    const o = view.__html, i = o.indexOf('id="' + id + '"');
-    if (i < 0) return null;
-    const k = o.lastIndexOf('<div class="chart-card', i);
-    return k < 0 ? null : o.slice(Math.max(0, k - 30), k);
-  };
-  const sleepWrap = soloWrap('st_sleep'), waterWrap = soloWrap('st_water');
-  ok('T9c 历史页睡眠/饮水卡各自独占一行（不共用一个 cols-2 网格）',
-     !!sleepWrap && !!waterWrap && sleepWrap.endsWith('<div>') && waterWrap.endsWith('<div>')
-     && !sleepWrap.includes('cols-2') && !waterWrap.includes('cols-2'),
-     'sleep=' + sleepWrap + ' | water=' + waterWrap);
+  /* 2026-09-12：历史页图表卡改为「一个 #st_charts 容器 + 顺序由 state.chartOrder 决定」
+     （单列堆叠；原来给热量图套的 cols-2 网格已删——那层只装一个孩子，等于整行） */
+  ok('T9c 历史页 8 张图表卡都在 #st_charts 单列容器里（无并排网格、无 per-card 包裹层）',
+     view.__html.includes('<div class="st-charts sortable" id="st_charts"><div class="chart-card" data-schart="weight">')
+     && !view.__html.includes('cols-2')
+     && (view.__html.match(/class="chart-card"/g) || []).length === 8
+     && ['weight','sleep','cal','macro','vol','mins','water','habits'].every(k => view.__html.includes('data-schart="' + k + '"')),
+     'cards=' + (view.__html.match(/class="chart-card"/g) || []).length
+       + ' container=' + (view.__html.indexOf('id="st_charts"') > -1));
   ok('T9d 睡眠时长卡紧随体重趋势卡（睡眠→热量→宏量，2026-09-12 裁定）',
      (() => { const o = view.__html;
        const iW = o.indexOf('id="st_weight"'), iS = o.indexOf('id="st_sleep"'), iC = o.indexOf('id="st_cal"');
        return iW > -1 && iW < iS && iS < iC; })(),
      'weight=' + view.__html.indexOf('id="st_weight"') + ' sleep=' + view.__html.indexOf('id="st_sleep"')
        + ' cal=' + view.__html.indexOf('id="st_cal"'));
+
+  /* T9e–T9g 历史页图表卡可拖动排序（2026-09-12）：与概览卡同一套契约，
+     只不过顺序落 state.chartOrder、标识是图表自己的 8 个 key（data-schart）。
+     浏览器里的「只能从卡头抓柄起拖」在桩上不可验（$$ 恒空、事件路径不在范围），这里只钉渲染契约。
+     2026-09-13 新增 habits：断言里多出来的这个 key 专门钉「存量账户 7-key 旧序 → 补在末尾、零迁移」。 */
+  ok('T9e resolveChartOrder/mergeChartOrder：丢未知 key / 去重 / 补缺；缺的卡按后继锚点插回（habits 补末尾）',
+     ev("resolveChartOrder(['bogus','water']).join(',')") === 'water,weight,sleep,cal,macro,vol,mins,habits'
+     && ev("resolveChartOrder(['macro','macro','vol']).join(',')") === 'macro,vol,weight,sleep,cal,mins,water,habits'
+     && ev("resolveChartOrder(null).join(',')") === 'weight,sleep,cal,macro,vol,mins,water,habits'
+     && ev("mergeChartOrder(['weight','sleep','cal','macro','vol','mins'], CHART_ORDER_DEFAULT).join(',')") === 'weight,sleep,cal,macro,vol,mins,water,habits'
+     && ev("mergeChartOrder(['water','weight','sleep','cal','macro','vol','mins'], CHART_ORDER_DEFAULT).join(',')") === 'water,weight,sleep,cal,macro,vol,mins,habits',
+     ev("resolveChartOrder(['bogus','water']).join(',')"));
+  /* 自定义顺序真的落到 DOM（拖动保存后下次渲染就是这个顺序），每张卡都带抓手 */
+  const coBak = ev('JSON.stringify(state.chartOrder)');
+  ev("state.chartOrder = ['mins','habits','vol','macro','cal','sleep','weight','water']; renderStats()");
+  ok('T9f 按 state.chartOrder 渲染：图顺序跟着改（含习惯卡），每张卡都有抓手/排序标识',
+     ['mins','habits','vol','macro','cal','sleep','weight','water'].every((k, i, arr) =>
+       (i === 0 || view.__html.indexOf('data-schart="' + arr[i-1] + '"') < view.__html.indexOf('data-schart="' + k + '"')))
+     && (view.__html.match(/data-hcard-grip /g) || []).length === 8
+     && ['st_mins','st_vol','st_macro','st_cal','st_sleep','st_weight','st_water','st_habits'].every(id => view.__html.includes('id="' + id + '"')),
+     view.__html.slice(view.__html.indexOf('id="st_charts"'), view.__html.indexOf('id="st_charts"') + 120));
+  /* 图表卡本体没被抢走：补记入口与图容器仍在（拖动只认卡头抓手，卡内点按/悬停留给取数值气泡） */
+  ok('T9g 换序后补记入口/图表容器仍齐全（图本体可继续点着取数值）',
+     view.__html.includes('data-slehis') && view.__html.includes('data-watshis')
+     && doc.getElementById('st_weight').__html.includes('<svg')
+     && doc.getElementById('st_water').__html.includes('<svg')
+     && doc.getElementById('st_habits').__html.includes('habgrid'));
+  /* T9i 习惯打卡卡（2026-09-13 新增）：每习惯一行 = 近30天 30 格热力格 + 完成率/连击；
+     纯只读——卡头没有补记入口、格子也不是可点按钮（裁定：单格 ~8px 点不准，打卡只在概览页做）。
+     先往今天打一次卡再断言，不依赖 fixture 里的打卡日期是否刚好落在近30天窗口内。 */
+  const habBak = ev('JSON.stringify(state.habits)');
+  ev('state.habits[0].done[today()] = true; renderStats()');
+  const habExp = JSON.parse(ev(`(function(){
+    const ds = lastNDates(30); let on = 0;
+    state.habits.forEach(h => ds.forEach(d => { if(h.done && h.done[d]) on++; }));
+    return JSON.stringify({ n: state.habits.length, on: on, cells: state.habits.length * 30, color: state.habits[0].color });
+  })()`));
+  const habCard = doc.getElementById('st_habits').__html;
+  ok('T9i 习惯打卡卡：每习惯一条 30 格热力格 + 近30天完成率（格子总数/已打勾格数/填色都跟本账户数据对得上）',
+     habExp.n > 0 && habExp.on >= 1
+     && (habCard.match(/class="habcell( on)?"/g) || []).length === habExp.cells
+     && (habCard.match(/class="habcell on"/g) || []).length === habExp.on
+     && habCard.includes('class="habcell on" style="background:' + habExp.color + '"')
+     && habCard.includes('近30天') && habCard.includes('hab-h'),
+     'cells=' + (habCard.match(/class="habcell( on)?"/g) || []).length + ' on=' + (habCard.match(/class="habcell on"/g) || []).length + ' exp=' + JSON.stringify(habExp));
+  ok('T9i2 习惯卡纯只读：没有补记按钮/弹窗，格子不可点（无 button / data-habday / data-habhis），格间距仍是 30 列细格',
+     !view.__html.includes('data-habhis') && !habCard.includes('data-habday')
+     && !habCard.includes('<button') && (habCard.match(/<span class="habcell/g) || []).length === habExp.cells
+     && !habCard.includes('habgrid-dlg') && ev('typeof openHabitHistory') === 'undefined',
+     'btn=' + (habCard.match(/<button/g) || []).length);
+  ev('state.habits = []; renderStats()');
+  ok('T9i3 无习惯时卡面空态 + 「去设置页添加」入口（不留半张空格子）',
+     doc.getElementById('st_habits').__html.includes('还没有习惯')
+     && doc.getElementById('st_habits').__html.includes('data-go2="settings"')
+     && !doc.getElementById('st_habits').__html.includes('habcell'));
+  ev('state.habits = ' + habBak + '; renderStats()');   /* 复位：习惯定义与打卡记录 */
+  ev('state.chartOrder = ' + coBak + '; renderStats()');
+
+  /* T9h 设置页逃生口：顺序被改过才出现「恢复默认」按钮（与概览卡那条并列） */
+  ev("state.chartOrder = ['water','weight','sleep','cal','macro','vol','mins']; state.homeOrder = HOME_ORDER_DEFAULT.slice(); go('settings')");
+  ok('T9h 图表顺序改过后设置页出现「↺ 历史图表顺序：恢复默认」（概览卡未改则那条不占地方）',
+     view.__html.includes('id="st_chartorder"') && view.__html.includes('历史图表顺序：恢复默认')
+     && !view.__html.includes('id="st_homeorder"'),
+     view.__html.includes('id="st_chartorder"'));
+  ev('state.chartOrder = CHART_ORDER_DEFAULT.slice(); go(\'stats\')');
 
   /* T10 动作库行内版式：名称 + 「大类 · 部位 · 方式」小字（v4.15 的平铺表格已换成食物库同款 lrow） */
   const libRow = ev("exLibRowHTML(state.exercises.find(e => e.name === '杠铃卧推'), 'data-id=\"e0\"', '<button>✏️</button>')");

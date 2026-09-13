@@ -105,7 +105,8 @@ function replaceUser(db, uid, data, expectedRev) {
       deleteUserData(db, uid);
       db.prepare(`UPDATE users SET name = ?, avatar = ?, color = ?, activity = ?, water_target = ?,
                   profile_json = ?, goal_json = ?, nutrition_json = ?, theme = ?, onboarded = ?,
-                  foods_json = ?, exercises_json = ?, home_order_json = ?, body_hidden_json = ?, rev = ? WHERE id = ?`)
+                  foods_json = ?, exercises_json = ?, home_order_json = ?, body_hidden_json = ?,
+                  chart_order_json = ?, rev = ? WHERE id = ?`)
         .run(nz(u.name), nz(u.avatar), nz(u.color), nz(u.activity), nz(u.waterTarget),
           jz(u.profile), jz(u.goal), jz(u.nutrition),
           nz(data.theme) || 'light', data.onboarded ? 1 : 0,
@@ -114,6 +115,8 @@ function replaceUser(db, uid, data, expectedRev) {
           jz(u.homeOrder),
           /* 身体页隐藏项：同上（空数组 = 全部显示，与键缺失同义但形状各自保真） */
           jz(u.bodyHidden),
+          /* 历史页图表卡拖动顺序：同 homeOrder */
+          jz(u.chartOrder),
           nextRev, uid);
       insertUserData(db, uid, u);
       db.exec('COMMIT');
@@ -224,6 +227,7 @@ function composeUser(db, uid) {
   put(u, 'nutrition', jsonParse(row.nutrition_json));
   put(u, 'homeOrder', jsonParse(row.home_order_json));
   put(u, 'bodyHidden', jsonParse(row.body_hidden_json));
+  put(u, 'chartOrder', jsonParse(row.chart_order_json));
   Object.assign(u, readUserData(db, uid));
 
   const data = {

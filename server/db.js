@@ -210,6 +210,8 @@ function migrate(db) {
   addColumn(db, 'users', 'home_order_json', 'TEXT');
   /* 身体页隐藏项（指标 id 数组；NULL 或空数 = 全部显示）——与 home_order_json 同一套读写（jz / put） */
   addColumn(db, 'users', 'body_hidden_json', 'TEXT');
+  /* 历史页图表卡的拖动顺序（chart key 的 JSON 数组；NULL = 用客户端默认序）——同上 */
+  addColumn(db, 'users', 'chart_order_json', 'TEXT');
   /* 系统共享库：单行 app 上整存 {foods, exercises}，管理员维护 */
   addColumn(db, 'app', 'system_json', 'TEXT');
   /* 身体数据新增「小腿围」（存量库 ALTER 补列，旧值保持 NULL） */

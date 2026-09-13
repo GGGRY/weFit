@@ -105,11 +105,18 @@ const USER_COLORS = [
   {id:'pink',   hex:'#e87ba4'},
 ];
 const USER_AVATARS = ['🙂','😊','🦁','🐱','🐶','🐼','🐯','🦊','🐸','🐰','🦄','⭐','🌱','⚡','💪','🏃','🍀','🌊','🔥','😎'];
-const DATA_FIELDS = ['profile','goal','activity','waterTarget','nutrition','meals','workouts','body','habits','sleep','water','homeOrder','bodyHidden'];
+const DATA_FIELDS = ['profile','goal','activity','waterTarget','nutrition','meals','workouts','body','habits','sleep','water','homeOrder','bodyHidden','chartOrder'];
 /* 概览页「今日卡片」的默认顺序（顶部磁贴行不参与拖动，见 renderHome/HOME_CARDS）。
  * 顺序存进本人数树 state.homeOrder＝这 5 个 id 的全排列，与「当前是否显示」无关
  * （饮水目标设 0 时卡不渲染，但它的位次保留，重新打开饮水后回到原位）。 */
 const HOME_ORDER_DEFAULT = ['diet','workout','water','sleep','habits'];
+
+/* 历史页「图表卡」的默认顺序（顶部磁贴行同样不参与拖动，见 renderStats/#st_charts）。
+ * 与 homeOrder 完全同一套契约：state.chartOrder＝这 8 个 key 的全排列，与「当前是否显示」
+ * 无关。key 与 chartWrap 的第一个参数一一对应（不是 DOM id `st_weight` 那套）。
+ * 2026-09-13 新增 habits（习惯打卡卡）并放在**末尾**：resolveOrder 对存量 state.chartOrder
+ * 正是把缺的 key 补在末尾，默认序取同一位置才能保证新老账户一致，老账户零迁移。 */
+const CHART_ORDER_DEFAULT = ['weight','sleep','cal','macro','vol','mins','water','habits'];
 
 /* 2026-09-12：个人库初始为空——「空库」不再拿种子填满（空库就是空库，要什么去系统库页挑）。 */
 function freshShared(){ return { foods: [], exercises: [] }; }
@@ -133,6 +140,7 @@ function freshUserData(){
     sleep:{},
     water:{},
     homeOrder: HOME_ORDER_DEFAULT.slice(),
+    chartOrder: CHART_ORDER_DEFAULT.slice(),
     /* 身体页隐藏项（空数组 = 全部显示；恒在场的一个数组，无需 null 特殊值，同 homeOrder 一样） */
     bodyHidden: [],
   };
@@ -213,6 +221,8 @@ function ensureUserIntact(u){
   normalizeWorkoutDays(u);   /* 运动：计划/记录合并后的形状清洗（见上） */
   /* 概览卡顺序：去重/丢未知 id/补缺（缓存树/服务器树/导入树共用这一处咽喉，同 sleep 的做法） */
   u.homeOrder = resolveHomeOrder(u.homeOrder);
+  /* 历史页图表顺序：同样的清洗（缓存树/服务器树/导入树共用这一处咽喉，同 homeOrder 的做法） */
+  u.chartOrder = resolveChartOrder(u.chartOrder);
   /* 身体页隐藏项：同样在这一道咽喉里清洗（存的是隐藏集，空 = 全部显示） */
   u.bodyHidden = resolveBodyHidden(u.bodyHidden);
   if(!u.color) u.color = 'green';
@@ -1191,32 +1201,34 @@ function tileHTML(lab, val, unit, delta, deltaCls, valRight, deltaColor){
     (delta ? '<div class="delta ' + (deltaCls||'') + '"' + cs + '>' + delta + '</div>' : '') + '</div>';
 }
 
-/* ---------- 概览「今日卡片」的排序契约 ----------
- * 5 张卡共用 .home-cards 容器，DOM 顺序 = 用户顺序；拖动只摸 DOM + 落 state.homeOrder，
- * 不重渲染（卡内监听器不用重绑，也不闪）。顶部磁贴行不在容器里，固定不动。
+/* ---------- 卡片排序契约（概览「今日卡片」+ 历史页图表卡共用） ----------
+ * 两处都是「一个容器 + 若干张可拖的卡」：概览 5 张 .card 落 state.homeOrder，
+ * 历史页 7 张 .chart-card 落 state.chartOrder。DOM 顺序 = 用户顺序；拖动只摸 DOM + 落 state，
+ * 不重渲染（卡内监听器不用重绑，也不闪）。两页的顶部磁贴行都不在容器里，固定不动。
  * HOME_CARD_WIDE：宽屏（≥900px）下整行占满的卡。2026-09-12 起 5 张卡全部整行——
  * 饮水/睡眠原本会并排成一行（窄卡挤在一起），按要求改成各占一行。 */
 const HOME_CARD_WIDE = { diet:1, workout:1, habits:1, water:1, sleep:1 };
 
 /* 只做「认识 + 去重」（不补缺）：mergeOrder 判定"当时可见"靠它，
  * 补缺会把不在 DOM 里的卡当成可见卡 */
-function orderFilter(list){
+function orderFilter(list, def){
   const out = [];
   (Array.isArray(list) ? list : []).forEach(id => {
-    if(HOME_ORDER_DEFAULT.indexOf(id) >= 0 && out.indexOf(id) < 0) out.push(id);
+    if(def.indexOf(id) >= 0 && out.indexOf(id) < 0) out.push(id);
   });
   return out;
 }
 /* 存储顺序 → 渲染顺序：丢未知 id、去重、补齐缺的（含未来新增的卡） */
-function resolveHomeOrder(stored){
-  const out = orderFilter(stored);
-  HOME_ORDER_DEFAULT.forEach(id => { if(out.indexOf(id) < 0) out.push(id); });
+function resolveOrder(stored, def){
+  const out = orderFilter(stored, def);
+  def.forEach(id => { if(out.indexOf(id) < 0) out.push(id); });
   return out;
 }
 /* 拖完只拿得到「当时可见」的顺序：把当前不显示的卡按旧序里它后面第一个可见邻居为锚点插回，
- * 保证隐藏期间拖别的卡不会把饮水卡的位次冲掉（多张隐藏卡按旧序依次插，相对顺序不变）。 */
-function mergeOrder(visibleNew, fullOld){
-  const full = resolveHomeOrder(fullOld), vis = orderFilter(visibleNew);
+ * 保证隐藏期间拖别的卡不会把不显示的卡（如饮水目标设 0 时的饮水卡）的位次冲掉
+ * （多张隐藏卡按旧序依次插，相对顺序不变）。 */
+function mergeOrderWith(visibleNew, fullOld, def){
+  const full = resolveOrder(fullOld, def), vis = orderFilter(visibleNew, def);
   const out = vis.slice();
   full.forEach((id, i) => {
     if(vis.indexOf(id) >= 0) return;
@@ -1226,6 +1238,11 @@ function mergeOrder(visibleNew, fullOld){
   });
   return out;
 }
+/* 两页各自的具名壳（render.test.js 直接按这两个名字断言，签名别改） */
+function resolveHomeOrder(stored){ return resolveOrder(stored, HOME_ORDER_DEFAULT); }
+function mergeOrder(visibleNew, fullOld){ return mergeOrderWith(visibleNew, fullOld, HOME_ORDER_DEFAULT); }
+function resolveChartOrder(stored){ return resolveOrder(stored, CHART_ORDER_DEFAULT); }
+function mergeChartOrder(visibleNew, fullOld){ return mergeOrderWith(visibleNew, fullOld, CHART_ORDER_DEFAULT); }
 /* 卡头右端的抓手：手机长按也能拾取，抓柄只是把「能拖」显示出来
  * （触屏下抓柄 touch-action:none，按下即拖，不用等长按） */
 function hcardGrip(){
@@ -1268,7 +1285,7 @@ function renderHome(){
       tileHTML('打卡', habToday + '/' + state.habits.length, '', '', '') +
     '</div>' +
     /* 除顶部磁贴行外，其余「今日卡片」都进这个容器：顺序由 state.homeOrder 决定、可拖动调整 */
-    '<div class="home-cards" id="home_cards">' + homeCardsHTML(t, eat, calPct) + '</div>';
+    '<div class="home-cards sortable" id="home_cards">' + homeCardsHTML(t, eat, calPct) + '</div>';
 
   $('#view').innerHTML = html;
   bindHabitEvents();
@@ -1336,11 +1353,14 @@ function homeCardsHTML(t, eat, calPct){
   return resolveHomeOrder(state.homeOrder).map(id => tagCard(id, parts[id])).filter(Boolean).join('');
 }
 
-/* ---------- 概览卡拖动排序（零依赖手写：HTML5 DnD 在触屏上不可用） ----------
+/* ---------- 卡片拖动排序（零依赖手写：HTML5 DnD 在触屏上不可用） ----------
  * 触屏：长按 250ms 拾取（期间移动 >8px 视为滚动，取消）；抓柄按下即拾取。
  * 鼠标：按下即拾取（桌面不存在“滚动抢手势”问题）。
- * 拖动只挪 DOM + 落 state.homeOrder，不重渲染（卡内监听器不重绑、不闪）。 */
-let homeDrag = null;                        /* 当前拖动会话；bindPullToRefresh / cancelHomeDrag 靠它 */
+ * gripOnly（历史页图表卡）：两处都只认卡头抓柄。图表卡本体的点按/悬停要留给取数值气泡
+ * （bindChartTip）：照「卡上按下即拖」的话，鼠标点一下图就会起拖、抬手时 swallowNextClick
+ * 把这记点按吃掉，气泡就点不出来了。
+ * 拖动只挪 DOM + 落 state（setOrder），不重渲染（卡内监听器不重绑、不闪）。 */
+let homeDrag = null;                        /* 当前拖动会话（两页共用，同时只可能有一处）；bindPullToRefresh / cancelHomeDrag 靠它 */
 const HDRAG = { LONG:250, CANCEL:8, EDGE:64, SPEED:12 };
 const raf = fn => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(fn) : setTimeout(fn, 16));
 const caf = id => { if(!id) return; if(typeof cancelAnimationFrame === 'function') cancelAnimationFrame(id); else clearTimeout(id); };
@@ -1375,17 +1395,20 @@ function swallowNextClick(){
   document.addEventListener('click', stop, true);
 }
 
-function bindHomeSort(container){
+function bindCardSort(container, opt){
   if(!container || typeof container.querySelectorAll !== 'function') return;
-  const cards = () => [...container.querySelectorAll('.card[data-hcard]')];
+  const sel = opt.sel, def = opt.defaultOrder, key = opt.key, gripOnly = !!opt.gripOnly;
+  const getOrder = opt.getOrder, setOrder = opt.setOrder;
+  const cards = () => [...container.querySelectorAll(sel)];
   if(cards().length < 2) return;                 /* 只有一张卡：拖没意义（也不该长按选中文字） */
   const pane = homeScrollPane();
   const pickable = el => !(el && el.closest && el.closest('button,input,a,textarea,select,label'));
+  const isGrip = el => !!(el && el.closest && el.closest('[data-hcard-grip]'));
 
   /* 落位：读 DOM 顺序 → 把不显示的卡插回 → 存 */
   function commit(){
-    const next = mergeOrder(cards().map(c => c.dataset.hcard), state.homeOrder);
-    if(next.join(',') !== resolveHomeOrder(state.homeOrder).join(',')){ state.homeOrder = next; save(); }
+    const next = mergeOrderWith(cards().map(c => c.dataset[key]), getOrder(), def);
+    if(next.join(',') !== resolveOrder(getOrder(), def).join(',')) setOrder(next);
   }
   /* 跟手 + 越过邻居中线就交换 DOM；交换后用实际布局位移把起算点抵消掉，视觉上原地不动
    * （单列交换 = 一个卡高；宽屏同排换列 ≈0；旧写法用邻居高度，同排换列时会凭空跳一截） */
@@ -1473,9 +1496,10 @@ function bindHomeSort(container){
     if(homeDrag || pend || e.touches.length !== 1) return;
     if(document.querySelector('.authgate,.overlay')) return;
     const y = e.touches[0].clientY;
-    const card = e.target.closest && e.target.closest('.card[data-hcard]');
+    const card = e.target.closest && e.target.closest(sel);
     if(!card || !container.contains(card) || !pickable(e.target)) return;
-    if(e.target.closest('[data-hcard-grip]')){ start(card, y, true); return; }
+    if(isGrip(e.target)){ start(card, y, true); return; }
+    if(gripOnly) return;                         /* 图表卡：长按留给页面手势，只认抓柄（图表本体要能点着取数值） */
     pend = { card, y0:y, timer:0, onMove:null };
     pend.onMove = ev => {
       const t = ev.touches[0];
@@ -1490,11 +1514,26 @@ function bindHomeSort(container){
   /* --- 鼠标：按下即拾取（只认 mouse；触屏的兼容 mouse 事件不会带 pointerType） --- */
   container.addEventListener('pointerdown', e => {
     if(homeDrag || e.pointerType !== 'mouse' || e.button !== 0) return;
-    const card = e.target.closest && e.target.closest('.card[data-hcard]');
+    const card = e.target.closest && e.target.closest(sel);
     if(!card || !container.contains(card) || !pickable(e.target)) return;
+    if(gripOnly && !isGrip(e.target)) return;
     start(card, e.clientY, false);
   });
   container.addEventListener('dragstart', e => e.preventDefault());   /* 别让浏览器原生拖图/拖字抢走 */
+}
+/* 概览页：卡上按下即拖（拖动是这块区域的主要操作，鼠标不用先瞄准抓手） */
+function bindHomeSort(container){
+  bindCardSort(container, {
+    sel:'.card[data-hcard]', key:'hcard', defaultOrder:HOME_ORDER_DEFAULT,
+    getOrder:() => state.homeOrder, setOrder:v => { state.homeOrder = v; save(); },
+  });
+}
+/* 历史页：只能从卡头抓手起拖（卡本体的点按/悬停归图表气泡，见 bindCardSort 注释） */
+function bindChartSort(container){
+  bindCardSort(container, {
+    sel:'.chart-card[data-schart]', key:'schart', defaultOrder:CHART_ORDER_DEFAULT,
+    getOrder:() => state.chartOrder, setOrder:v => { state.chartOrder = v; save(); }, gripOnly:1,
+  });
 }
 
 /* =====================================================
@@ -3324,9 +3363,11 @@ function renderSettings(){
         '<button class="btn danger ghost" id="st_wipe">🗑 清空数据</button>' +
       '</div>' +
       '<div class="tiny" id="st_sync" style="margin-top:10px;color:var(--ink-3)"></div>' +
-      /* 概览卡片拖动顺序的逃生口（只在已被改过时出现，没改过就不占地方） */
+      /* 概览卡片/历史图表拖动顺序的逃生口（只在已被改过时出现，没改过就不占地方） */
       (resolveHomeOrder(state.homeOrder).join(',') !== HOME_ORDER_DEFAULT.join(',')
         ? '<div class="row" style="margin-top:8px"><button class="btn sm ghost" id="st_homeorder">↺ 概览卡片顺序：恢复默认</button></div>' : '') +
+      (resolveChartOrder(state.chartOrder).join(',') !== CHART_ORDER_DEFAULT.join(',')
+        ? '<div class="row" style="margin-top:8px"><button class="btn sm ghost" id="st_chartorder">↺ 历史图表顺序：恢复默认</button></div>' : '') +
       /* 2026-09-12 按要求删掉卡底那条「各设备登录同一账户…多设备说明」小字 */
       '<input type="file" id="st_file" accept=".json,application/json" style="display:none">' +
     '</div>' +
@@ -3356,6 +3397,8 @@ function renderSettings(){
   $('#st_wipe').addEventListener('click', () => { if(confirm('真的要清空本账户全部数据吗？此操作不可恢复（会同步清空服务器上的本人数据，不影响其他账户）。')) wipeAll(); });
   const ho = $('#st_homeorder');
   if(ho) ho.addEventListener('click', () => { state.homeOrder = HOME_ORDER_DEFAULT.slice(); save(); renderSettings(); toast('已恢复概览卡片默认顺序'); });
+  const co = $('#st_chartorder');
+  if(co) co.addEventListener('click', () => { state.chartOrder = CHART_ORDER_DEFAULT.slice(); save(); renderSettings(); toast('已恢复历史图表默认顺序'); });
   refreshSyncStatus();
 }
 
@@ -3441,6 +3484,41 @@ function bindHabitEvents(){
     if(h.done[d]) delete h.done[d]; else h.done[d] = true;
     save(); renderView();
   }));
+}
+
+/* ---------- 历史页「习惯打卡」卡 ----------
+ * 数据源就是 state.habits[].done（{日期:true}，与服务端 habits/habit_done 表直通）。
+ * **纯只读**（2026-09-13 裁定）：本卡不开补记入口——30 格摊在手机宽度上单格仅 ~8px，点不准；
+ * 打卡本体在概览页「今日打卡」卡，改历史不在历史页做。不改习惯定义（增删改仍在设置页）。 */
+const HAB_HIS_DAYS = 30;
+function habitRateText(h, days){
+  const cnt = days.filter(d => h.done && h.done[d]).length;
+  return { cnt, txt: cnt + '/' + days.length + ' 天' };
+}
+function habitGridHTML(h, days){
+  return '<div class="habgrid">' + days.map(d => {
+    const on = !!(h.done && h.done[d]);
+    return '<span class="habcell' + (on ? ' on' : '') + '"' + (on ? ' style="background:' + h.color + '"' : '') +
+      ' title="' + esc(d + (on ? ' 已打卡' : ' 未打卡')) + '"></span>';
+  }).join('') + '</div>';
+}
+function renderHabitChart(){
+  const el = $('#st_habits'); if(!el) return;
+  if(!state.habits.length){
+    el.innerHTML = '<div class="empty" style="padding:14px 4px"><div class="e-ic">📌</div>还没有习惯<br><button class="btn primary sm mt" data-go2="settings">去「设置」页添加</button></div>';
+    const g = $('#view [data-go2="settings"]'); if(g) g.addEventListener('click', () => go('settings'));
+    return;
+  }
+  const days = lastNDates(HAB_HIS_DAYS);
+  el.innerHTML = state.habits.map(h => {
+    const r = habitRateText(h, days), strk = habitStreak(h, today());
+    return '<div class="hab-row">' +
+      '<div class="hab-h"><span class="thumb" style="background:' + h.color + ';font-size:16px">' + esc(h.icon) + '</span>' +
+      '<div class="grow"><div class="b">' + esc(h.name) + '</div>' +
+      '<div class="sub">近30天 ' + r.txt + ' · ' + Math.round(r.cnt / days.length * 100) + '%' +
+        (strk > 0 ? ' · 🔥 连续 ' + strk + ' 天' : '') + '</div></div></div>' +
+      habitGridHTML(h, days) + '</div>';
+  }).join('');
 }
 /* ---------- 打卡设置卡（设置页：只管理习惯的添加 / 修改 / 删除，打卡在概览页进行） ---------- */
 function habitSettingsCardHTML(){
@@ -3675,8 +3753,11 @@ function groupedBarSVG(o){
 function legendHTML(items){
   return '<div class="legend">' + items.map(it => '<span class="li"><span class="sw" style="background:' + it.color + '"></span>' + esc(it.label) + '</span>').join('') + '</div>';
 }
-function chartWrap(title, sub, id, controls){
-  return '<div class="chart-card" style="margin-bottom:16px"><div class="cc-h"><div><div class="cc-t">' + esc(title) + '</div>' + (sub ? '<div class="cc-s">' + esc(sub) + '</div>' : '') + '</div>' + (controls||'') + '</div>' + (controls&&title===''?'': '') + '<div id="' + id + '"></div></div>';
+/* 图表卡外壳。key = 拖动排序标识（CHART_ORDER_DEFAULT 的成员，落 DOM 为 data-schart）；
+ * id = 图所在 DIV 的 DOM id（renderStats 往后往里塞 SVG）。卡间距交给 .st-charts 的 gap，
+ * 故这里不再自带 margin-bottom；抓柄放在卡头右端（历史页只能从抓柄起拖，见 bindCardSort）。 */
+function chartWrap(key, title, sub, id, controls){
+  return '<div class="chart-card" data-schart="' + key + '"><div class="cc-h"><div><div class="cc-t">' + esc(title) + '</div>' + (sub ? '<div class="cc-s">' + esc(sub) + '</div>' : '') + '</div>' + (controls||'') + hcardGrip() + '</div><div id="' + id + '"></div></div>';
 }
 
 /* ---------- 图表数值气泡（手机没有悬停）----------
@@ -3786,6 +3867,7 @@ function statSummary(){
   };
 }
 function renderStats(){
+  cancelHomeDrag();   /* 与 renderHome 同款兜底：直接调 renderStats 的回调不走 renderView，这里收干净 */
   const S = statSummary();
   const T = target();
   const tiles =
@@ -3797,27 +3879,27 @@ function renderStats(){
     tileHTML('平均饮水(30天)', S.avgWater === null ? '--' : S.avgWater, '杯', '') +
     tileHTML('打卡完成率(30天)', S.habitRate === null ? '--' : S.habitRate + '%', '', '');
 
-  /* 图表容器（渲染顺序 = 下面 html 里的拼装顺序；睡眠时长卡紧跟体重趋势卡，2026-09-12 用户裁定） */
-  const c1 = chartWrap('体重趋势', '近120条记录', 'st_weight', '');
-  const c5 = chartWrap('睡眠时长', '近30天 · 虚线为目标 10 小时', 'st_sleep', '<button class="btn sm ghost" data-slehis title="补记/修改历史睡眠记录">🕘 补记</button>');
-  const c2 = chartWrap('每日热量 vs 目标', '近30天', 'st_cal', '');
-  const c3 = chartWrap('宏量营养素摄入', '近14天 · kcal', 'st_macro', legendHTML([{label:'蛋白',color:CX.c1},{label:'碳水',color:CX.c2},{label:'脂肪',color:CX.c3}]));
-  const c4 = chartWrap('每周运动容量', '近12周 · Σ重量×次数', 'st_vol', '');
-  const c4b = chartWrap('每周运动时长', '近12周 · Σ分钟（当周有距离时一并显示）', 'st_mins', '');
-  const c6 = chartWrap('每日饮水量', state.waterTarget ? '近30天 · 虚线为每日目标' : '近30天', 'st_water', '<button class="btn sm ghost" data-watshis title="补记/修改历史饮水记录">🕘 补记</button>');
+  /* 图表卡（key 落 data-schart，顺序由 state.chartOrder 决定、可拖动调整——只能从卡头抓柄起拖，
+     卡片本体留给取数值气泡）。默认序里睡眠时长紧跟体重趋势（2026-09-12 裁定）。 */
+  const cards = {
+    weight: chartWrap('weight', '体重趋势', '近120条记录', 'st_weight', ''),
+    sleep:  chartWrap('sleep', '睡眠时长', '近30天 · 虚线为目标 10 小时', 'st_sleep', '<button class="btn sm ghost" data-slehis title="补记/修改历史睡眠记录">🕘 补记</button>'),
+    cal:    chartWrap('cal', '每日热量 vs 目标', '近30天', 'st_cal', ''),
+    macro:  chartWrap('macro', '宏量营养素摄入', '近14天 · kcal', 'st_macro', legendHTML([{label:'蛋白',color:CX.c1},{label:'碳水',color:CX.c2},{label:'脂肪',color:CX.c3}])),
+    vol:    chartWrap('vol', '每周运动容量', '近12周 · Σ重量×次数', 'st_vol', ''),
+    mins:   chartWrap('mins', '每周运动时长', '近12周 · Σ分钟（当周有距离时一并显示）', 'st_mins', ''),
+    water:  chartWrap('water', '每日饮水量', state.waterTarget ? '近30天 · 虚线为每日目标' : '近30天', 'st_water', '<button class="btn sm ghost" data-watshis title="补记/修改历史饮水记录">🕘 补记</button>'),
+    habits: chartWrap('habits', '习惯打卡', '近30天', 'st_habits', ''),
+  };
 
   const html =
     '<div class="row">' + tiles + '</div>' +
     '<div class="row mt">' + tiles2 + '</div>' +
-    '<div class="mt">' + c1 + '</div>' +
-    '<div>' + c5 + '</div>' +
-    '<div class="grid cols-2">' + c2 + '</div>' +
-    '<div>' + c3 + '</div>' +
-    '<div>' + c4 + '</div>' +
-    '<div>' + c4b + '</div>' +
-    '<div>' + c6 + '</div>';
+    /* 除顶部磁贴行外，图表卡都进这个容器：顺序由 state.chartOrder 决定、可拖动调整 */
+    '<div class="st-charts sortable" id="st_charts">' + resolveChartOrder(state.chartOrder).map(k => cards[k]).filter(Boolean).join('') + '</div>';
 
   $('#view').innerHTML = html;
+  bindChartSort($('#st_charts'));
 
   // 睡眠/饮水历史补记入口（原在概览页「今日」卡上，移至历史页）
   const wh = $('#view [data-watshis]'); if(wh) wh.addEventListener('click', openWaterHistory);
@@ -3868,9 +3950,10 @@ function renderStats(){
     fmtVal: v => v + ' 分钟', fmtX: (d, p) => p.wk,
   });
 
-  // 睡眠时长 & 每日饮水
+  // 睡眠时长 & 每日饮水 & 习惯打卡
   renderSleepChart();
   renderWaterChart();
+  renderHabitChart();
 }
 function wDeltaText(S){
   if(S.wDelta === null) return '';

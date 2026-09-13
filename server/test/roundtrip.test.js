@@ -263,6 +263,32 @@ async function main() {
   ok('T14l 树里无 bodyHidden 键 → 读回也不凭空多出该键',
      !('bodyHidden' in r.json.data.users[uidA]) && deepEq(normalizeExpected(noBH, uidA), r.json.data), LAST_FAIL);
 
+  /* 2026-09-12（未标版号）新增 users.chart_order_json（历史页图表卡拖动顺序）：
+     同样走 jz / put，三种形状（有值 / 空数组 / 键缺失）都得保真 */
+  const withCO = JSON.parse(JSON.stringify(noBH));
+  withCO.users[uidA].chartOrder = ['water', 'weight', 'sleep', 'cal', 'macro', 'vol', 'mins'];
+  let coRev = (await A.req('GET', '/api/state')).json.rev;
+  r = await A.req('PUT', '/api/state', { rev: coRev, data: withCO });
+  ok('T14m chartOrder 落库 → rev+1', r.status === 200 && r.json.rev === coRev + 1, JSON.stringify(r.json).slice(0, 120));
+  r = await A.req('GET', '/api/state');
+  ok('T14n chartOrder 原序读出（新列不是只写不读）',
+     deepEq(normalizeExpected(withCO, uidA), r.json.data)
+     && JSON.stringify(r.json.data.users[uidA].chartOrder) === JSON.stringify(withCO.users[uidA].chartOrder),
+     LAST_FAIL || JSON.stringify(r.json.data.users[uidA].chartOrder));
+  const emptyCO = JSON.parse(JSON.stringify(withCO));
+  emptyCO.users[uidA].chartOrder = [];
+  r = await A.req('PUT', '/api/state', { data: emptyCO });
+  r = await A.req('GET', '/api/state');
+  ok('T14o chartOrder 空数组也保真',
+     Array.isArray(r.json.data.users[uidA].chartOrder) && r.json.data.users[uidA].chartOrder.length === 0,
+     JSON.stringify(r.json.data.users[uidA].chartOrder));
+  const noCO = JSON.parse(JSON.stringify(emptyCO));
+  delete noCO.users[uidA].chartOrder;
+  r = await A.req('PUT', '/api/state', { data: noCO });
+  r = await A.req('GET', '/api/state');
+  ok('T14p 树里无 chartOrder 键 → 读回也不凭空多出该键',
+     !('chartOrder' in r.json.data.users[uidA]) && deepEq(normalizeExpected(noCO, uidA), r.json.data), LAST_FAIL);
+
   /* ============ 系统库 ============ */
   r = await anon.req('GET', '/api/system/library');
   ok('T15a 未登录读系统库→401', r.status === 401);

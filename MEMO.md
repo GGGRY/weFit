@@ -1,6 +1,6 @@
 # 健康管理 · 项目备忘录
 
-> 当前版本 **v4.18** · 最后更新 2026-09-12 · 版本变更历史见 [CHANGELOG.md](CHANGELOG.md) · 后续开发计划见 [PLANS.md](PLANS.md)
+> 当前版本 **v4.19** · 最后更新 2026-09-13 · 版本变更历史见 [CHANGELOG.md](CHANGELOG.md) · 后续开发计划见 [PLANS.md](PLANS.md)
 > 本文当仅记录主要的项目定位，主要功能清单和结构等，已经实现的功能清单中，细节的交互，样式和按钮功能等不用记录在本文档中。
 
 ## 一、项目定位
@@ -37,6 +37,7 @@
 - **今日打卡卡**：一行一条习惯（图标 + 名称 + 🔥连续 N 天 / 今天还没打卡 + 当天 ✓ 圆钮），点圆钮切换当天完成并即时刷新；无习惯时空态 + 「去『设置』页添加」
 
 - **卡片自由排序**（v4.15，2026-09-11）：除顶部磁贴行外，今日饮食/今日运动/今日饮水/今日睡眠/今日打卡 5 张卡收进 `.home-cards`（grid），**顺序 = 用户顺序**，存本人状态树 `state.homeOrder`（5 个 id 的全排列，与服务端 `users.home_order_json` 列对称往返）。拖动：手机长按 250ms 拾取（移动 >8px 当作滚动不拾取）、卡头右端抓手 `⠿` 按下即拖、桌面鼠标按下即拖；拖动跟手 + 越过邻居中线即时交换 DOM（不重渲染），上下边缘 60px 内自动滚动，落下后吞掉一次 click 防误打卡；拖动中下拉刷新让路，切页调 `cancelHomeDrag()`。饮水目标设 0 时饮水卡不渲染但**位次由 `mergeOrder()` 按后继锚点保留**，重新打开后回原位；`resolveHomeOrder()` 负责丢未知 id/去重/补缺；设置页「数据管理」在顺序被改过后出现「↺ 概览卡片顺序：恢复默认」
+- **历史页图表卡同一套排序**（2026-09-13）：8 张图卡收进 `#st_charts`（单列堆叠），顺序存 `state.chartOrder`（8 个 key：`weight/sleep/cal/macro/vol/mins/water/habits` ↔ 服务端 `users.chart_order_json`；`habits` 是 2026-09-13 追加的习惯卡，默认序落在**末尾**——存量账户的 7-key 旧序被 `resolveOrder` 补缺也正是补末尾，新老一致、零迁移）。二者共用同一台机器 `bindCardSort(container, {sel, key, defaultOrder, getOrder, setOrder, gripOnly})`（拖动状态 `homeDrag` 同时只可能有一处）；两页的顶部磁贴行都不在容器里、固定不动。**历史页 `gripOnly`：鼠标与触屏都只认卡头抓手**——图表本体上的点按/悬停归取数值气泡（`bindChartTip`），卡体按下即拖会把那记点按吃掉（`swallowNextClick()`）。候选全集/清洗/锚点插回三件都是带参数的通用层 `orderFilter/resolveOrder/mergeOrderWith`，两页各自的具名壳（`resolveHomeOrder/mergeOrder`、`resolveChartOrder/mergeChartOrder`）只是传不同默认序
 - 首页不展示：体重 7 天差值小字、"今日概览"卡（睡眠）、"主目标"卡（体重目标功能已整体移除）；BMI 以顶部磁贴形式保留（数值 + 分档小字，与身体页同色）；习惯的新增/修改/删除收归「设置」页「每日打卡」管理卡（概览卡只打卡，不内联添加表单/删除按钮、不展示多日历史网格）
 
 ### 2. 饮食 🍽️
@@ -101,9 +102,10 @@
 - 体重"主目标"功能已整体移除（引导"主要目标"下拉、🎯主目标卡/完成度环/每周节奏评估、身体页与历史页目标虚线、历史页"距目标"tile）
 
 ### 7. 历史 📊（v4.10 由「统计」改名，视图 id 仍为 `stats`）
-- 6 个汇总卡 + 7 张图（每张图卡各占一行竖排，**顺序（2026-09-12 起）= 体重趋势 → 睡眠时长 → 每日热量 vs 目标 → 宏量营养素供能 → 每周运动容量 → 每周运动时长 → 每日饮水量**：睡眠时长卡按用户裁定调到体重趋势之后，见下方 `renderStats()` 的 `c1/c5/c2/…` 拼装顺序；睡眠/饮水记录在概览页完成）
+- 6 个汇总卡 + 8 张图（每张图卡各占一行竖排；**顺序（2026-09-13 起）由用户拖动决定 = `state.chartOrder`**，默认序 = 体重趋势 → 睡眠时长 → 每日热量 vs 目标 → 宏量营养素供能 → 每周运动容量 → 每周运动时长 → 每日饮水量 → 习惯打卡（2026-09-13 追加、落末尾）；只认卡头抓手 `⠿` 起拖，图本体留给取数值气泡；睡眠/饮水/打卡记录都在概览页完成）
 - 汇总口径统一近 30 天：摄入/运动次数/体重变化/平均睡眠/平均饮水/打卡完成率（营养素供能图为近 14 天例外）；「当前BMI」磁贴 v4.10 从本页移除（BMI 见身体页与概览页顶部磁贴）
 - 「睡眠时长」「每日饮水量」图卡标题右侧 🕘「补记」→ 各自独立的历史弹窗（`openSleepHistory()`/`openWaterHistory()`）：daynav 翻任意日期查看/补记/修改/删除，弹窗内改动同步刷新背后页面（`renderView()`）
+- **「习惯打卡」卡**（2026-09-13）：每习惯一行 = 图标 + 名称 + 近 30 天完成率（`n/30 天 · %`）+（有连击时）🔥连续天数，下面一条 30 格热力格（`habitGridHTML()`，已打卡格填该习惯色；纯 CSS grid，不新增 SVG；格子带 `title` 供桌面悬停看日期）。**纯只读、不可点**——不开补记入口、格子也不是按钮（30 列细格窄屏单格仅 ~8px 点不准；打卡只在概览页「今日打卡」卡打，历史打卡不在本页改）；无习惯时卡面空态 + 「去设置页添加」。习惯的增删改仍在设置页，本卡不动定义
 
 ### 8. 账户体系、管理后台与双层资源库 👥
 - **登录门**：打开页面先 `GET /api/me` 探测会话；未登录显示全屏登录/注册页（不可关闭）；**第一个注册的账户自动成为管理员**
@@ -177,7 +179,7 @@ weFit/
 - **页面记忆**：视图导航收敛到 `go(v)`，同时把 `v` 写进按账户分键的 `localStorage`（`jjhealth_view:<用户名>`，与离线缓存同口径）；启动链 `startMain()` 结尾走 `go(readView())`，刷新/重开回到上次浏览的页面，非法/陌生的视图名回退 `home`。纯 UI 状态，不参与服务器同步也不进数据树；**每个页面自己的滚动位置也会被记住**（`viewScroll[curView]`，见下条）
 - **子页面（不在 NAV 里的视图）**：设置页「数据管理」下的食物库/动作库是独立页面而非弹窗，但**不进 `NAV`**（不占侧栏/底栏项）；`SUBVIEW = {foodlib:'settings', exlib:'settings'}` 声明父级——`rebuildNav()` 经 `navActiveId()` 用它决定高亮（停在子页面时高亮「设置」），`go()` 也按它落盘（刷新后落回设置页，而不是停在一个「返回」无处可去的半截子页）。新增同类子页面照此登记 `SUBVIEW` + `renderView()` 的 map + `runSelfTest()` 的 views 列表即可
 - **滚动位置记忆（v4.15，手机端反馈）**：`go(v)` 离开当前页前把 `readScroll()`（文档 `scrollY` + `.main` 的 `scrollTop`，桌面/手机两个滚动器都记）存进 `viewScroll[离开的页]`，渲染完新页再 `applyScroll(viewScroll[新页])` 原位恢复——从设置页进「数据管理」的食物库/动作库再点返回，不再被打回设置页顶部；没来过的页 = 顶部。**同页重入**（点当前 tab / 刷新后重渲染，`v === curView`）仍回顶部，与旧行为一致。恢复与归零一律 `behavior:'auto'`（瞬时）：旧写法是 `behavior:'smooth'` 归零，手机上进子页面时会先看到一段「往上滚」的过渡（用户反馈的「点进去会往上滚动一下」）。滚动量只存内存（`viewScroll`），不入 localStorage/数据树
-- **页面归属**：打卡渲染与绑定 `habitCardHTML()` + `bindHabitEvents()` 由概览 `renderHome()` 调用（当天清单，仅点选）；「设置」页 = `renderSettings()` 组装四卡——🧍基础资料（展示 + 修改弹窗 `openProfileEditor()`）、🥗营养目标（「修改目标」统一编辑弹窗 `openNutritionEditor()`，弹窗标题「修改营养目标」，营养+活动量+饮水）、📌习惯管理 `habitSettingsCardHTML()` + `bindHabitSettings()`（新增/修改走弹窗 `openHabitAdder()`/`openHabitEditor()`，删除经 `confirm()` 确认后整卡刷新）、💾数据管理（📚食物库/动作库按钮 → 独立子页面 `renderFoodLibPage()`/`renderExLibPage()`，见上条「子页面」；两页的录入各自走弹窗 `openFoodAdder()`/`openExAdder()`（卡头按钮开，添加即落库并关闭，回调重绘页面计数）；导出/导入/清空绑定内联 + `#st_sync` 同步状态行）；睡眠/饮水趋势图函数 `renderSleepChart/renderWaterChart` 挂在 `renderStats()`，容器 id `st_sleep`/`st_water`；今日饮水/今日睡眠卡由概览容器 `homeCardsHTML()` 按 `state.homeOrder` 拼装（旧 `lifeTodayHTML()` 随容器化删除）+ `bindLifeToday()`（`lifeWaterCard/lifeSleepCard/bindWaterCard/bindSleepCard` 以 ctx `home`/`dlg` 双上下文复用——概览今日卡与**各自**历史弹窗 `openWaterHistory()/openSleepHistory()` 共用一套渲染与绑定；睡眠逐段新增/修改/删除走 `sleepSessionEditor(d, idx, after)`）
+- **页面归属**：打卡渲染与绑定 `habitCardHTML()` + `bindHabitEvents()` 由概览 `renderHome()` 调用（当天清单，仅点选）；「设置」页 = `renderSettings()` 组装四卡——🧍基础资料（展示 + 修改弹窗 `openProfileEditor()`）、🥗营养目标（「修改目标」统一编辑弹窗 `openNutritionEditor()`，弹窗标题「修改营养目标」，营养+活动量+饮水）、📌习惯管理 `habitSettingsCardHTML()` + `bindHabitSettings()`（新增/修改走弹窗 `openHabitAdder()`/`openHabitEditor()`，删除经 `confirm()` 确认后整卡刷新）、💾数据管理（📚食物库/动作库按钮 → 独立子页面 `renderFoodLibPage()`/`renderExLibPage()`，见上条「子页面」；两页的录入各自走弹窗 `openFoodAdder()`/`openExAdder()`（卡头按钮开，添加即落库并关闭，回调重绘页面计数）；导出/导入/清空绑定内联 + `#st_sync` 同步状态行）；睡眠/饮水趋势图函数 `renderSleepChart/renderWaterChart` 挂在 `renderStats()`，容器 id `st_sleep`/`st_water`（图卡外壳 `chartWrap(key, title, sub, id, controls)`，key = 排序标识、落 `data-schart`，卡头右端 `hcardGrip()` 抓手，顺序由 `resolveChartOrder(state.chartOrder)` 拼装 + `bindChartSort()`）；历史页习惯卡 `renderHabitChart()` 同样挂在 `renderStats()`（容器 id `st_habits`，纯只读热力格、无补记入口）；今日饮水/今日睡眠卡由概览容器 `homeCardsHTML()` 按 `state.homeOrder` 拼装（旧 `lifeTodayHTML()` 随容器化删除）+ `bindLifeToday()`（`lifeWaterCard/lifeSleepCard/bindWaterCard/bindSleepCard` 以 ctx `home`/`dlg` 双上下文复用——概览今日卡与**各自**历史弹窗 `openWaterHistory()/openSleepHistory()` 共用一套渲染与绑定；睡眠逐段新增/修改/删除走 `sleepSessionEditor(d, idx, after)`）
 - **数据接口**：公开 = `POST /api/register`、`POST /api/login`、`GET /api/health`、静态页（含 `/admin`）；登录后可用 = `GET/PUT /api/state`（**本人数树**，`{rev?, data}`——rev 过期 409、缺省盲写；服务端只取 `data.users[本人uid]` 那一份，其余键忽略，缺本人键则 400 拒绝防误清空）、`GET /api/me`、`POST /api/logout`、`GET /api/system/library`（**PUT 仅 admin**）；**后台 API（仅 admin）** = `GET /api/admin/users`（列表+数据概况）、`PUT /api/admin/role`（设/撤管理员，防"最后一个管理员"）、`PUT /api/admin/password`（重置并强制该账户下线）、`DELETE /api/admin/users`（删账户级联清数据，不可删自己）
 - **API 仍是"整树 state"风格**（粒度收窄为单账户）：细粒度 CRUD 端点留待未来按需追加，mapper 后的关系表结构已支持
 
@@ -188,7 +190,7 @@ weFit/
 | 表 | 主键 | 说明 |
 |---|---|---|
 | `app` | id（恒为 1，单行） | 全局单行：`system_json`（**系统共享库**，管理员维护） |
-| `users` | id | 成员档案：name, avatar, color, activity, water_target + `profile_json` / `goal_json` / `nutrition_json` + `rev`（每用户乐观并发）/ `theme` / `onboarded` / `foods_json` / `exercises_json`（**个人食物/动作库**）/ `home_order_json`（概览卡顺序）/ `body_hidden_json`（**身体页隐藏项**，NULL 或空数 = 全部显示） |
+| `users` | id | 成员档案：name, avatar, color, activity, water_target + `profile_json` / `goal_json` / `nutrition_json` + `rev`（每用户乐观并发）/ `theme` / `onboarded` / `foods_json` / `exercises_json`（**个人食物/动作库**）/ `home_order_json`（概览卡顺序）/ `chart_order_json`（**历史页图表卡顺序**，同上）/ `body_hidden_json`（**身体页隐藏项**，NULL 或空数 = 全部显示） |
 | `accounts` | username | **登录账户**：user_id（绑定档案，CASCADE）/ pwd（`scrypt$盐$哈希`）/ role（首个注册 = `admin`，其余 `user`）/ created_at |
 | `sessions` | token | **会话**：username / created_at / expires_at（30 天，存库 = 服务器重启不掉线） |
 | `meal_days` | (user_id, date) | "日期被打开过"标记——餐次 4 槽全空也要能原样还原 |

@@ -146,19 +146,21 @@ a{color:var(--brand-ink)}
 .tile.accent{background:linear-gradient(150deg,var(--brand-soft),var(--surface))}
 .tile.accent .val{color:var(--brand-ink)}
 
-/* ============ 概览页「今日卡片」区（可拖动排序） ============
-   顶部磁贴行不在 .home-cards 里，固定不动；卡间距交给 grid gap，故容器内的 .card margin 清零 */
-.home-cards{display:grid;gap:16px;margin-top:14px}
-.home-cards>.card{margin:0;cursor:grab}
-.home-cards>.card[data-wide]{grid-column:1/-1}   /* 宽屏整行：5 张卡全宽（饮水/睡眠也不再并排，2026-09-12） */
+/* ============ 可拖动排序的两个卡区（概览「今日卡片」/ 历史页图表卡，共用一套拖动，见 app.js bindCardSort） ============
+   顶部磁贴行不在容器里，固定不动；卡间距交给 grid gap，故容器内的卡 margin 清零。
+   两个容器都挂 .sortable（拖动中的视觉/光标只看这个类，与具体卡型无关） */
+.home-cards,.st-charts{display:grid;gap:16px;margin-top:14px}
+.home-cards>.card,.st-charts>.chart-card{margin:0}
+.sortable>*[data-wide]{grid-column:1/-1}   /* 宽屏整行：5 张卡全宽（饮水/睡眠也不再并排，2026-09-12） */
+.home-cards>*{cursor:grab}   /* 卡体本身可拾取；图表卡只在抓柄上显示可拖光标（它只能从抓柄起拖） */
 /* 抓手：鼠标悬停卡头时变明显，手机常显淡淡的（长按也能拾取，它只是把“能拖”显示出来） */
 .hcard-grip{margin-left:auto;padding:0 3px;color:var(--ink-3);opacity:.5;font-size:14px;line-height:1;
   cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;transition:opacity .15s,color .15s}
-.home-cards .card h3:hover .hcard-grip{opacity:1}
+.sortable>*:hover .hcard-grip{opacity:1}
 .hcard-grip:hover{color:var(--brand-ink)}
 /* 长按待拾取 / 已拾取（拖动中要禁掉过渡，卡片是逐帧跟手的） */
-.home-cards .card.pressing{transform:scale(.985);transition:transform .15s}
-.home-cards .card.dragging{position:relative;z-index:5;cursor:grabbing;transition:none;
+.sortable>*.pressing{transform:scale(.985);transition:transform .15s}
+.sortable>*.dragging{position:relative;z-index:5;cursor:grabbing;transition:none;
   box-shadow:0 12px 30px -10px rgba(0,0,0,.4)}
 body.hcard-dragging{cursor:grabbing;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
 body.hcard-dragging input,body.hcard-dragging textarea{user-select:text;-webkit-user-select:text}
@@ -331,6 +333,17 @@ body.hcard-dragging input,body.hcard-dragging textarea{user-select:text;-webkit-
 .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-2);align-items:center;padding:0 2px 4px}
 .legend .li{display:inline-flex;align-items:center;gap:6px}
 .legend .sw{width:10px;height:10px;border-radius:3px;display:inline-block}
+/* 历史页「习惯打卡」卡（app.js renderHabitChart）:
+   每习惯一行 = 图标 + 名称 + 近30天完成率 + 一条 30 格热力格（30 列均分整宽）。
+   纯只读、不可点（2026-09-13 裁定去掉补记：单格 ~8px 点不准，打卡本体在概览页）。 */
+.hab-row{margin-bottom:12px}
+.hab-row:last-child{margin-bottom:2px}
+.hab-h{display:flex;align-items:center;gap:9px;padding:0 2px}
+.hab-h .b{font-size:14px}
+.hab-h .sub{font-size:12px;color:var(--ink-3);margin-top:1px}
+.habgrid{display:grid;grid-template-columns:repeat(30,minmax(0,1fr));gap:2px;margin-top:7px;padding:0 2px}
+.habcell{display:block;width:100%;aspect-ratio:1/1;border-radius:3px;background:var(--surface-3)}
+.habcell.on{box-shadow:inset 0 0 0 1px rgba(255,255,255,.16)}
 
 /* ============ 弹窗 ============ */
 .overlay{position:fixed;inset:0;background:rgba(10,14,12,.5);backdrop-filter:blur(2px);z-index:60;
@@ -399,6 +412,9 @@ body.hcard-dragging input,body.hcard-dragging textarea{user-select:text;-webkit-
   /* 移动端更紧凑(2026-09-11 按要求)：卡间距 16px → 12px。桌面侧保持 16px */
   .card{margin-bottom:12px}
   .home-cards{gap:12px}
+  .st-charts{gap:12px}
+  /* 手机端图表卡头更紧凑：抓手常显一点点（-webkit-touch-callout 已在 body 上关掉） */
+  .st-charts .hcard-grip{opacity:.6}
   /* 概览页顶部问候语手机端居中(2026-09-11 按要求)。只这一行居中——下方磁贴/卡片仍左对齐 */
   .home-greet{text-align:center}
   .hero{font-size:34px}
