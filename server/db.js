@@ -114,6 +114,19 @@ CREATE TABLE IF NOT EXISTS habit_done (
   PRIMARY KEY (user_id, habit_id, date)
 );
 CREATE INDEX IF NOT EXISTS idx_body_date ON body_records(user_id, date);
+/* v4.20 同步切片化：每个同步片一条「最后一次改动时的全局 rev」——rev 就是那时 users.rev 的值
+ * （单调递增即可，不开独立计数器）。两个约定：
+ *   · 片被删时**保留行并抬 rev**（缺行 = rev 0）——否则客户端用 remoteRev > baseRev
+ *     判不出「服务器那边这片已经没了」；
+ *   · 整树 PUT（老客户端/备份导入）把所有已知片一律抬到新全局 rev，让按片同步的客户端
+ *     一定能看见变动。
+ * 只在 map 层读写，不参与业务查询。 */
+CREATE TABLE IF NOT EXISTS user_slices (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  slice TEXT NOT NULL,
+  rev INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, slice)
+);
 /* v4：登录账户与会话（老数据不迁移——存量成员视为作废，新账户注册即建档） */
 CREATE TABLE IF NOT EXISTS accounts (
   username TEXT PRIMARY KEY,

@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/sleep-shape.test.js && node test/migration.test.js && node test/roundtrip.test.js && node test/admin.test.js && node test/render.test.js"
+    "test": "node test/sleep-shape.test.js && node test/slices.test.js && node test/migration.test.js && node test/roundtrip.test.js && node test/admin.test.js && node test/render.test.js && node test/sync-http.test.js"
   },
   "engines": {
     "node": ">=22.5"

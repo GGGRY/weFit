@@ -6,6 +6,7 @@
    - 鉴权中间件：除 login/register/health/静态文件外，/api/* 一律要求会话 Cookie
    - POST /api/register|/api/login：注册/登录（首个注册账户 = admin）
    - GET/PUT /api/state：本人数树读写（每用户 rev 乐观并发，写路径只触碰自己子树）
+   - GET/PUT /api/slices：按片同步（v4.20；写只写脏片、CAS 按片、冲突只冲突同片）
    - GET /api/system/library：读系统共享库；PUT：仅 admin
    - /api/admin/*（v4.1，仅 admin）：用户列表 / 设撤管理员 / 重置密码（踢会话）/ 删除账户（CASCADE 清数据）
    - GET /api/health：诊断
@@ -34,6 +35,8 @@ const STATIC_FILES = {
   '/js/seed-data.json': { file: 'js/seed-data.json', type: 'application/json; charset=utf-8' },
   /* 睡眠形状契约（v4.7）：与 server/mapper.js 共用同一份实现，故放在 public/js 下先行加载 */
   '/js/sleep-shape.js': { file: 'js/sleep-shape.js', type: 'text/javascript; charset=utf-8' },
+  /* 同步切片契约（v4.20）：同样前后端共用（mapper.js require），先于 app.js 加载 */
+  '/js/slices.js': { file: 'js/slices.js', type: 'text/javascript; charset=utf-8' },
   '/js/app.js': { file: 'js/app.js', type: 'text/javascript; charset=utf-8' },
   /* v4.16 调试钩子（?probe/?selftest/?ftest/?shot）专用：由 loadDev() 按需注入，用户路径不加载 */
   '/js/dev.js': { file: 'js/dev.js', type: 'text/javascript; charset=utf-8' },
@@ -169,6 +172,9 @@ function readSystemLibrary(db) {
 }
 
 const LIB_MAX_ENTRIES = 5000;
+/* 一次 PUT /api/slices 最多带多少片：正常一次编辑脏 1~3 片（习惯改名会带上若干打卡日），
+ * 500 只防「整库搬运」这种异常调用；超限显式报错不静默截断 */
+const SLICE_MAX_PER_WRITE = 500;
 function sanitizeLibrary(body) {
   if (!body || !Array.isArray(body.foods) || !Array.isArray(body.exercises)) return null;
   /* v4.3：旧版 slice(0,5000) 静默丢弃超限条目、admin 端收 200 还丢了草稿；改为显式报错 */
@@ -262,7 +268,93 @@ async function handleLogin(db, req, res) {
 /* ---------- 业务路由（命中并已响应 → 返回 undefined；未命中 → false） ---------- */
 async function handleState(db, req, res, sessionUser, pathname) {
   if (req.method === 'GET' && pathname === '/api/state') {
-    sendJson(res, 200, mapper.composeUser(db, sessionUser.userId));
+    /* v4.20：整树响应顺带带上切片 manifest（{key: 该片最后一次改动的全局 rev}），
+     * 让客户端开一次机就拿到全部基线；解析不了该字段的老客户端不受影响 */
+    const out = mapper.composeUser(db, sessionUser.userId);
+    out.slices = mapper.sliceManifest(db, sessionUser.userId);
+    sendJson(res, 200, out);
+    return;
+  }
+  /* ---------- 切片同步（v4.20）----------
+   * GET /api/slices[?since=<全局rev>][&keys=a,b]：
+   *   · since ≥ 当前全局 rev → {rev, unchanged:true}（30s 轮询的常见路径，不传整份 manifest）
+   *   · 带 keys → 追加 values（拿变过的片）；不带 → 只回整份 manifest
+   * PUT /api/slices {slices:{key:{rev?,value}}}：整批原子，任一片 CAS 不过 → 409 + 冲突片现值，
+   *   一片也不写（客户端拿到现值直接裁决，无需二次请求）。rev 缺省 = 盲写。 */
+  if (req.method === 'GET' && pathname === '/api/slices') {
+    const uid = sessionUser.userId;
+    const q = new URL(req.url, 'http://localhost').searchParams;
+    const cur = mapper.userRev(db, uid);
+    const since = q.get('since');
+    const keys = String(q.get('keys') || '').split(',').map(s => s.trim()).filter(Boolean);
+    /* 带 keys = 明确要值，优先于 since 短路（两者含义不同；客户端本次不组合使用，但契约要无歧义） */
+    if (!keys.length && since !== null && since !== '' && Number(since) >= cur) {
+      sendJson(res, 200, { rev: cur, unchanged: true, slices: {} });
+      return;
+    }
+    const slices = {}, values = {};
+    if (keys.length) {
+      for (const k of keys) {
+        if (!mapper.isValidSliceKey(k)) { sendJson(res, 400, { error: 'unknown_slice', key: k }); return; }
+        slices[k] = mapper.sliceRev(db, uid, k);
+        const v = mapper.readSlice(db, uid, k);
+        values[k] = v === undefined ? null : v;   /* 缺片 → null（客户端按「删片」处理） */
+      }
+      sendJson(res, 200, { rev: cur, slices: slices, values: values });
+      return;
+    }
+    sendJson(res, 200, { rev: cur, slices: mapper.sliceManifest(db, uid) });
+    return;
+  }
+  if (req.method === 'PUT' && pathname === '/api/slices') {
+    const body = await readJson(req, res);
+    if (!body) return;
+    const raw = body.slices;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      sendJson(res, 400, { error: 'invalid_slices', hint: '需 {slices:{key:{rev?,value}}}' });
+      return;
+    }
+    const keys = Object.keys(raw);
+    if (!keys.length) { sendJson(res, 400, { error: 'invalid_slices', hint: 'slices 不能为空' }); return; }
+    if (keys.length > SLICE_MAX_PER_WRITE) {
+      sendJson(res, 400, { error: 'too_many_slices', max: SLICE_MAX_PER_WRITE });
+      return;
+    }
+    const entries = [];
+    for (const k of keys) {
+      const item = raw[k];
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        sendJson(res, 400, { error: 'invalid_slices', key: k, hint: '每片需 {rev?, value}' });
+        return;
+      }
+      const bad = mapper.validateSliceValue(k, item.value);
+      if (bad) {
+        if (bad.error === 'unknown_slice') { sendJson(res, 400, { error: 'unknown_slice', key: k }); return; }
+        if (bad.error === 'sleep_too_many_segments') {
+          /* key 必须带上：客户端靠它把「这一片」挂起来跳过，否则同一批会被无限重试（400 死循环）。
+           * key 由 validateSliceValue 用 slices.js 的 sliceDayKey 拼好，不在路由里手拼 */
+          sendJson(res, 400, { error: bad.error, key: bad.key,
+            hint: '单日睡眠最多 ' + bad.max + ' 段（日期 ' + bad.date + '）' });
+          return;
+        }
+        sendJson(res, 400, { error: bad.error, key: k, hint: '切片值类型不符' });
+        return;
+      }
+      let rev;
+      if (item.rev === undefined || item.rev === null) rev = undefined;          /* 盲写 */
+      else if (typeof item.rev === 'number' && Number.isFinite(item.rev)) rev = item.rev;
+      else { sendJson(res, 400, { error: 'invalid_slice_rev', key: k }); return; }
+      entries.push({ key: k, value: item.value, rev: rev });
+    }
+    const result = mapper.writeSlices(db, sessionUser.userId, entries);
+    if (!result.ok) {
+      if (result.error === 'rev_conflict') {
+        sendJson(res, 409, { error: 'rev_conflict', rev: result.rev, conflicts: result.conflicts });
+        return;
+      }
+      sendJson(res, 401, { error: 'unauthorized' }); return;
+    }
+    sendJson(res, 200, result);
     return;
   }
   if (req.method === 'PUT' && pathname === '/api/state') {

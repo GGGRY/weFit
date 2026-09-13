@@ -21,6 +21,8 @@ const { start } = require('../server');
 const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixture.json'), 'utf8'));
 /* 睡眠形状契约仍唯一来源于前端目录（服务端 mapper 也 require 它），测试不另拄上限 */
 const { SLEEP_MAX_SEGS } = require('../../public/js/sleep-shape.js');
+/* 同步切片契约（v4.20）同样在前端目录：用它做「逐片写 == 客户端 writeSlice」的对账 */
+const SL = require('../../public/js/slices.js');
 /* 系统库种子条数不写死：断言「新账户个人库 = 当前种子」，种子增删后测试不再漂移 */
 const { SEED_FOODS, SEED_EXERCISES } = require('../../public/js/seed-data.js');
 
@@ -72,7 +74,7 @@ function normalizeExpected(state, uid) {
 }
 
 async function main() {
-  const { server, port } = await start({ port: 0, quiet: true });
+  const { server, port, db: srvDb } = await start({ port: 0, quiet: true });
   const base = 'http://127.0.0.1:' + port;
 
   /* 简易 cookie jar:一个"浏览器"= 一个账户会话 */
@@ -341,6 +343,15 @@ async function main() {
    * 但浏览器里 normalizeSleepDay 未定义、整个睡眠 UI 直接崩，故在此钉住 */
   r = await anon.req('GET', '/js/sleep-shape.js');
   ok('T17f sleep-shape.js→js', r.status === 200 && r.headers.get('content-type').includes('javascript'));
+  /* v4.20：同步切片契约文件同样靠 STATIC_FILES 显式映射托管（漏了映射服务端不报错，
+   * 但浏览器里 sliceKeysOf/writeSlice 未定义，整个按片同步直接崩） */
+  r = await anon.req('GET', '/js/slices.js');
+  ok('T17f2 slices.js→js', r.status === 200 && r.headers.get('content-type').includes('javascript'));
+  r = await anon.req('GET', '/');
+  ok('T17f3 index.html 在 app.js 前加载 slices.js（在 sleep-shape.js 之后）',
+    r.text.includes('js/slices.js')
+    && r.text.indexOf('js/sleep-shape.js') < r.text.indexOf('js/slices.js')
+    && r.text.indexOf('js/slices.js') < r.text.indexOf('js/app.js'));
   /* 种子数据本体改由 seed-data.json 承载：浏览器经同步 XHR 读取，漏映射会直接丢种子 */
   r = await anon.req('GET', '/js/seed-data.json');
   ok('T17h seed-data.json→json 且含 foods/exercises', r.status === 200 && r.headers.get('content-type').includes('application/json')
@@ -446,6 +457,195 @@ async function main() {
   ok('T18d 规模耗时合理(put<3s, get<3s)', putMs < 3000 && getMs < 3000, 'put=' + putMs + 'ms get=' + getMs + 'ms');
   r = await B.req('GET', '/api/state');
   ok('T18e 压测后 B 仍完好', r.status === 200 && JSON.stringify(r.json) === snapshotB);
+
+  /* ============ v4.20 切片同步 ============
+   * 核心不变量：逐片写的结果必须与「把同一片写进整树」的结果深度相等（前端 writeSlice 对账），
+   * 否则整树客户端与切片客户端会互相把对方的数据洗掉。另守 CAS/删片/孤儿清理/兼容整树路径。
+   * 用上面 T15f 注册的 carol（账户 C）——尚未登出，会话仍有效，与 A/B 数据互不干扰。 */
+  r = await C.req('GET', '/api/state');
+  ok('T19a 切片用例账户可读（carol 会话仍有效）', r.status === 200, JSON.stringify(r.json).slice(0, 120));
+  const uidC = Object.keys(r.json.data.users)[0];
+  const rev0 = r.json.rev;
+  ok('T19b 未登录访问切片接口→401',
+    (await anon.req('GET', '/api/slices')).status === 401 && (await anon.req('PUT', '/api/slices', { slices: {} })).status === 401);
+  ok('T19c 整树响应带切片 manifest（新账户为空表）',
+    r.json.slices && typeof r.json.slices === 'object' && Object.keys(r.json.slices).length === 0, JSON.stringify(r.json.slices));
+
+  /* --- 逐片写：与客户端 writeSlice 对账 --- */
+  const MEAL = { breakfast: [{ id: 'f1', name: '燕麦', per100: { kcal: 367, p: 13, c: 61, f: 7 }, g: 60 }], lunch: [], dinner: [], snack: [] };
+  const expectTree = JSON.parse(JSON.stringify(r.json.data));
+  SL.writeSlice(expectTree, 'meals:2026-09-13', MEAL);
+  r = await C.req('PUT', '/api/slices', { slices: { 'meals:2026-09-13': { rev: 0, value: MEAL } } });
+  ok('T19d 单片写入→200 + 新全局 rev + 该片 rev',
+    r.status === 200 && r.json.rev === rev0 + 1 && r.json.slices['meals:2026-09-13'] === rev0 + 1, JSON.stringify(r.json));
+  const revMeal = r.json.rev;
+  r = await C.req('GET', '/api/state');
+  ok('T19e 逐片写结果 == 客户端 writeSlice 的整树结果（防两侧漂移）', deepEq(expectTree, r.json.data), LAST_FAIL);
+  ok('T19f manifest 记下该片新 rev，其余片不受影响',
+    r.json.slices['meals:2026-09-13'] === revMeal && Object.keys(r.json.slices).length === 1);
+
+  /* --- habits 定义 + 逐日打卡（两片） --- */
+  r = await C.req('GET', '/api/state');
+  const treeH = JSON.parse(JSON.stringify(r.json.data));
+  const HABITS = [{ id: 'h1', name: '饮水达标', icon: '💧', color: 'var(--cat1)' }, { id: 'h2', name: '拉伸', icon: '🧘', color: 'var(--brand)' }];
+  SL.writeSlice(treeH, 'habits', HABITS);
+  SL.writeSlice(treeH, 'habitdone:2026-09-13', { h1: true, h9: true });   /* h9 未定义 → 服务端应丢弃 */
+  r = await C.req('PUT', '/api/slices', { slices: {
+    habits: { rev: 0, value: HABITS },
+    'habitdone:2026-09-13': { rev: 0, value: { h1: true, h9: true } },
+  } });
+  ok('T19g 批量两片一次写（同事务、同一新 rev）',
+    r.status === 200 && r.json.slices.habits === r.json.rev && r.json.slices['habitdone:2026-09-13'] === r.json.rev, JSON.stringify(r.json));
+  r = await C.req('GET', '/api/state');
+  SL.writeSlice(treeH, 'habits', HABITS);                                  /* 对账前去掉 h9 的痕迹（服务端会丢） */
+  ok('T19h 未定义习惯的打卡被丢弃，已定义的保留',
+    JSON.stringify(r.json.data.users[uidC].habits.map(h => [h.id, Object.keys(h.done)])) ===
+    JSON.stringify([['h1', ['2026-09-13']], ['h2', []]]), JSON.stringify(r.json.data.users[uidC].habits));
+  ok('T19i habits 片与客户端 writeSlice 结果一致（定义+按 id 保留的打卡）', deepEq(treeH, r.json.data), LAST_FAIL);
+
+  /* --- CAS：一片过期 → 整批不写 --- */
+  const revWater = (await C.req('GET', '/api/state')).json.rev;
+  r = await C.req('PUT', '/api/slices', { slices: { 'water:2026-09-13': { rev: 0, value: 6 } } });
+  ok('T19j 新片以 rev 0 写入→200', r.status === 200 && r.json.slices['water:2026-09-13'] === revWater + 1, JSON.stringify(r.json));
+  r = await C.req('PUT', '/api/slices', { slices: {
+    'water:2026-09-13': { rev: 0, value: 99 },                        /* 过期（服务器已到 revWater+1） */
+    'sleep:2026-09-13': { rev: 0, value: [{ t: 'night', bed: '23:30', wake: '07:00', mins: 450 }] },
+  } });
+  ok('T19k 任一片过期→409，冲突片带当前 rev 与现值（供客户端直接裁决）',
+    r.status === 409 && r.json.error === 'rev_conflict' && r.json.conflicts['water:2026-09-13']
+    && r.json.conflicts['water:2026-09-13'].rev === revWater + 1 && r.json.conflicts['water:2026-09-13'].value === 6
+    && !r.json.conflicts['sleep:2026-09-13'], JSON.stringify(r.json));
+  r = await C.req('GET', '/api/state');
+  ok('T19l 整批作废：同批里没过期的 sleep 片也没被写进去',
+    r.json.data.users[uidC].water['2026-09-13'] === 6 && !('2026-09-13' in (r.json.data.users[uidC].sleep || {})));
+
+  /* --- 盲写（离线回线首推 / 用户明确选择覆盖） --- */
+  r = await C.req('PUT', '/api/slices', { slices: { 'water:2026-09-13': { value: 7 } } });
+  ok('T19m 不带 rev = 盲写，直接覆盖', r.status === 200 && (await C.req('GET', '/api/state')).json.data.users[uidC].water['2026-09-13'] === 7);
+
+  /* --- 删片 --- */
+  const revBeforeDel = (await C.req('GET', '/api/state')).json; 
+  r = await C.req('PUT', '/api/slices', { slices: { 'water:2026-09-13': { rev: revBeforeDel.slices['water:2026-09-13'], value: null } } });
+  ok('T19n 值 null = 删片→200', r.status === 200, JSON.stringify(r.json));
+  r = await C.req('GET', '/api/state');
+  const revAfterDel = r.json.rev;
+  ok('T19o 删后整树无该键，且 manifest **保留该片并抬 rev**（客户端才判得出「服务器删了它」）',
+    !('2026-09-13' in (r.json.data.users[uidC].water || {}))
+    && r.json.slices['water:2026-09-13'] === revAfterDel, JSON.stringify(r.json.slices));
+
+  /* --- since 短路 / keys 取片 --- */
+  r = await C.req('GET', '/api/slices?since=' + revAfterDel);
+  ok('T19p since ≥ 当前全局 rev → unchanged 短路（不带 manifest）',
+    r.status === 200 && r.json.unchanged === true && Object.keys(r.json.slices).length === 0, JSON.stringify(r.json));
+  r = await C.req('GET', '/api/slices?since=' + rev0);
+  ok('T19q since 落后 → 回整份 manifest',
+    r.status === 200 && !r.json.unchanged && r.json.slices['meals:2026-09-13'] === revMeal);
+  r = await C.req('GET', '/api/slices?keys=' + encodeURIComponent('meals:2026-09-13,water:2026-09-13'));
+  ok('T19r keys= 同时回 rev 与 values（缺片 → null）',
+    r.status === 200 && r.json.values['meals:2026-09-13'].breakfast[0].name === '燕麦'
+    && r.json.values['water:2026-09-13'] === null && r.json.slices['water:2026-09-13'] === revAfterDel, JSON.stringify(r.json).slice(0, 160));
+  r = await C.req('GET', '/api/slices?keys=bogus');
+  ok('T19s keys 含未知片→400', r.status === 400 && r.json.error === 'unknown_slice');
+  /* keys 与 since 同时给：keys = 明确要值，优先于 since 短路（契约无歧义） */
+  r = await C.req('GET', '/api/slices?since=' + revAfterDel + '&keys=' + encodeURIComponent('meals:2026-09-13'));
+  ok('T19s2 keys 与 since 同给：keys 优先（仍回值，不被 unchanged 短路）',
+    r.status === 200 && !r.json.unchanged && r.json.values['meals:2026-09-13'].breakfast[0].name === '燕麦',
+    JSON.stringify(r.json).slice(0, 160));
+
+  /* --- 形状护栏 --- */
+  r = await C.req('PUT', '/api/slices', { slices: { 'nope:2026-09-13': { value: 1 } } });
+  ok('T19t 未知片名→400 unknown_slice', r.status === 400 && r.json.error === 'unknown_slice');
+  r = await C.req('PUT', '/api/slices', { slices: { 'water:2026-09-13': { value: '六杯' } } });
+  ok('T19u 类型不符（饮水给字符串）→400（宁可报错不静默变形）', r.status === 400 && r.json.error === 'invalid_slice_value');
+  r = await C.req('PUT', '/api/slices', { slices: { 'water:2026-09-13': { value: 1, rev: 'x' } } });
+  ok('T19v rev 非数字→400（绝不降级成盲写）', r.status === 400 && r.json.error === 'invalid_slice_rev');
+  const many = {};
+  for (let i = 0; i < 501; i++) {   /* 501 个互不相同的日期片（同一天只能一片） */
+    many['water:' + new Date(Date.UTC(2026, 0, 1) + i * 86400000).toISOString().slice(0, 10)] = { value: i };
+  }
+  r = await C.req('PUT', '/api/slices', { slices: many });
+  ok('T19w 单次超 500 片→400 too_many_slices（不是静默丢弃）', r.status === 400 && r.json.error === 'too_many_slices', JSON.stringify(r.json).slice(0, 120));
+  r = await C.req('PUT', '/api/slices', { slices: { 'sleep:2026-09-13': { value: Array.from({ length: SLEEP_MAX_SEGS + 1 }, (_, i) => ({ t: 'rest', mins: i + 1 })) } } });
+  ok('T19x 单日睡眠超上限→400（与整树路径同一上限）', r.status === 400 && r.json.error === 'sleep_too_many_segments');
+
+  /* --- 孤儿打卡：写入侧存着（定义可能后到），读侧与整树同口径（只回已定义习惯） --- */  /* --- 孤儿打卡：写入侧存着（定义可能后到），读侧与整树同口径（只回已定义习惯） --- */
+  r = await C.req('GET', '/api/state');
+  const revHb = r.json.slices.habits || 0;
+  r = await C.req('PUT', '/api/slices', { slices: {
+    'habitdone:2026-09-13': { value: { h1: true, h_ghost: true } },   /* h_ghost 未定义 */
+  } });
+  ok('T19E 未定义习惯的打卡写入→200（存着，不静默丢）', r.status === 200, JSON.stringify(r.json).slice(0, 120));
+  r = await C.req('GET', '/api/slices?keys=' + encodeURIComponent('habitdone:2026-09-13'));
+  ok('T19F 读侧只回已定义习惯的打卡：与整树读同形状（h_ghost 不出现）',
+    JSON.stringify(r.json.values['habitdone:2026-09-13']) === JSON.stringify({ h1: true }),
+    JSON.stringify(r.json.values));
+  r = await C.req('GET', '/api/state');
+  const habitDoneTree = (r.json.data.users[uidC].habits || []).map(h => [h.id, Object.keys(h.done)]).sort();
+  ok('T19G 整树读同样看不到孤儿打卡（两路一致；此时定义里还有 h2，它的打卡为空）',
+    JSON.stringify(habitDoneTree) === JSON.stringify([['h1', ['2026-09-13']], ['h2', []]]), JSON.stringify(habitDoneTree));
+
+  /* --- lib 片（个人库两份 JSON）逐片写 == 客户端 writeSlice：users 行列映射同源（防两份手抄漂移） --- */
+  r = await C.req('GET', '/api/state');
+  const tLib = JSON.parse(JSON.stringify(r.json.data));
+  const LIB = { foods: [{ id: 'f9', name: '测试食物', per100: { kcal: 1 } }], exercises: [{ id: 'e9', name: '测试动作', cat: '力量' }] };
+  SL.writeSlice(tLib, 'lib', LIB);
+  r = await C.req('PUT', '/api/slices', { slices: { lib: { rev: r.json.slices.lib || 0, value: LIB } } });
+  ok('T19C lib 片写入→200', r.status === 200, JSON.stringify(r.json).slice(0, 120));
+  r = await C.req('GET', '/api/state');
+  ok('T19D lib 片逐片写结果 == 客户端 writeSlice（users 行的库列映射同源）',
+    deepEq(tLib, r.json.data) && r.json.data.shared.foods[0].name === '测试食物', LAST_FAIL);
+
+  /* --- habits 改写时的孤儿打卡清理（不能顺手抹掉别人的打卡） --- */
+  r = await C.req('GET', '/api/state');
+  const revHab = r.json.slices.habits;
+  r = await C.req('PUT', '/api/slices', { slices: { habits: { rev: revHab, value: [{ id: 'h1', name: '饮水达标', icon: '💧', color: 'var(--cat1)' }] } } });
+  ok('T19y 删掉 h2 定义→200', r.status === 200, JSON.stringify(r.json));
+  r = await C.req('GET', '/api/state');
+  ok('T19z 孤儿打卡随定义删除消失，h1 的打卡完好',
+    JSON.stringify(r.json.data.users[uidC].habits.map(h => [h.id, Object.keys(h.done)])) === JSON.stringify([['h1', ['2026-09-13']]]),
+    JSON.stringify(r.json.data.users[uidC].habits));
+
+  /* --- 兼容：整树 PUT（老客户端/备份导入）把**所有已知片**抬到新全局 rev --- */
+  r = await C.req('GET', '/api/state');
+  const legacyRev = r.json.rev;
+  const legacyTree = r.json.data;
+  r = await C.req('PUT', '/api/state', { rev: legacyRev, data: legacyTree });
+  const newRev = r.json.rev;
+  r = await C.req('GET', '/api/state');
+  const known = Object.keys(r.json.slices);
+  ok('T19A 整树 PUT 后：所有已知片（含已删的 water 片）rev 全部抬到新全局 rev',
+    known.length >= 3 && known.every(k => r.json.slices[k] === newRev) && r.json.slices['water:2026-09-13'] === newRev, JSON.stringify(r.json.slices));
+  r = await C.req('GET', '/api/slices?since=' + newRev);
+  ok('T19B 抬完 rev 后 since 短路仍成立（不会让按片客户端反复重拉）', r.json.unchanged === true, JSON.stringify(r.json));
+
+  /* --- B1：整树 PUT 删掉一天，也必须给这一天立墓碑 ——
+   * 场景 = v4.20 之前的老账户（user_slices 表为空）+ 老客户端整树写删数据：
+   * 旧写法只抬「表里已有行」和「新树里出现」的片，被删的这天两边都不在 → 没墓碑 →
+   * 按片客户端永远不知道它被删了，之后还会以 rev 0 通过 CAS 把它复活。 */
+  r = await C.req('GET', '/api/state');
+  const treeB1 = JSON.parse(JSON.stringify(r.json.data));
+  treeB1.users[uidC].meals['2026-09-20'] = { breakfast: [{ id: 'bx', name: '墓碑饭', g: 100 }], lunch: [], dinner: [], snack: [] };
+  treeB1.users[uidC].water['2026-09-20'] = 3;
+  r = await C.req('PUT', '/api/state', { rev: r.json.rev, data: treeB1 });
+  ok('B1a 整树写先造出这天', r.status === 200);
+  r = await C.req('GET', '/api/state');
+  const revB1 = r.json.rev;
+  const tombMeals = r.json.slices['meals:2026-09-20'], tombWater = r.json.slices['water:2026-09-20'];
+  /* 模拟「老账户」：把用户切片表清空（老客户端 + v4.20 前的库就是这个状态），再整树删掉这天 */
+  srvDb.exec('DELETE FROM user_slices');
+  const treeB1b = JSON.parse(JSON.stringify(treeB1));
+  delete treeB1b.users[uidC].meals['2026-09-20'];
+  delete treeB1b.users[uidC].water['2026-09-20'];
+  r = await C.req('PUT', '/api/state', { rev: revB1, data: treeB1b });
+  ok('B1b 表清空后整树写删除这天→200', r.status === 200);
+  const revB1b = r.json.rev;
+  r = await C.req('GET', '/api/state');
+  ok('B1c 被删的这天留下了**墓碑**（manifest 里仍有该片，且 rev 抬到新全局 rev）',
+    r.json.slices['meals:2026-09-20'] === revB1b && r.json.slices['water:2026-09-20'] === revB1b,
+    'slices=' + JSON.stringify(r.json.slices).slice(0, 200));
+  ok('B1d 墓碑片读出来是「没有这一片」（值 null），按片客户端据此删掉本机那一份',
+    typeof tombMeals === 'number' && typeof tombWater === 'number'
+    && !r.json.data.users[uidC].meals['2026-09-20'] && r.json.data.users[uidC].water['2026-09-20'] === undefined);
 
   console.log('---');
   console.log(failed === 0

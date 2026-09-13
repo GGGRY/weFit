@@ -1,6 +1,6 @@
 # 健康管理 · 项目备忘录
 
-> 当前版本 **v4.19** · 最后更新 2026-09-13 · 版本变更历史见 [CHANGELOG.md](CHANGELOG.md) · 后续计划见 [PLANS.md](PLANS.md)
+> 当前版本 **v4.20** · 最后更新 2026-09-13 · 版本变更历史见 [CHANGELOG.md](CHANGELOG.md) · 后续计划见 [PLANS.md](PLANS.md)
 > 本文只记**项目定位、功能清单与结构**；交互细节、样式与按钮行为不记（改动前先读代码）。
 
 ## 一、项目定位
@@ -9,11 +9,11 @@
 
 **技术形态：零依赖全栈**
 
-- **前端** `public/`：`index.html` + `admin.html` + `css/style.css` + `js/app.js` + `js/seed-data.js` + `js/sleep-shape.js`（+ `js/dev.js` 调试钩子，按需注入）。无构建、无外部依赖，样式/脚本/图标全内联
+- **前端** `public/`：`index.html` + `admin.html` + `css/style.css` + `js/app.js` + `js/seed-data.js` + `js/sleep-shape.js` + `js/slices.js`（+ `js/dev.js` 调试钩子，按需注入）。无构建、无外部依赖，样式/脚本/图标全内联
 - **后端** `server/`：Node 内置 `node:http` + `node:sqlite` + `node:crypto`，npm 依赖为零
 - **鉴权**：scrypt 密码哈希 + SQLite 持久会话（30 天）+ HttpOnly Cookie；除登录/注册/健康检查/静态页外全部 API 走鉴权中间件
-- **数据库** `server/data/jjhealth.db`：会增长的集合拆为 13 张关系表；profile/goal/nutrition 与个人食物/动作库等形状固定对象用 JSON 列整存保真
-- **同步模型**：同一服务器 + 登录同一账户 = 同一份本人数据；不同账户彼此隔离；localStorage 只是按账户分键的离线缓存，服务器为准
+- **数据库** `server/data/jjhealth.db`：会增长的集合拆为 14 张关系表；profile/goal/nutrition 与个人食物/动作库等形状固定对象用 JSON 列整存保真
+- **同步模型（v4.20 切片化）**：同一服务器 + 登录同一账户 = 同一份本人数据；不同账户彼此隔离；localStorage 只是按账户分键的离线缓存，服务器为准。同步粒度 = **片**（`(账户,date)` 或账户级固定块，契约见 `js/slices.js`）：写只写脏片、CAS 按片、冲突只冲突同片
 - **启动**：`./start.sh`（Linux/macOS）或双击 `start.bat`（Windows），端口 8123；手机同 Wi-Fi 访问 `http://<电脑IP>:8123`
 - **静态资源**：一律 `Cache-Control: no-cache` + `ETag`（大小+mtime），未改动回 `304`、改动即时生效（无构建/无版本号，靠 304 而非 `max-age`）；≥1KB 的文本响应走 gzip；`server.keepAliveTimeout` = 65s。ETag 含 mtime，**不要用「改内容不改 mtime」的方式写文件**
 - **种子数据只在服务端**：`js/seed-data.json`（食物 321（USDA）+ 动作 27）由 `server/seed.js` 在 Node 侧 require 建系统库，**浏览器不加载**（用户端走 `GET /api/system/library`）；`js/seed-data.js` 在浏览器只提供枚举/默认值/来源常量
@@ -90,11 +90,17 @@
 
 ### 9. 数据与同步
 
-- 权威数据在 `server/data/jjhealth.db`；每次保存 = localStorage 即时落盘 + 600ms 防抖 `PUT /api/state`（只写本人子树）
-- 启动：探测登录态 → 读服务器本人数树 → 不可达则降级读本账户缓存；注册即建档并自动登录
-- 离线：照常记录，每 30 秒自动重试，回线自动补推；离线期间关页后重开——服务器没动则静默补推，服务器前进了则弹窗人工裁决（采用服务器 / 本机覆盖），两个方向都不静默丢改动
-- 冲突：**每用户独立 rev**，本账户其他设备先写触发 409 弹窗二选一；裁决逻辑收敛在 `converge()`（load / 30s 回线 / 409 三入口共用）
-- 未登录访问 `/api/state`、`/api/system/library` 一律 401 → 前端清工作区弹登录门；写操作要求 `Content-Type: application/json`；会话 30 天存库
+- 权威数据在 `server/data/jjhealth.db`；每次保存 = localStorage 即时落盘 + 600ms 防抖推送脏片（v4.20 起 `PUT /api/slices`，只发真正改过的那几片；值从本机树现取）
+- 启动：探测登录态 → 读服务器本人数树（带全量切片 manifest 作基线）→ 不可达则降级读本账户缓存；注册即建档并自动登录
+- 离线：照常记录，每 30 秒自动重试，回线自动补推；离线期间关页后重开——服务器没动则静默补推，**只有「本机与服务器都改过的同一片」**才弹窗人工裁决，且只放弃/覆盖冲突片，其余本机改动照常上传
+- 冲突：片级 CAS（`user_slices.rev` = 该片最后一次改动时的全局 `users.rev`）；裁决逻辑收敛在 `converge()`（load / 30s 回线 / 409 三入口共用）。前端两份待推清单：`meta.dirtySlices`（与基线**有差异**的片，每次 save 重算，回退到原值即收回）与 `meta.pushSlices`（**必须推但与基线同形**的片：采纳时本机规范化补出的默认值、离线重开时转正的待推片、重挂回树的本机脏片），基线 rev 养在 `meta.dirtyRevs`
+- 增量拉取：干净时 30s 轮询先发 `GET /api/slices?since=<全局rev>`（未动只回 `unchanged`，几十字节），变了才用 `?keys=` 拉那几片（**单轮上限 200 片**）并挂回本机树渲染
+- **全局游标（`srv.rev`/`meta.rev`）只在这两种情况推进**：① 拿到完整 manifest 且把这一轮的变更**全部**处理完；② 整树 `GET /api/state` 采纳（那一版就是当时的全量）。推送成功只推进**按片基线**，全局游标一次最多 +1 —— `j.rev` 计入了推送在途时别端的写入，直接跳过去会让 `?since=` 漏掉那些片
+- 有弹窗在编辑时本轮拉取让路（拉回来的片会换掉树里的对象，弹窗捕获的引用会成孤儿）；`await` 回来后**再查一次**弹窗（这几秒里可能刚打开）
+- 旧版缓存兼容：`meta` 里有 `dirty` 但没 `dirtySlices` → 整个会话按旧语义走整树 `PUT /api/state`，一次对齐成功后自动转入按片；整树写会给「旧树里有、新树里没了」的逐日片**立墓碑**（`existingDaySliceKeys`），老账户（切片表为空）的删除也能被按片客户端看见
+- 离线启动（本会话从未拿到 manifest）时新改的片，CAS 基线先记 **`null` = 未知**；回线时由 `converge` 按「全局 `users.rev` 有没有动过」判定：没动 = 服务器那一版就是我们当时看到的那一版 → 直接补推并把基线补上（不再对本机自己推过的片弹假冲突），动了 → 人工裁决（宁可多问一句也不静默覆盖）
+- 失败语义：**5xx/408/429 = 暂时性**（退避重试，不判死本会话）；**4xx = 请求本身有问题**（`fatal`，状态栏提示刷新）；单片级的 400（坏值/超限/坏 rev）只挂起那一片（状态栏如实显示「N 项数据格式异常未同步」，改好自动放行）
+- 未登录访问 `/api/state`、`/api/slices`、`/api/system/library` 一律 401 → 前端清工作区弹登录门；写操作要求 `Content-Type: application/json`；会话 30 天存库
 - 导出/导入 JSON 备份只针对本人数据；「清空」只清本账户子树 + 缓存
 
 ### 10. 界面与体验
@@ -116,26 +122,28 @@ weFit/
 │  ├─ index.html / admin.html   #   用户端骨架 / 管理后台（自包含单文件，/admin）
 │  ├─ css/style.css             #   设计令牌 + 组件样式（含登录门/后台）
 │  └─ js/
-│     ├─ app.js                 #   全部业务 JS + 同步层 + 登录门/双层库 UI（~4.2k 行；定位看 AGENTS.md 锚点表）
+│     ├─ app.js                 #   全部业务 JS + 同步层 + 登录门/双层库 UI（~4.4k 行；定位看 AGENTS.md 锚点表）
 │     ├─ seed-data.json         #   食物 321 + 动作 27 种子本体（仅服务端与工具读）
 │     ├─ seed-data.js           #   枚举/默认值/来源常量（浏览器用）
 │     ├─ sleep-shape.js         #   睡眠形状契约唯一来源（前端 + 服务端 mapper 共用）
+│     ├─ slices.js              #   同步切片契约唯一来源（切片键语法/树上取写/人话名，前端 + 服务端 mapper 共用）
 │     └─ dev.js                 #   调试钩子 + 演示数据（按需注入，用户路径不加载）
 ├─ server/                      # 后端（零 npm 依赖）
-│  ├─ server.js                 #   node:http：鉴权 + 静态托管（ETag/304 + gzip）+ 登录注册 + 本人数树 + 系统库 + /api/admin/*
+│  ├─ server.js                 #   node:http：鉴权 + 静态托管（ETag/304 + gzip）+ 登录注册 + 本人数树 + 切片同步 + 系统库 + /api/admin/*
 │  ├─ auth.js                   #   scrypt 哈希 / 会话 token / Cookie
-│  ├─ db.js                     #   node:sqlite 建表 + 幂等列迁移（13 张表）
-│  ├─ mapper.js                 #   单人数树 ⇄ 关系表（不变量：PUT→GET 深度相等）
+│  ├─ db.js                     #   node:sqlite 建表 + 幂等列迁移（14 张表，含 user_slices）
+│  ├─ mapper.js                 #   单人数树 ⇄ 关系表 + 逐片读写（不变量：PUT→GET 深度相等；整树与逐片两路写出的形状一致）
 │  ├─ seed.js                   #   系统库种子构建
-│  ├─ test/                     #   断言：roundtrip 81 · admin 46 · migration 41 · render 170 · sleep-shape 17，另有 fixture 与一次性维护脚本
+│  ├─ test/                     #   断言：roundtrip 121 · render 214 · admin 46 · migration 41 · slices 27 · sync-http 35 · sleep-shape 17，另有 fixture 与一次性维护脚本
 │  └─ data/jjhealth.db          #   SQLite（.gitignore 已排除）
 └─ MEMO.md
 ```
 
 - **前端约定**：业务代码只读写 `state`（当前账户工作副本），`save()` = 写回 + localStorage + `queuePush()`；视图导航收敛在 `go(v)`，视图名与**每页滚动位置**记在 localStorage / 内存，刷新回上次页面；设置页的「食物库/动作库」是不进 `NAV` 的子页面，靠 `SUBVIEW` 声明父级（高亮与刷新落回「设置」）
 - **弹窗**：`showDialog` 维护 `dialogStack`，只有栈顶响应 Esc（睡眠编辑器是叠在历史弹窗上再开一层）
-- **数据接口**：公开 = `POST /api/register`、`POST /api/login`、`GET /api/health`、静态页；登录后 = `GET/PUT /api/state`（本人数树，`{rev?, data}`，rev 过期 409，缺本人键 400）、`GET /api/me`、`POST /api/logout`、`GET /api/system/library`（PUT 仅 admin）；后台 = `GET /api/admin/users`、`PUT /api/admin/role`、`PUT /api/admin/password`、`DELETE /api/admin/users`（均仅 admin）
-- API 仍是「整树 state」风格（粒度收窄为单账户），细粒度 CRUD 留待按需追加
+- **数据接口**：公开 = `POST /api/register`、`POST /api/login`、`GET /api/health`、静态页；登录后 = `GET/PUT /api/state`（本人数树，`{rev?, data}`，GET 另带 `slices` manifest；rev 过期 409，缺本人键 400）、`GET /api/slices[?since=&keys=]` 与 `PUT /api/slices`（v4.20 按片同步：写只写脏片、CAS 按片、冲突只冲突同片）、`GET /api/me`、`POST /api/logout`、`GET /api/system/library`（PUT 仅 admin）；后台 = `GET /api/admin/users`、`PUT /api/admin/role`、`PUT /api/admin/password`、`DELETE /api/admin/users`（均仅 admin）
+- **同步入口两套并存**：客户端日常走按片 `/api/slices`；`GET/PUT /api/state` 保留作兼容壳（旧客户端、备份导入、测试），整树 PUT 会把所有已知片的 rev 抬到新全局 rev
+- 数据同步仍以「单账户整棵子树」为原子边界（写路径只触碰自己那份）；按片只是在此之内把粒度收窄
 
 ### 数据库（`server/data/jjhealth.db` · 建表与迁移见 `server/db.js`）
 
@@ -156,15 +164,17 @@ weFit/
 | `water_records` | (user_id, date) | cups |
 | `habits` | (user_id, habit_id) | 习惯定义：seq, name, icon, color |
 | `habit_done` | (user_id, habit_id, date) | 打卡记录（一行 = 一次打卡） |
+| `user_slices` | (user_id, slice) | v4.20 同步切片版本：rev = 该片最后一次改动时的全局 `users.rev`（缺行 = 0）。片被删时**保留行并抬 rev**，否则客户端判不出「服务器删了这片」 |
 
 - 连接参数：`journal_mode = DELETE`（OneDrive 友好）、`synchronous = NORMAL`、`foreign_keys = ON`
 - **往返不变量**：单人数树 PUT→GET 深度相等，写路径只触碰本人子树（`test/roundtrip.test.js` 守）；已登记例外 = 按 `sleep-shape.js` 裁决丢弃的脏数据（前端 `ensureUserIntact` 必须同样删键），超 `SLEEP_MAX_SEGS` 是显式 400
+- **两路写出必须一致**：`mapper.js` 的整树写（`insertUserData`/`readUserData`）与逐片写（`writeSliceValue`/`readSlice`）**复用同一批小函数**，并由 `roundtrip.test.js` 的 T19 系列拿前端 `writeSlice` 对账——两侧漂移就是互相洗数据
 
 ## 四、已知边界与技术债
 
 1. **登录安全**：登录失败无限速/锁定；Cookie 未加 `Secure`（局域网可接受，**公网部署必须先上 HTTPS**）；无自助改密/删号（找管理员）；登录门是前端门，接口层才是防线
-2. 本账户多设备各改各的无法自动合并（人工裁决覆盖一方）
-3. 同步粒度为本账户整树（实测 PUT/GET <20ms）；数据量增长后可上细粒度端点
+2. 本账户多设备改**同一片**（同一天同一集合）无法自动合并，仍弹窗人工裁决；改不同片已不冲突（v4.20）
+3. 切片剩余粒度问题：`body`（身体记录，seq 是位置语义）与 `lib`（个人库）仍是整片，改一条体重就重写全部体重行；manifest 随历史线性增长（5 年账 ~2000 片 ≈ 60KB，靠 `?since=` 短路把常见轮询压到几十字节）。真要再细/行级合并（updated_at + LWW）或上 Postgres，见 PLANS.md §1
 4. 服务器需保持运行（电脑重启后手动启动 `start.sh`/`start.bat`），手机记录依赖电脑在线；彻底脱机见 PLANS.md 云端部署
 5. 饮水「杯」无 ml 换算；主题不跟随系统
 
@@ -173,7 +183,8 @@ weFit/
 - **电脑端**：`http://localhost:8123` → 注册（第一个账户 = 管理员）→ 登录即用；**手机端**：同 Wi-Fi 打开启动窗口显示的 `http://<电脑IP>:8123`，各人注册/登录自己的账户
 - **管理后台**：`http://<服务器>:8123/admin`，仅管理员可用（普通账户见「无管理权限」）
 - **换电脑**：整个文件夹拷走（OneDrive 同步即等价），`server/data/jjhealth.db` 就是全部数据
-- **跑测试**：`cd server && npm test`（sleep-shape 17 + migration 41 + roundtrip 81 + admin 46 + render 170 项断言）；浏览器 `?ftest` 15 项功能自测（会覆盖为演示数据）
+- **跑测试**：`cd server && npm test`（sleep-shape 17 + slices 27 + migration 41 + roundtrip 121 + admin 46 + render 214 + sync-http 35 项断言）；浏览器 `?ftest` 15 项功能自测（会覆盖为演示数据）
+- **同步回归**：`test/sync-http.test.js` = **真链路**端到端（真 `app.js` 同步层 × 真 http 服务 × 真 SQLite，两个 vm 「设备」各带自己的 localStorage 与 Cookie），守「改不同片不互相覆盖 / 只拉变过的片 / 同片冲突只冲突同片 / 旧缓存走整树 PUT 迁移」
 - **渲染回归**：`test/render.test.js`（零依赖 `node:vm` + DOM/fetch 桩）守「数据 → 页面 HTML」，布局/配色等视觉表现仍靠目测
 - **清零重来**：设置页 → 数据管理 → 清空数据（仅本账户，先导出留底）；全库重来 = 停服务后删 `server/data/jjhealth.db`
 - **忘记密码**：找管理员在后台「重置密码」；管理员全失联则停服务删库重来（最后手段）

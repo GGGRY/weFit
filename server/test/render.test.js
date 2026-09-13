@@ -88,12 +88,69 @@ function res(status, body) {
     text: async () => JSON.stringify(body) };
 }
 const SEED_REQUESTS = [];   /* 断言用：前端全程不应请求 seed-data.json（v4.16） */
+/* v4.20 按片同步的服务端桩：MANIFEST = 各片版本，SERVER_REV = 全局版本，SLICE_VALUES = 各片现值。
+ * SLICE_PUSHES 记下每次 PUT /api/slices 的请求体（断言「只推脏片」）。
+ * PUT 会像真服务端一样做按片 CAS：rev 对不上 → 409 + 冲突片现值。 */
+const SLICE_PUSHES = [];
+let CONFIRM_CALLS = 0;     /* 断言用：弹了几次人工裁决 */
+let CONCURRENT_WRITE = null;   /* 测试用：在 keys 请求返回前插一次「别的设备的写」 */
+let FAIL_NEXT_PUSH = null;     /* 测试用：让下一次 PUT /api/slices 返回指定状态码（验 5xx 不当 fatal） */
+const LEGACY_PUTS = [];    /* 整树 PUT /api/state 的请求体（旧缓存迁移路径） */
+const MANIFEST = {};
+const SLICE_VALUES = {};
+let SERVER_REV = 1;
 async function fakeFetch(url, opts) {
   const u = String(url), m = ((opts && opts.method) || 'GET').toUpperCase();
   if (u.endsWith('seed-data.json')) SEED_REQUESTS.push(u);
   if (m === 'GET' && u.endsWith('/api/me'))
     return res(200, { username: 'tester', role: 'user', user: { id: 'u_alice', name: '测试者' } });
-  if (m === 'GET' && u.endsWith('/api/state')) return res(200, { rev: 1, data: TREE });
+  if (m === 'GET' && u.endsWith('/api/state')) return res(200, { rev: SERVER_REV, data: TREE, slices: MANIFEST });
+  if (m === 'PUT' && u.endsWith('/api/state')) { LEGACY_PUTS.push(JSON.parse((opts && opts.body) || '{}')); return res(200, { ok: true, rev: ++SERVER_REV }); }
+  if (m === 'GET' && u.includes('/api/slices')) {
+    const sp = new URLSearchParams(u.slice(u.indexOf('?') + 1));
+    const since = sp.get('since');
+    if (since !== null && Number(since) >= SERVER_REV) return res(200, { rev: SERVER_REV, unchanged: true, slices: {} });
+    const keys = String(sp.get('keys') || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (keys.length) {
+      if (CONCURRENT_WRITE) { const f = CONCURRENT_WRITE; CONCURRENT_WRITE = null; f(); }   /* 测试用：manifest 与 keys 之间插一次「别的设备的写」 */
+      const slices = {}, values = {};
+      keys.forEach(k => {
+        slices[k] = MANIFEST[k] || 0;
+        values[k] = (SLICE_VALUES[k] === undefined) ? null : SLICE_VALUES[k];
+      });
+      return res(200, { rev: SERVER_REV, slices: slices, values: values });
+    }
+    return res(200, { rev: SERVER_REV, slices: MANIFEST });
+  }
+  if (m === 'PUT' && u.endsWith('/api/slices')) {
+    const body = JSON.parse((opts && opts.body) || '{}');
+    SLICE_PUSHES.push(body);
+    if (FAIL_NEXT_PUSH) { const code = FAIL_NEXT_PUSH; FAIL_NEXT_PUSH = null; return res(code, { error: 'busy' }); }
+    /* 镜像服务端的单片类型校验：饮水必须数字或 null，否则 400 带 key */
+    const badKey = Object.keys(body.slices || {}).find(k => k.indexOf('water:') === 0
+      && body.slices[k].value !== null && typeof body.slices[k].value !== 'number');
+    if (badKey) return res(400, { error: 'invalid_slice_value', key: badKey, hint: '切片值类型不符' });
+    const conflicts = {};
+    Object.keys(body.slices || {}).forEach(k => {
+      const item = body.slices[k];
+      if (item.rev !== undefined && item.rev !== (MANIFEST[k] || 0)) {
+        conflicts[k] = { rev: MANIFEST[k] || 0, value: (SLICE_VALUES[k] === undefined ? null : SLICE_VALUES[k]) };
+      }
+    });
+    if (Object.keys(conflicts).length) return res(409, { error: 'rev_conflict', rev: SERVER_REV, conflicts: conflicts });
+    /* 真服务端（mapper.writeSlices）整批共享一个 nextRev，这里必须一样——
+     * 按片各抬一次会掩盖「全局游标能推到哪」这类缺陷（C1/C2 就是被它掩盖的） */
+    const slices = {};
+    if (Object.keys(body.slices || {}).length) {
+      SERVER_REV += 1;
+      Object.keys(body.slices || {}).forEach(k => {
+        slices[k] = SERVER_REV;
+        MANIFEST[k] = SERVER_REV;
+        SLICE_VALUES[k] = body.slices[k].value;
+      });
+    }
+    return res(200, { ok: true, rev: SERVER_REV, slices: slices });
+  }
   if (m === 'GET' && u.endsWith('/system/library')) return res(200, {
     /* 第 1 项与个人库同名（夹具里的「米饭」/「杠铃卧推」）→ 系统分页应标「已有」；第 2 项未拥有 → 给「＋我的库」按钮 */
     foods: [{ id:'s1', name:'米饭', per100:{ kcal:116, p:2.6, c:25.9, f:0.3 }, src:'USDA' }, { id:'s2', name:'系统专属食物', per100:{ kcal:10, p:0, c:0, f:0 } }],
@@ -121,7 +178,7 @@ sandbox.window.removeEventListener = () => {};
 const ctx = vm.createContext(sandbox);
 
 const readPub = p => fs.readFileSync(path.join(__dirname, '..', '..', 'public', p), 'utf8');
-for (const f of ['js/seed-data.js', 'js/sleep-shape.js', 'js/app.js'])
+for (const f of ['js/seed-data.js', 'js/sleep-shape.js', 'js/slices.js', 'js/app.js'])
   vm.runInContext(readPub(f), ctx, { filename: 'public/' + f });
 
 /* 顶层 let/const 在上下文词法环境中,后续脚本可读写;Node 侧经 ev() 进入 */
@@ -1573,6 +1630,287 @@ async function main() {
        && (sqHtml.match(/class="tw-cell"/g) || []).length === 2,
        'bedWheel=' + bedWheel + ' bedCap=' + bedCap + ' wakeWheel=' + wakeWheel + ' wakeCap=' + wakeCap);
   }
+
+  /* ---------- T20 v4.20 按片同步（写只写脏片 / 拉只拉变过的片 / 冲突只冲突同片） ---------- */
+  const todayISO = ev('today()');
+  ev('curDialog && closeDialog()');   /* 前面用例可能留着编辑弹窗（有弹窗时增量拉取会让路，见 T20p） */
+  await ev('doPush()');        /* 先把前面用例积下的脏片推完 */
+  SLICE_PUSHES.length = 0;
+  await ev('doPush()');
+  ok('T20a 无脏片时 doPush 不推任何片（连请求都不发）', SLICE_PUSHES.length === 0, JSON.stringify(SLICE_PUSHES).slice(0, 120));
+
+  SLICE_PUSHES.length = 0;
+  ev("state.water['2099-01-01'] = 3; save()");
+  await ev('doPush()');
+  const p1 = SLICE_PUSHES[SLICE_PUSHES.length - 1];
+  ok('T20b 改一天饮水 → 只推 water:2099-01-01 一片（不再整树 PUT）',
+    SLICE_PUSHES.length === 1 && p1 && JSON.stringify(Object.keys(p1.slices)) === JSON.stringify(['water:2099-01-01'])
+    && p1.slices['water:2099-01-01'].value === 3 && typeof p1.slices['water:2099-01-01'].rev === 'number',
+    JSON.stringify(p1).slice(0, 200));
+  ok('T20b2 推送成功后该片基线抬到服务器新 rev（下次改它不会自撞 409）',
+    ev("srv.sliceRevs['water:2099-01-01']") === MANIFEST['water:2099-01-01'] && ev('metaGet().dirtySlices.length') === 0);
+
+  /* 其他设备改了另一片：本机无脏片 → 轮询拉变过的片挂回，不弹窗 */
+  SLICE_VALUES['water:2099-02-02'] = 9;
+  MANIFEST['water:2099-02-02'] = ++SERVER_REV;
+  await ev('retrySync()');
+  ok('T20c 轮询只拉变过的片并挂回本机树（since 短路 + keys 拉值）',
+    ev("state.water['2099-02-02']") === 9 && ev("srv.sliceRevs['water:2099-02-02']") === MANIFEST['water:2099-02-02']
+    && ev('metaGet().dirtySlices.length') === 0, 'got=' + ev("JSON.stringify(state.water)").slice(0, 200));
+
+  /* 同批拉回来的片：定义（habits）必须先于逐日打卡挂，否则新习惯的勾会被当成未知 id 丢掉 */
+  const hday = ev('today()');
+  const remoteHabits = JSON.parse(ev("JSON.stringify(state.habits.map(h => ({id:h.id, name:h.name, icon:h.icon, color:h.color})))"));
+  remoteHabits.push({ id: 'h_custom', name: '新习惯', icon: '🔥', color: 'var(--cat2)' });
+  const remoteDone = JSON.parse(ev("JSON.stringify(sliceValue(USERS, 'habitdone:' + today()) || {})"));
+  remoteDone.h_custom = true;
+  const bothRev = ++SERVER_REV;
+  /* 故意让 habitdone 排在 habits 前面：服务端按主键 (user_id, slice) 排序返回，
+   * 'habitdone:…' 字典序就在 'habits' 之前（桩是插入序，所以这里删了重插来复现真序） */
+  delete MANIFEST['habits']; delete MANIFEST['habitdone:' + hday];
+  MANIFEST['habitdone:' + hday] = bothRev;
+  MANIFEST['habits'] = bothRev;
+  SLICE_VALUES['habitdone:' + hday] = remoteDone;
+  SLICE_VALUES['habits'] = remoteHabits;
+  const habitsBefore = ev('state.habits.length');
+  await ev('retrySync()');
+  const custom = ev("JSON.stringify((state.habits.find(h => h.id === 'h_custom') || {}).done || null)");
+  ok('T20q 同批拉回「习惯定义 + 当天打卡」：新习惯的勾不会因为顺序被丢',
+    ev('state.habits.length') === habitsBefore + 1 && custom === JSON.stringify({ [hday]: true }),
+    'habits=' + ev('state.habits.length') + ' customDone=' + custom);
+
+  /* 同片冲突：本机改了 A+B，服务器也改了 A → 弹窗（桩里 confirm=true = 用服务器）→
+   * A 采纳服务器、B 照常上传（旧版整树二选一在这里会丢掉 B） */
+  SLICE_PUSHES.length = 0;
+  ev("state.water['2099-03-03'] = 1; state.water['2099-03-04'] = 2; save()");
+  SLICE_VALUES['water:2099-03-03'] = 7;
+  MANIFEST['water:2099-03-03'] = ++SERVER_REV;
+  await ev('doPush()');
+  ok('T20d 同片冲突 → 按服务器现值采纳该片',
+    ev("state.water['2099-03-03']") === 7, 'water=' + ev("JSON.stringify(state.water)"));
+  await ev('doPush()');
+  const p2 = SLICE_PUSHES[SLICE_PUSHES.length - 1] || { slices: {} };
+  ok('T20e 冲突裁决只放弃冲突项：同一批里未冲突的 water:2099-03-04 照常上传',
+    ev("state.water['2099-03-04']") === 2 && JSON.stringify(Object.keys(p2.slices)) === JSON.stringify(['water:2099-03-04'])
+    && p2.slices['water:2099-03-04'].value === 2, JSON.stringify(p2).slice(0, 200));
+  ok('T20f 裁决后无残留脏片', ev('metaGet().dirtySlices.length') === 0 && ev('metaGet().dirty') === false);
+
+  /* 删除片：值从树上消失 → 推送时带 null（服务端删片并抬 rev） */
+  SLICE_PUSHES.length = 0;
+  ev("delete state.water['2099-03-04']; save()");
+  await ev('doPush()');
+  const p3 = SLICE_PUSHES[SLICE_PUSHES.length - 1] || { slices: {} };
+  ok('T20g 删掉一片 → 推送该片 value:null',
+    JSON.stringify(Object.keys(p3.slices)) === JSON.stringify(['water:2099-03-04']) && p3.slices['water:2099-03-04'].value === null,
+    JSON.stringify(p3).slice(0, 200));
+
+  /* 批量：一次编辑弄脏多片（改档案 + 加一条体重） → 一次请求带上两片 */
+  SLICE_PUSHES.length = 0;
+  ev("state.profile.height = 176; state.body.push({ date: '2099-01-05', weight: 70 }); save()");
+  await ev('doPush()');
+  const p4 = SLICE_PUSHES[SLICE_PUSHES.length - 1] || { slices: {} };
+  const k4 = Object.keys(p4.slices).sort();
+  ok('T20h 多片脏 → 一次请求打包（profile + body）',
+    JSON.stringify(k4) === JSON.stringify(['body', 'profile']), JSON.stringify(k4) + ' ' + JSON.stringify(p4.slices.profile || {}).slice(0, 80));
+  ev("state.profile.height = 175");   /* 复原，别影响后面的用例 */
+
+  /* 脏片数超过单批上限（客户端 400 / 服务端 500）→ 自动分批，不丢片 */
+  SLICE_PUSHES.length = 0;
+  ev("for(let i=0;i<450;i++) state.water[addDays('2097-01-01', i)] = 1; save()");
+  await ev('doPush()');
+  ok('T20i1 450 片脏 → 首批带满 400 片（不超服务端上限）',
+    SLICE_PUSHES.length === 1 && Object.keys(SLICE_PUSHES[0].slices).length === 400,
+    'pushes=' + SLICE_PUSHES.length + ' keys=' + (SLICE_PUSHES[0] ? Object.keys(SLICE_PUSHES[0].slices).length : 0));
+  await ev('doPush()');
+  const allPushed = SLICE_PUSHES.reduce((a, p) => a.concat(Object.keys(p.slices)), []);
+  const addedWater = ev("Object.keys(state.water).filter(d => d >= '2097-01-01' && d <= '2098-12-31').map(d => 'water:' + d)");
+  const hit = addedWater.filter(k => allPushed.indexOf(k) >= 0);
+  ok('T20i2 余下的片下一批推完（450 天饮水一片不漏，第二批带余下全部脏片）',
+    SLICE_PUSHES.length === 2 && addedWater.length === 450 && hit.length === 450
+    && allPushed.length === 451 && allPushed.length - 400 === Object.keys(SLICE_PUSHES[1].slices).length,
+    'pushes=' + SLICE_PUSHES.length + ' total=' + allPushed.length + ' hit=' + hit.length);
+  ok('T20i3 分批推完后无残留脏片', ev('metaGet().dirtySlices.length') === 0 && ev('pushKeys().length') === 0,
+    'rest=' + ev('JSON.stringify(pushKeys().slice(0,3))'));
+
+  /* 只读渲染不该写状态树：概览/历史/饮食页曾把「今天/最近 30 天」的空饮食日物化进 state.meals，
+   * 按片同步下这些会被当成用户编辑推上去（历史页一次最多 30 片空 meal_days），还可能撞上
+   * 别的设备同一天的真实记录。 */
+  const mealsN0 = ev('Object.keys(state.meals).length');
+  const hadToday = ev('!!state.meals[today()]');
+  ev("go('stats'); go('home'); go('diet'); go('body'); go('settings')");
+  ok('T20k 只读渲染不物化空饮食日（六页走一遍，state.meals 键数不变）',
+    ev('Object.keys(state.meals).length') === mealsN0 && ev('!!state.meals[today()]') === hadToday,
+    'before=' + mealsN0 + ' after=' + ev('Object.keys(state.meals).length') + ' today=' + ev('!!state.meals[today()]'));
+  SLICE_PUSHES.length = 0;
+  ev('save()');
+  await ev('doPush()');
+  const p5 = SLICE_PUSHES.length ? SLICE_PUSHES[SLICE_PUSHES.length - 1] : { slices: {} };
+  ok('T20l 渲染之后立刻 save+push 不会带出 meals:<date> 片（渲染 ≠ 编辑）',
+    !Object.keys(p5.slices).some(k => k.indexOf('meals:') === 0), JSON.stringify(Object.keys(p5.slices)));
+
+  /* 旧版缓存（有 dirty 无 dirtySlices）迁移：必须认出来走整树 PUT，不能把待推改动当「已对齐」丢掉 */
+  LEGACY_PUTS.length = 0;
+  ev("localStorage.setItem(metaKey(), JSON.stringify({ rev: srv.rev, dirty: true })); srv.legacy = false");
+  ok('T20j 旧缓存被认出旧语义（dirty 且无 dirtySlices）', ev('detectLegacy(metaGet())') === true);
+  ev("state.water['2097-06-06'] = 6; save()");
+  await ev('doPush()');
+  ok('T20j2 旧缓存走整树 PUT（升级不卡住老浏览器缓存）',
+    LEGACY_PUTS.length === 1 && !!LEGACY_PUTS[0].data && typeof LEGACY_PUTS[0].rev === 'number'
+    && LEGACY_PUTS[0].data.users.u_alice.water['2097-06-06'] === 6, JSON.stringify(LEGACY_PUTS[0]).slice(0, 120));
+  ok('T20j3 整树对齐后自动转入按片模式（基线就位、脏片清空）',
+    ev('srv.legacy') === false && ev('metaGet().dirtySlices.length') === 0
+    && ev("typeof (srv.sliceRevs||{})['water:2097-06-06']") === 'number',
+    'legacy=' + ev('srv.legacy') + ' revs=' + ev('JSON.stringify(srv.sliceRevs||{}).slice(0,80)'));
+
+  /* B3：缓存里被手改成非数字的基线 → 不能原样发出去（服务端 400 invalid_slice_rev → 刷新后原样复现的死循环） */
+  ev("localStorage.setItem(metaKey(), JSON.stringify(Object.assign(metaGet()||{}, { dirtyRevs: { 'water:2099-04-04': '3' } })))");
+  ev("state.water['2099-04-04'] = 4; save()");
+  ok('T20v 非数字基线被归一（不再是那个字符串；未知就回落到 sliceRevOf）',
+    typeof ev("metaGet().dirtyRevs['water:2099-04-04']") === 'number' || ev("metaGet().dirtyRevs['water:2099-04-04']") === null,
+    'revs=' + ev("JSON.stringify(metaGet().dirtyRevs && metaGet().dirtyRevs['water:2099-04-04'])"));
+  SLICE_PUSHES.length = 0;
+  await ev('doPush()');
+  const pv = SLICE_PUSHES[SLICE_PUSHES.length - 1] || { slices: {} };
+  ok('T20v2 推出去的 rev 一定是数字（不会触发 invalid_slice_rev → fatal）',
+    typeof pv.slices['water:2099-04-04'].rev === 'number' && ev('srv.fatal') === false,
+    JSON.stringify(pv.slices['water:2099-04-04']));
+  ev("delete state.water['2099-04-04']; save()");
+  await ev('doPush()');
+
+  /* B4：睡眠片发之前先按共享契约归一化（发出去的值 == 服务端存回的值，否则基线记错且无自愈通道） */
+  SLICE_PUSHES.length = 0;
+  ev("state.sleep['2099-01-01'] = [null, { t:'nap', bed:'13:00', mins:'30' }]; save()");
+  await ev('doPush()');
+  const ps = SLICE_PUSHES[SLICE_PUSHES.length - 1] || { slices: {} };
+  ok('T20w 脏睡眠形状在推送前被归一化：payload 与本地树都是规范形状（PUT==GET，基线不会记错）',
+    JSON.stringify(ps.slices['sleep:2099-01-01'].value) === JSON.stringify([{ t: 'nap', bed: '13:00' }])
+    && JSON.stringify(ev("sliceValue(USERS, 'sleep:2099-01-01')")) === JSON.stringify([{ t: 'nap', bed: '13:00' }]),
+    'sent=' + JSON.stringify(ps.slices['sleep:2099-01-01'].value) + ' local=' + ev("JSON.stringify(sliceValue(USERS, 'sleep:2099-01-01'))"));
+
+  /* B5：有被拒的坏片挂着时，状态栏不能谎报「同步正常」 */
+  ev("state.water['2099-08-08'] = '五杯'; save()");
+  await ev('doPush()');                                     /* 400 → 该片进 badKeys 挂起 */
+  ok('T20x 数据格式异常未同步时状态栏如实显示（不再是「同步正常」）',
+    ev('syncStatusText()').indexOf('数据格式异常未同步') >= 0, ev('syncStatusText()'));
+  ok('T20x2 坏片挂起期间 meta.dirty 保持为真（不谎报已对齐）', ev('metaGet().dirty') === true,
+    'status=' + ev('syncStatusText()'));
+  ev("delete state.water['2099-08-08']; save()");
+  ok('T20x3 用户删掉/改好后，状态栏不再挂着异常提示', ev('syncStatusText()').indexOf('数据格式异常未同步') < 0,
+    ev('syncStatusText()'));
+  await ev('doPush()');
+
+  /* 5xx 不再把本会话的同步判死（暂时性故障要能自愈） */
+  FAIL_NEXT_PUSH = 503;
+  SLICE_PUSHES.length = 0;
+  ev("state.water['2099-05-05'] = 6; save()");
+  await ev('doPush()');
+  ok('T20y 推送遇 5xx → 不当 fatal，挂重试等恢复（fatal 只留给 4xx 这种「请求本身有问题」）',
+    ev('srv.fatal') === false && FAIL_NEXT_PUSH === null,
+    'fatal=' + ev('srv.fatal'));
+  await ev('doPush()');
+  ok('T20y2 恢复后能正常补推', SLICE_PUSHES.some(p => p.slices['water:2099-05-05'] && p.slices['water:2099-05-05'].value === 6),
+    JSON.stringify(SLICE_PUSHES.map(p => Object.keys(p.slices)).slice(0, 3)));
+
+  /* 改完又改回原值 = 没改：脏片要收回来（否则会推一个并非用户改动的旧值，甚至撞别的设备的版本） */  /* 改完又改回原值 = 没改：脏片要收回来（否则会推一个并非用户改动的旧值，甚至撞别的设备的版本） */
+  ev("state.water['2099-07-07'] = 3; save()");
+  ev("delete state.water['2099-07-07']; save()");
+  ok('T20m 改完又改回原值 → 该片不再是脏片',
+    ev("(metaGet().dirtySlices||[]).indexOf('water:2099-07-07')") < 0);
+  SLICE_PUSHES.length = 0;
+  await ev('doPush()');
+  ok('T20m2 …也不会被推上去', !SLICE_PUSHES.some(p => Object.keys(p.slices).some(k => k === 'water:2099-07-07')),
+    JSON.stringify(SLICE_PUSHES.map(p => Object.keys(p.slices)).slice(0, 3)));
+
+  /* 单片级 400（脏缓存里的坏值）：只跳过那一片，别让整个同步瘫死 */
+  SLICE_PUSHES.length = 0;
+  ev("state.water['2099-08-08'] = '五杯'; state.profile.height = 174; save()");
+  await ev('doPush()');                 /* 整批被 400 拒 → 客户端跳过坏片并排重推 */
+  await new Promise(r => setTimeout(r, 700));
+  await ev('doPush()');
+  const pushedAfterBad = SLICE_PUSHES.some(p => p.slices.profile && p.slices.profile.value.profile.height === 174);
+  ok('T20n 坏值片被跳过（不再 fatal），其余脏片照常上传',
+    ev('srv.fatal') === false && ev('!!srv.badKeys && srv.badKeys.has("water:2099-08-08")') && pushedAfterBad,
+    'fatal=' + ev('srv.fatal') + ' pushes=' + JSON.stringify(SLICE_PUSHES.map(p => Object.keys(p.slices)).slice(0, 3)));
+  ok('T20n2 跳过之后不会 400 死循环（该片不再进推送清单）',
+    ev('pushKeys().indexOf("water:2099-08-08")') < 0, JSON.stringify(ev('pushKeys().slice(0, 5)')));
+  /* 用户把坏值改好 → 必须立刻放行重新推（挂起只针对「被拒的那一份值」） */
+  SLICE_PUSHES.length = 0;
+  ev("state.water['2099-08-08'] = 5; save()");
+  await ev('doPush()');
+  ok('T20n4 坏值被挂起后，用户改好 → 立刻放行重新推上去（本会话不会永久卡住）',
+    SLICE_PUSHES.some(p => p.slices['water:2099-08-08'] && p.slices['water:2099-08-08'].value === 5)
+    && ev('sliceIsBad("water:2099-08-08")') === false,
+    'pushes=' + JSON.stringify(SLICE_PUSHES.map(p => Object.keys(p.slices)).slice(0, 3)));
+  ok('T20n5 放行推完后回到干净状态（无残留脏片/待推片、无余下发）',
+    ev("(metaGet().dirtySlices||[]).length") === 0 && ev("(metaGet().pushSlices||[]).length") === 0
+    && ev('pushKeys().length') === 0);
+
+  /* 一轮 manifest 报 >200 片变更：分批拉，且全局游标不能提前推进（否则 ?since= 短路，剩下的永远拉不回） */
+  const mkDay = i => ev("addDays('2100-01-01', " + i + ")");
+  const oneRev = ++SERVER_REV;               /* 真服务端：一整批共享一个新全局 rev */
+  for (let i = 0; i < 250; i++) {
+    const d = mkDay(i);
+    MANIFEST['water:' + d] = oneRev;
+    SLICE_VALUES['water:' + d] = 7;
+  }
+  const pulled2100 = () => ev("Object.keys(state.water).filter(d => d >= '2100-01-01' && d <= '2101-06-01').length");
+  const cursorBefore = ev('srv.rev');
+  await ev('retrySync()');
+  ok('T20s1 报 250 片变更时只拉首批 200（请求头不会被撑爆）', pulled2100() === 200, 'pulled=' + pulled2100());
+  ok('T20s2 没拉完就不推进全局游标（否则 ?since= 会短路掉剩下的片）',
+    ev('srv.rev') === cursorBefore, 'cursor=' + ev('srv.rev') + ' before=' + cursorBefore + ' serverRev=' + SERVER_REV);
+  await ev('retrySync()');
+  ok('T20s3 下一轮把剩下的 50 片补齐', pulled2100() === 250, 'pulled=' + pulled2100());
+  await ev('retrySync()');
+  ok('T20s4 全部处理完之后游标才推进到服务器当前版本', ev('srv.rev') === SERVER_REV,
+    'cursor=' + ev('srv.rev') + ' serverRev=' + SERVER_REV);
+
+  /* 拉取这几秒里刚打开的编辑弹窗同样要被保护（弹窗检查必须在 await 之后再做一次） */
+  SLICE_VALUES['water:2099-15-15'] = 15; MANIFEST['water:2099-15-15'] = ++SERVER_REV;
+  CONCURRENT_WRITE = () => { ev("showDialog('测试弹窗2', '<div id=\"t_q\">x</div>', {})"); };
+  await ev('retrySync()');
+  ok('T20u 拉取期间新开的编辑弹窗也能拦住本轮落地',
+    ev("state.water['2099-15-15']") === undefined,
+    'got=' + ev("state.water['2099-15-15']") + ' dialog=' + ev('!!curDialog'));
+  CONCURRENT_WRITE = null;
+  ev('closeDialog()');
+  await ev('retrySync()');
+  ok('T20u2 关掉弹窗后下一轮补上', ev("state.water['2099-15-15']") === 15, 'got=' + ev("state.water['2099-15-15']"));
+
+  /* 有编辑弹窗开着 → 本轮让路（远端值换掉的树对象会让弹窗里的半截编辑写进孤儿）；
+   * 首次引导浮层例外：它是纯说明，不是编辑，不该挡着新账户拉别端改动。 */
+  SLICE_VALUES['water:2099-11-11'] = 11; MANIFEST['water:2099-11-11'] = ++SERVER_REV;
+  ev("showDialog('测试弹窗', '<div id=\"t_p\">x</div>', {})");
+  await ev('retrySync()');
+  ok('T20p 有编辑弹窗时不拉远端（不把远端值盖到半截编辑上）',
+    ev("state.water['2099-11-11']") === undefined && ev('srv.rev') < SERVER_REV,
+    'got=' + ev("state.water['2099-11-11']") + ' rev=' + ev('srv.rev') + ' serverRev=' + SERVER_REV);
+  ev('closeDialog()');
+  await ev('retrySync()');
+  ok('T20p2 关掉弹窗后下一轮补上', ev("state.water['2099-11-11']") === 11, 'got=' + ev("state.water['2099-11-11']"));
+  ok('T20p3 首次引导浮层带 name=onboard（不算编辑，不挡增量轮询）',
+    ev("(function(){ try{ showOnboard(); const n = curDialog && curDialog.name; closeDialog(); return n; }catch(e){ return 'ERR:'+e.message; } })()") === 'onboard');
+
+  /* 拉到一半用户又编辑了（非模态的 +1 水）：本轮作废，不能拿远端旧值盖掉刚落地的编辑 */
+  SLICE_VALUES['water:2099-12-12'] = 99; MANIFEST['water:2099-12-12'] = ++SERVER_REV;
+  CONCURRENT_WRITE = () => { ev("state.water['2099-12-12'] = 12; save(); if(srv.pushTimer){ clearTimeout(srv.pushTimer); srv.pushTimer = null; }"); };
+  await ev('retrySync()');
+  ok('T20r 拉取期间落地的本机编辑不被远端旧值盖掉（本轮作废，下一轮再来）',
+    ev("state.water['2099-12-12']") === 12 && ev("(metaGet().dirtySlices||[]).indexOf('water:2099-12-12')") >= 0,
+    'got=' + ev("state.water['2099-12-12']") + ' dirty=' + ev('JSON.stringify(metaGet().dirtySlices)'));
+  CONCURRENT_WRITE = null;
+  ev("delete state.water['2099-12-12']; save()");
+
+  /* manifest 与 keys 两次请求之间别的设备又写了别的片：srv.rev 必须停在 manifest 那一版 */
+  SLICE_VALUES['water:2099-09-09'] = 9; MANIFEST['water:2099-09-09'] = ++SERVER_REV;
+  CONCURRENT_WRITE = () => { SLICE_VALUES['water:2099-10-10'] = 10; MANIFEST['water:2099-10-10'] = ++SERVER_REV; };
+  await ev('retrySync()');
+  ok('T20o 拉取期间到达的新片：本轮拉到 09-09，10-10 留给下一轮（不被 since 短路永久漏掉）',
+    ev("state.water['2099-09-09']") === 9 && ev("state.water['2099-10-10']") === undefined,
+    'got9=' + ev("state.water['2099-09-09']") + ' got10=' + ev("state.water['2099-10-10']") + ' rev=' + ev('srv.rev'));
+  await ev('retrySync()');
+  ok('T20o2 下一轮就把它拉回来了', ev("state.water['2099-10-10']") === 10,
+    'rev=' + ev('srv.rev') + ' serverRev=' + SERVER_REV + ' got10=' + ev("state.water['2099-10-10']"));
 
   finish();
 }

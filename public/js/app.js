@@ -17,8 +17,20 @@ function metaGet(){ try { const m = JSON.parse(localStorage.getItem(metaKey()));
    * 语义比较走样),gen 只认 number,其余一律归零/置空后按干净状态处理 */
   if(m.rev !== null && typeof m.rev !== 'number') m.rev = null;
   if(typeof m.gen !== 'number') m.gen = 0;
+  /* v4.20 切片化：dirtySlices = 未推送的片清单，dirtyRevs = 这些片的对齐基线。
+   * **旧版 meta 没这两个字段**——保持 undefined 不做兜底，converge 才能认出「旧缓存」
+   * 并退回整树老路径（把 undefined 归一成 [] 会让待推的改动被当成「已对齐」丢掉）。 */
+  if(m.dirtySlices !== undefined && !Array.isArray(m.dirtySlices)) m.dirtySlices = undefined;
+  if(m.dirtyRevs !== undefined && (typeof m.dirtyRevs !== 'object' || m.dirtyRevs === null || Array.isArray(m.dirtyRevs))) m.dirtyRevs = undefined;
+  /* B3：基线只认 number / null（手改过 localStorage 的字符串会让组装出的 rev 非数字 →
+   * 服务端 400 invalid_slice_rev → 刷新后原样复现 = 永久死循环）。脏值一律归一成 null = 未知 */
+  if(m.dirtyRevs){ Object.keys(m.dirtyRevs).forEach(k => { const v = m.dirtyRevs[k]; if(v !== null && typeof v !== 'number') m.dirtyRevs[k] = null; }); }
+  /* pushSlices：必须推但与基线长得一样的片（采纳时本机规范化补出来的默认值、重挂回去的本机脏片）——
+   * 它们靠快照比对认不出来，只能显式记着 */
+  if(m.pushSlices !== undefined && !Array.isArray(m.pushSlices)) m.pushSlices = undefined;
   return m; } catch(e){ return null; } }
 function metaSet(m){ try { localStorage.setItem(metaKey(), JSON.stringify(m)); } catch(e){} }
+function metaPatch(patch){ metaSet(Object.assign(metaGet() || {}, patch)); }
 const DAY_CN = ['日','一','二','三','四','五','六'];
 const SLOTS = [
   {id:'breakfast', label:'早餐', ic:'🍳'},
@@ -299,40 +311,175 @@ async function load(){
    *   状态栏却还承诺「每 30 秒自动重试」。 */
   const remote = await fetchState();
   if(remote){
+    /* v4.20：先把本机树读出来（USERS）再裁决——converge 要按片读本机脏值、必要时重挂回树，
+     * 旧写法 USERS 还是 null（bootUsers 在 push 分支里才调），会把脏值读成 null 甚至抛异常。 */
+    bootUsers();
     const outcome = await converge(remote);
-    if(outcome === 'push'){ bootUsers(); save(); }              /* 本机为准/补推：读缓存后整树推送 */
-    else if(outcome === 'adopt-fail'){ srv.rev = null; bootUsers(); toast('服务器响应形状异常，本次启动使用本机缓存', true); }
+    /* 本机为准/补推/首次建档：读本机缓存后推送。【故意不建基线】——没有基线时
+     * 「整棵树的片都算脏」，语义正好等于旧版的整树推送 */
+    if(outcome === 'push') save();
+    else if(outcome === 'adopt-fail'){ srv.rev = null; toast('服务器响应形状异常，本次启动使用本机缓存', true); }
     /* outcome==='adopt'：adoptRemote 已回写缓存并标对齐，无需再推 */
     materialize(); applyTheme();
     syncLegacyCleanup();   /* v4.11：采纳到旧形状时补一次回写（含向服务器推送清洗后的树） */
+    scheduleNextPoll();    /* v4.20：在线启动也要挂上 30s 增量轮询（以前只在失败路径挂） */
     return;
   }
   bootUsers();   /* 完全离线：读本机缓存，dirty 状态原样保留，等回线收敛裁决/补推 */
   materialize(); applyTheme();
   syncLegacyCleanup();
   const meta = metaGet();
+  detectLegacy(meta);           /* 旧缓存（有 dirty 无 dirtySlices）→ 保留整树老语义 */
+  if(!srv.legacy){
+    /* 以本机缓存为基线。但**推进基线前必须把待推片转成 pushSlices**：
+     * 基线一旦等于本机当前树（含上次没推完的改动），快照比对就再也认不出它们了
+     * ——离线改完关页、再离线启动的经典路径会把待推改动当「已对齐」清空（静默丢改动）。 */
+    promoteDirtyToForce();
+    markBase();
+  }
   const needPush = !localStorage.getItem(storeKey()) || !!(meta && meta.dirty);
   if(needPush) save();   /* 无缓存 = 刚建档回线后首推；脏缓存 = 回线后补推 */
   scheduleRetry();
 }
 /* 采纳服务器树：回写本机缓存 + 声明对齐（dirty 清零）。形状不被接受返回 false，调用方降级。 */
 function adoptRemote(remote){
+  /* 先拍服务器树的按片快照——adoptRaw 会**就地改**这棵树（ensureUserIntact 补默认值），拍晚了就看不到差异了 */
+  const serverSnap = sliceSnap(remote.data);
   if(!adoptRaw(remote.data)) return false;
   normalizeSelfTree();
-  try { localStorage.setItem(storeKey(), JSON.stringify(USERS)); } catch(e){}
-  metaSet({ rev: remote.rev, dirty: false });
+  persistCache();
+  if(remote.slices && typeof remote.slices === 'object') srv.sliceRevs = remote.slices;   /* v4.20：全量基线 */
+  /* v4.20：本机规范化可能补出服务器没有的东西（空习惯→4 个默认习惯、缺 homeOrder/chartOrder 补默认序、
+   * 旧形状清洗）。这些差异必须记成「必须推」的片——它们与刚对齐的本机基线一模一样，靠快照比对
+   * 永远认不出来；不推上去的話，默认习惯定义到不了服务器，而服务端的打卡只挂在已定义的习惯上，
+   * 用户点的勾会在下次刷新时凭空消失（整树时代靠下一次 save 顺带带上，按片时代不 dirty 就没人推）。 */
+  const manifest = remote.slices || {};
+  const force = diffSliceKeys(serverSnap, sliceSnap(USERS));
+  const revs = {};
+  force.forEach(k => { revs[k] = (typeof manifest[k] === 'number') ? manifest[k] : 0; });
+  metaSet({ rev: remote.rev, dirty: false, dirtySlices: [], dirtyRevs: revs, pushSlices: force });
+  markBase();
   return true;
 }
+/* ---------- 切片同步工具（v4.20）----------
+ * 片 = (账户, date) 或账户级固定块，键语法与树上取写在 js/slices.js（与服务端同一份契约）。
+ * 这里只做「本机树 ⇄ 片」的取写与脏片比对；网络部分在下面的同步层。
+ * 为什么用「快照比对」而不是在各处手写脏标记：写入口有几十处（save() 被全站调用），
+ * 漏一处就是静默不同步；而整树快照本身每次 save() 已经序列化过了，比对几乎白送。 */
+function sliceSnap(tree){
+  const out = {};
+  sliceKeysOf(tree).forEach(k => { out[k] = serializeSlice(tree, k); });
+  return out;
+}
+/* 两份快照的差异（含「新出现的片」与「消失的片」；值用序列化串比，天然逐片深比较） */
+function diffSliceKeys(base, cur){
+  const seen = new Set(Object.keys(base || {}).concat(Object.keys(cur || {})));
+  const out = [];
+  seen.forEach(k => { if((base || {})[k] !== (cur || {})[k]) out.push(k); });
+  return out;
+}
+/* 把当前待推清单「转正」为 pushSlices：基线即将推进到本机当前树，
+ * 靠快照比对再也认不出这些片（离线启动就是这条路径），只能显式记着。 */
+function promoteDirtyToForce(){
+  const meta = metaGet() || {};
+  const force = (Array.isArray(meta.pushSlices) ? meta.pushSlices : []).slice();
+  (Array.isArray(meta.dirtySlices) ? meta.dirtySlices : []).forEach(k => { if(force.indexOf(k) < 0) force.push(k); });
+  if(force.length) metaPatch({ pushSlices: force, dirtySlices: [], dirty: true });
+}
+/* 对齐基线：此后本机改动都能被逐片比对认出来（采纳服务器树 / 确认无脏片时调用） */
+function markBase(){
+  srv.base = sliceSnap(USERS);
+  srv.baseTree = JSON.stringify(USERS);
+  srv.lastTreeStr = srv.baseTree;
+}
+function persistCache(){
+  try { localStorage.setItem(storeKey(), JSON.stringify(USERS)); }
+  catch(e){ toast('保存失败：本地存储空间不足', true); }
+}
+function sliceRevOf(key){
+  const r = srv.sliceRevs && srv.sliceRevs[key];
+  return typeof r === 'number' ? r : 0;
+}
+/* 待推送的脏片 = meta 记着的（脏片 + 必须推的片，跨会话/跨标签页）+ 与基线比对出来的（本次会话）。
+ * 一次最多带 PUSH_MAX_SLICES 片（服务端上限 500）：超出部分下一批继续——
+ * 每批成功后基线推进，脏片集合只减不增，不会来回打转。
+ * srv.badKeys：服务端明确拒过（400）的片 → 在「值没改过」期间不再重试（否则 400 死循环）；
+ * 值一改自动放行（sliceIsBad），别让用户修好的数据卡在本会话里再也推不出去。 */
+const PUSH_MAX_SLICES = 400;
+const PULL_MAX_SLICES = 200;   /* 一次 GET /slices?keys= 最多带多少片（见 retrySync 的注释） */
+function pushKeys(){
+  const meta = metaGet() || {};
+  const remembered = (Array.isArray(meta.dirtySlices) ? meta.dirtySlices : [])
+    .concat(Array.isArray(meta.pushSlices) ? meta.pushSlices : [])
+    .filter(isValidSliceKey);
+  if(!remembered.length && srv.baseTree !== null && srv.lastTreeStr === srv.baseTree) return [];
+  const set = new Set(remembered);
+  if(srv.base && USERS) diffSliceKeys(srv.base, sliceSnap(USERS)).forEach(k => set.add(k));
+  const out = [];
+  set.forEach(k => { if(!sliceIsBad(k)) out.push(k); });
+  return out.slice(0, PUSH_MAX_SLICES);
+}
+/* 与基线的差异；无基线（本次会话从未对齐过）= 整棵树的片都算脏（首次建档上推 / 本机为准覆盖） */
+function dirtyKeysSinceBase(treeStr){
+  if(!USERS) return [];
+  if(srv.baseTree !== null && treeStr !== null && treeStr === srv.baseTree) return [];
+  if(!srv.base) return sliceKeysOf(USERS);
+  return diffSliceKeys(srv.base, sliceSnap(USERS));
+}
+/* 顺手清掉「值已经变了」的挂起记录（用户删掉/改好那片之后，状态栏不该一直挂着异常提示） */
+function pruneBadKeys(){
+  if(!srv.badKeys || !srv.badKeys.size) return;
+  Array.from(srv.badKeys.keys()).forEach(k => sliceIsBad(k));
+}
+/* 服务端明确拒过的片：只在「值还是被拒的那一份」时挂起；用户改好即自动放行并忘掉记录 */
+function sliceIsBad(key){
+  if(!srv.badKeys || !srv.badKeys.has(key)) return false;
+  if(srv.badKeys.get(key) === serializeSlice(USERS, key)) return true;
+  srv.badKeys.delete(key);
+  return false;
+}
+/* 旧版缓存（有 dirty 但没 dirtySlices）→ 认作旧语义，走整树 PUT 老路径；
+ * 一次对齐成功后自动转入按片（见 pushLegacy）。 */
+function detectLegacy(meta){ if(meta && meta.dirty && !Array.isArray(meta.dirtySlices)) srv.legacy = true; return srv.legacy; }
 function save(){
   if(state) persistActive();
   if(state && state.theme) USERS.theme = state.theme;
-  try { localStorage.setItem(storeKey(), JSON.stringify(USERS)); }
+  let treeStr = null;
+  try { treeStr = JSON.stringify(USERS); localStorage.setItem(storeKey(), treeStr); }
   catch(e){ toast('保存失败：本地存储空间不足', true); }
+  srv.lastTreeStr = treeStr;
+  pruneBadKeys();
   const meta = metaGet() || { rev: null, dirty: false };
   meta.dirty = true;   /* 有未推送改动；推送成功且期间无新编辑时清零 */
   meta.gen = (meta.gen || 0) + 1;   /* v4.4：编辑代数写进共享 meta(跨标签页/重载仍有效)。
                                      * 旧 dirtyGen 是每页内存计数器，另一标签页的写入看不见它，
                                      * 守不住「多标签页共享」的 dirty 标志。 */
+  /* v4.20：把本次改动落到「哪几片」上（旧缓存走整树老路径，不碰 dirtySlices/pushSlices） */
+  if(!srv.legacy){
+    const keys = dirtyKeysSinceBase(treeStr);
+    if(!Array.isArray(meta.dirtySlices)) meta.dirtySlices = [];
+    if(!meta.dirtyRevs || typeof meta.dirtyRevs !== 'object') meta.dirtyRevs = {};
+    /* 服务端明确拒过、且值没改过的片不进清单（值一改就自动放行，见 sliceIsBad） */
+    const clean = k => !sliceIsBad(k);
+    if(srv.base){
+      /* 有基线：脏片就是「当前与基线的差异」本身——中途改回原值的片要收回来，
+       * 否则会把一个并非用户改动的旧值推上去，甚至与别的设备撞版本 */
+      meta.dirtySlices = keys.filter(clean);
+    } else {
+      keys.forEach(k => { if(clean(k) && meta.dirtySlices.indexOf(k) < 0) meta.dirtySlices.push(k); });
+    }
+    const force = Array.isArray(meta.pushSlices) ? meta.pushSlices : [];
+    keys.forEach(k => {
+      /* 基线只在「刚变脏」时记一次：之后即使本机再改，CAS 期望值仍是上次对齐的版本。
+       * 本会话还没拿到过 manifest（离线启动）→ 记 **null = 未知**，绝不伪装成 0：
+       * 0 是「服务器上没这片」的合法基线，两者混同会让回线时把本机推过的片判成冲突。 */
+      if(meta.dirtyRevs[k] === undefined || meta.dirtyRevs[k] === null)
+        meta.dirtyRevs[k] = srv.sliceRevs ? sliceRevOf(k) : null;
+    });
+    Object.keys(meta.dirtyRevs).forEach(k => {
+      if(meta.dirtySlices.indexOf(k) < 0 && force.indexOf(k) < 0) delete meta.dirtyRevs[k];   /* 已不在待推清单里的基线一并清掉 */
+    });
+  }
   metaSet(meta);
   queuePush();   // 落盘后 600ms 防抖推送服务器
 }
@@ -367,7 +514,17 @@ const srv = { online: null, rev: null, lastSync: null, pushTimer: null, retryTim
   blindNext: false, fatal: false,
   pushing: false, pushPending: false,      /* v4.4 在途保护：同 rev 的 PUT 绝不并发 */
   wantServer: false, wantGen: 0,           /* v4.4：已选「用服务器」；wantGen = 作出选择时的编辑代数 */
-  noSelfTries: 0 };                        /* v4.4：no_self 自动恢复的尝试计数 */
+  noSelfTries: 0,                          /* v4.4：no_self 自动恢复的尝试计数 */
+  /* v4.20 按片同步的状态（都是内存态，不落 localStorage）：
+   *   sliceRevs  {片key: rev}  最近一次对齐时各片的服务器版本（CAS 期望值来源）
+   *   base       {片key: 序列化值} 最近一次对齐时的整树快照（脏片比对用）
+   *   baseTree   对齐时的整树串（快路径：串没变就跳过逐片比对）
+   *   lastTreeStr 最近一次 save() 序列化出的整树串（与 baseTree 比即知有无改动）
+   *   blindKeys  Set：用户明确选择「本机覆盖」的片 → 下一次推送不带 rev（盲写）
+   *   badKeys    Map：片 → 被服务端明确拒过（400）的那一份序列化值。**只在「值还是那一份」时挂起**：
+   *              用户改好之后必须能重新推上去，否则本会话永远推不出去、下次冷启动还会被服务器旧值静默盖掉
+   *   legacy     旧版缓存（有 dirty 无 dirtySlices）→ 走整树 PUT 老路径 */
+  sliceRevs: null, base: null, baseTree: null, lastTreeStr: null, blindKeys: null, badKeys: null, legacy: false };
 
 function srvFetch(path, opts, timeout){
   const ac = new AbortController();
@@ -382,12 +539,14 @@ async function fetchState(){
     if(!r.ok) throw new Error('HTTP ' + r.status);
     const j = await r.json();
     srv.online = true;
+    /* v4.20：整树响应带的切片 manifest 就是本次对齐的全量基线 */
+    if(j && j.slices && typeof j.slices === 'object') srv.sliceRevs = j.slices;
     /* 从服务器树中捕获本人 uid(离线缓存重挂 / 校验账户身份) */
     if(j && j.data && j.data.users){
       const su = Object.keys(j.data.users)[0];
       if(su){ me = me || {}; me.user = Object.assign({}, me.user, { id: su }); normalizeSelfTree(); }
     }
-    return j;                    /* {rev, data|null} */
+    return j;                    /* {rev, data|null, slices} */
   } catch(e){
     /* v4.3:「服务器应答异常(5xx/坏 JSON)」与「联系不上」都降级为离线缓存读,但控制台留痕;
      * 静默覆盖风险已由 meta.rev CAS + dirty 裁决堵上,降级不再等于丢数据风险 */
@@ -403,6 +562,8 @@ function authExpired(){
   /* v4.3:一并清 fatal——同页重登后必须恢复同步,否则一次瞬时 5xx 之后重登的会话永久瘫 */
   srv.online = null; srv.rev = null; srv.blindNext = false; srv.lastSync = null; srv.fatal = false;
   srv.pushing = false; srv.pushPending = false; srv.wantServer = false; srv.wantGen = 0; srv.noSelfTries = 0;
+  srv.sliceRevs = null; srv.base = null; srv.baseTree = null; srv.lastTreeStr = null;
+  srv.blindKeys = null; srv.legacy = false; srv.badKeys = null;
   me = null;
   USERS = null; state = null;
   const v = document.getElementById('view'); if(v) v.innerHTML = '';
@@ -413,108 +574,401 @@ function queuePush(){
   if(srv.pushTimer) clearTimeout(srv.pushTimer);
   srv.pushTimer = setTimeout(() => { srv.pushTimer = null; doPush(); }, 600);
 }
-/* 冲突裁决弹窗文案：load 启动裁决与 409 冲突共用一处，避免两种措辞各自漂移 */
+/* 冲突裁决弹窗文案：整树老路径（旧缓存 / 409 无明细）用；切片路径用 conflictMsg(keys) */
 const CONFLICT_MSG = '本机有未同步到服务器的改动，而服务器上本账户又有更新的数据（可能来自其他设备）。\n\n【确定】用服务器数据刷新本机（本机未同步的改动会被放弃）\n【取消】用本机数据覆盖服务器（其他设备后写入的改动会丢失）';
+/* v4.20：按片冲突的文案——列出**具体哪几片**冲突，并说明其余本机改动不会被放弃 */
+function conflictMsg(keys){
+  return '本机有未同步到服务器的改动，而服务器上这几项又有更新的数据（可能来自其他设备）：\n'
+    + keys.map(sliceLabel).join('、')
+    + '\n\n【确定】冲突项用服务器数据（本机这几项的改动会被放弃，其余本机改动照常上传）\n'
+    + '【取消】冲突项用本机数据覆盖服务器（其他设备后写入的这几项会丢失）';
+}
+/* 采纳服务器树之后，把这些「本机脏片」重挂回去（服务器为底 + 本机这些片）。
+ * 重挂后它们与基线一模一样 → 记进 pushSlices（「必须推但与基线同形」），否则快照比对永远认不出来。 */
+function reapplyLocalSlices(keys, localValues, remoteSlices){
+  keys.forEach(k => { writeSlice(USERS, k, localValues[k]); });
+  persistCache();
+  const meta = metaGet() || {};
+  const force = (Array.isArray(meta.pushSlices) ? meta.pushSlices : []).slice();
+  keys.forEach(k => { if(force.indexOf(k) < 0) force.push(k); });
+  const revs = Object.assign({}, meta.dirtyRevs || {});
+  keys.forEach(k => { const r = remoteSlices && remoteSlices[k]; revs[k] = (typeof r === 'number') ? r : 0; });
+  metaPatch({ dirty: force.length > 0, dirtySlices: [], dirtyRevs: revs, pushSlices: force });
+}
 
 /* ---------- 收敛裁决(v4.4)：load 启动 / 回线重试 / 409 冲突 共用 ----------
- * 前提：remote 已从服务器取回。按共享 meta{rev,dirty,gen} 分派：
+ * 前提：remote 已从服务器取回。按共享 meta{rev,dirty,gen,dirtySlices} 分派：
  *   'adopt'      已采纳服务器数据（缓存+对齐已写好，本机无未推送改动，无需再推）
  *   'adopt-fail' 服务器形状无法接受：保持本机缓存，调用方按上下文降级（启动读缓存/回线续试）
  *   'push'       本机为准（或空库首建）：调用方负责把本机树推上去
- * 干净 → 采纳；脏且服务器已前移 → 弹窗人工裁决（两种走向都明示，绝不静默覆盖任何一边）；
- * 同代脏 / 空库 → 补推。 */
+ * v4.20 切片化后的关键改动：只有「服务器也动过的那些片」才需要人工裁决；
+ * 本机改了 A、服务器改了 B 这种以往必弹窗的情形，现在直接合并（不弹窗、两边都不丢）。 */
 async function converge(remote){
   const meta = metaGet();
-  if(remote.data && (!meta || !meta.dirty)){
+  /* 旧版缓存（有 dirty 无 dirtySlices）：语义整树照旧，不做按片猜测 */
+  if(detectLegacy(meta)){
+    if(remote.data && meta.rev !== remote.rev){
+      const useServer = confirm(CONFLICT_MSG);
+      if(useServer){
+        const fresh = await fetchState();   /* 弹窗等待期间服务器可能又前移：采纳最新一次 */
+        if(fresh && fresh.data && adoptRemote(fresh)){ srv.rev = fresh.rev; srv.legacy = false; return 'adopt'; }
+        srv.rev = null;
+        return 'adopt-fail';
+      }
+      metaPatch({ rev: remote.rev, dirty: true });   /* 本机为准：CAS 基线提到服务器当前 rev */
+      return 'push';
+    }
+    return 'push';
+  }
+  if(!remote.data){
+    /* 服务器上本账户还没有数据 = 首次建档：整棵树上推。不建基线 → 全片皆脏（按片分批推） */
+    metaPatch({ rev: 0, dirty: true, dirtySlices: [], dirtyRevs: {} });
+    srv.base = null; srv.baseTree = null; srv.lastTreeStr = null;
+    return 'push';
+  }
+  const dirty0 = Array.from(new Set((meta && Array.isArray(meta.dirtySlices) ? meta.dirtySlices : [])
+    .concat(meta && Array.isArray(meta.pushSlices) ? meta.pushSlices : []))).filter(isValidSliceKey);
+  if(!dirty0.length){
     if(adoptRemote(remote)){ srv.rev = remote.rev; return 'adopt'; }
     srv.rev = null;
     return 'adopt-fail';
   }
-  if(remote.data && meta && meta.dirty && meta.rev !== remote.rev){
-    const useServer = confirm(CONFLICT_MSG);
-    if(useServer){
-      const fresh = await fetchState();   /* 弹窗等待期间服务器可能又前移：采纳最新一次 */
-      if(fresh && fresh.data && adoptRemote(fresh)){ srv.rev = fresh.rev; return 'adopt'; }
-      srv.rev = null;
-      return 'adopt-fail';
-    }
-    metaSet({ rev: remote.rev, dirty: true });   /* 本机为准：CAS 基线提到服务器当前 rev，随后的 push 覆盖 */
-    return 'push';
+  /* 有脏片：先分出「服务器也动过的」（嫌疑冲突）与「只有本机动的」（直接推） */
+  const localValues = {};
+  dirty0.forEach(k => { const v = sliceValue(USERS, k); localValues[k] = (v === undefined ? null : v); });
+  const remoteSlices = remote.slices || {};
+  const revs = (meta && meta.dirtyRevs) || {};
+  /* 全局 rev 没动 = 自我们上次对齐以来服务器没有任何写入（各片 rev 必然也没动） */
+  const globalSame = (meta && typeof meta.rev === 'number' && typeof remote.rev === 'number')
+    ? meta.rev === remote.rev : false;
+  let suspects = dirty0.filter(k => {
+    /* 基线未知（离线冷启动：srv.sliceRevs 是内存态、重启就没了）：
+     * 只有「全局都没动过」才敢直接推，否则先当嫌疑片走一次内容比对 */
+    if(typeof revs[k] !== 'number') return !globalSame;
+    const cur = (typeof remoteSlices[k] === 'number') ? remoteSlices[k] : 0;
+    return cur > revs[k];
+  });
+  /* 嫌疑片先做一次**内容比对**：rev 不同但值一模一样（多标签页、离线重开最容易撞上）
+   * 就不算冲突——静默对齐即可，既不弹窗也不用发一次没有意义的盲写。 */
+  if(suspects.length) suspects = await dropIdenticalSuspects(suspects, remoteSlices);
+  /* 比对可能把一些片从待推清单里收回了，重新读一次 */
+  const dirty = (() => {
+    const m = metaGet() || {};
+    return Array.from(new Set((Array.isArray(m.dirtySlices) ? m.dirtySlices : [])
+      .concat(Array.isArray(m.pushSlices) ? m.pushSlices : []))).filter(isValidSliceKey);
+  })();
+  if(!dirty.length){
+    if(adoptRemote(remote)){ srv.rev = remote.rev; return 'adopt'; }   /* 全被判定为一致：对齐即可 */
+    srv.rev = null;
+    return 'adopt-fail';
   }
-  return 'push';   /* 服务器没动过(同代脏)或空库：补推本机 = 首次建档上推；基线已在 meta.rev */
+  if(suspects.length){
+    const useServer = confirm(conflictMsg(suspects));
+    if(useServer){
+      /* 只放弃冲突片的本地改动，其余脏片照旧推上去 */
+      const keep = dirty.filter(k => suspects.indexOf(k) < 0);
+      if(!adoptRemote(remote)){ srv.rev = null; srv.blindKeys = null; return 'adopt-fail'; }
+      srv.rev = remote.rev;
+      if(!keep.length) return 'adopt';
+      reapplyLocalSlices(keep, localValues, remoteSlices);
+      return 'push';
+    }
+    srv.blindKeys = new Set(suspects);   /* 用户已明确选择覆盖：这几片下一次推送不带 rev */
+  } else if(globalSame){
+    /* 安全回填基线：全局 rev 与前一次对齐时一致 → 服务器那一版就是我们当时看到的那一版，
+     * 取它做 CAS 期望值不会盖掉任何别端的写入（这不是「先取服务器 rev 再拿它当期望值」那个老坑，
+     * 老坑是没验证全局就取，必然永不冲突）。不回填的话，本机自己之前推过的片会拿 0 去撞自己的 rev，
+     * 弹出「服务器上这几项又有更新（可能来自其他设备）」的假冲突，用户点「用服务器」就丢掉刚做的编辑。 */
+    dirty.forEach(k => { if(typeof revs[k] !== 'number') revs[k] = (typeof remoteSlices[k] === 'number') ? remoteSlices[k] : 0; });
+    metaPatch({ dirtyRevs: revs });
+  }
+  if(!adoptRemote(remote)){ srv.rev = null; srv.blindKeys = null; return 'adopt-fail'; }
+  srv.rev = remote.rev;
+  reapplyLocalSlices(dirty, localValues, remoteSlices);
+  return 'push';
+}
+
+/* 拉一次嫌疑片的现值，与本地逐片做内容比对：值等价的直接对齐（收回脏标记、写回基线、同步 sliceRevs），
+ * 返回仍需人工裁决的片。拉不到就全按冲突处理（宁可多问一句，也不静默覆盖）。 */
+async function dropIdenticalSuspects(suspects, remoteSlices){
+  try {
+    const r = await srvFetch('/slices?keys=' + encodeURIComponent(suspects.join(',')), { method: 'GET' }, 5000);
+    if(r.status === 401){ authExpired(); return suspects; }
+    if(!r.ok) return suspects;
+    const j = await r.json().catch(() => ({}));
+    const values = (j && j.values) || {};
+    const revs = Object.assign({}, (metaGet() || {}).dirtyRevs || {});
+    const rest = [], drop = [];
+    suspects.forEach(k => {
+      if(Object.prototype.hasOwnProperty.call(values, k) && sliceValueEq(sliceValue(USERS, k), values[k])){
+        drop.push(k);
+        const sv = j.slices && j.slices[k];
+        revs[k] = (typeof sv === 'number') ? sv : ((typeof remoteSlices[k] === 'number') ? remoteSlices[k] : 0);
+        srv.sliceRevs = srv.sliceRevs || {};
+        srv.sliceRevs[k] = revs[k];
+      } else rest.push(k);
+    });
+    if(drop.length){
+      const m = metaGet() || {};
+      const keep = list => (Array.isArray(list) ? list : []).filter(k => drop.indexOf(k) < 0);
+      metaPatch({ dirty: (keep(m.dirtySlices).length + keep(m.pushSlices).length) > 0,
+        dirtySlices: keep(m.dirtySlices), pushSlices: keep(m.pushSlices), dirtyRevs: revs });
+      srv.base = srv.base || {};
+      drop.forEach(k => { const sv2 = serializeSlice(USERS, k); srv.base[k] = sv2; });   /* 本地值本来就等于服务器值 */
+      srv.baseTree = null;
+    }
+    return rest;
+  } catch(e){
+    console.warn('[sync] 内容比对失败，按冲突处理:', e && e.message);
+    return suspects;
+  }
+}
+/* v4.20：按片推送——只推脏片，CAS 按片（不再带全局 rev）；响应回来把基线推进到「刚推上去的值」。
+ * 推送期间又有新编辑（meta.gen 前进）时脏标记保留，但基线要抬到服务器刚分配的版本，
+ * 否则下一轮会拿着过期 rev 自撞 409。 */
+function applyPushResult(keys, sent, j, gen){
+  /* C1：推送返回的全局 rev 计入了「推送在途时别的设备写入」——直接跳过去会让 ?since= 短路掉
+   * 那些没见过的片（屏幕停在旧数据，直到下次写入或刷新）。所以全局游标一次最多 +1，
+   * 其余靠按片基线兜（真正推进游标的是「完整 manifest 处理完」与整树 GET）。 */
+  if(typeof j.rev === 'number') srv.rev = (typeof srv.rev === 'number') ? Math.min(j.rev, srv.rev + 1) : j.rev;
+  if(j.slices && typeof j.slices === 'object'){
+    srv.sliceRevs = srv.sliceRevs || {};
+    Object.keys(j.slices).forEach(k => { srv.sliceRevs[k] = j.slices[k]; });
+  }
+  if(!srv.base) srv.base = {};
+  keys.forEach(k => { if(sent[k] === undefined) delete srv.base[k]; else srv.base[k] = sent[k]; });
+  srv.baseTree = null;   /* 本机可能在推送期间又变过：别再拿整树串短路脏片比对 */
+  const meta = metaGet() || {};
+  const genSame = (meta.gen || 0) === gen;
+  const oldRevs = meta.dirtyRevs || {};
+  const pushed = new Set(keys);
+  const rest = [], forceRest = [], revs = {};
+  const collect = (list, out) => (Array.isArray(list) ? list : []).forEach(k => {
+    if(pushed.has(k) && genSame) return;                          /* 已对齐，收回脏标记 */
+    out.push(k);
+    /* 推过的片在途中又被编辑了 → 基线抬到服务器刚给的 rev；未推的保持原基线 */
+    revs[k] = pushed.has(k) ? sliceRevOf(k)
+      : ((oldRevs[k] !== undefined) ? oldRevs[k] : sliceRevOf(k));   /* null（未知）原样保留 */
+  });
+  collect(meta.dirtySlices, rest);
+  collect(meta.pushSlices, forceRest);
+  metaPatch({ rev: srv.rev, dirty: ((rest.length + forceRest.length) > 0) || !!(srv.badKeys && srv.badKeys.size),
+    dirtySlices: rest, pushSlices: forceRest, dirtyRevs: revs });
+  if(!rest.length && !forceRest.length) markBase();   /* 全部对齐：恢复「整树串相同即无改动」的快路径 */
+  srv.wantServer = false;
+  if(srv.blindKeys){ keys.forEach(k => srv.blindKeys.delete(k)); if(!srv.blindKeys.size) srv.blindKeys = null; }
+}
+/* 老路径：整树 PUT（旧版缓存未转正 / 用户在整树裁决里选了覆盖） */
+async function pushLegacy(meta){
+  if(srv.rev === null && !srv.blindNext){
+    /* v4.3 离线回线首推:用「本机上次对齐的版本」做 CAS 期望值——旧写法先取服务器当前 rev 再拿它当期望值推,
+     * 必然命中、永不 409,等于离线启动的旧缓存静默覆盖其他设备的新写入。无 meta = 以 0 试探 */
+    srv.rev = (meta && typeof meta.rev === 'number') ? meta.rev : 0;
+  }
+  const gen = (metaGet() || {}).gen || 0;
+  let r;
+  try {
+    r = await srvFetch('/state', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(srv.blindNext ? { data: USERS } : { rev: srv.rev, data: USERS }),
+    }, 8000);
+  } catch(e){ srv.online = false; refreshSyncStatus(); scheduleRetry(); return; }
+  if(r.status === 401){ authExpired(); return; }
+  if(r.status === 409){ await legacyArbitration(); return; }
+  if(!r.ok){
+    const j = await r.json().catch(() => ({}));
+    if(r.status === 400 && j && j.error === 'invalid_state' && (srv.noSelfTries++) < 2){
+      /* v4.4:400 invalid_state = 树里没有本登录账户那一份(启动即离线时铸了随机 uid)。
+       * 拉一次服务器:fetchState 会把本机内容重挂到服务器 uid 下(离线编辑不丢),再按原 CAS 规则重推 */
+      const fresh = await fetchState();
+      if(fresh){ refreshSyncStatus(); queuePush(); return; }
+      scheduleRetry(); refreshSyncStatus(); return;
+    }
+    if(r.status >= 500 || r.status === 408 || r.status === 429){
+      srv.online = false;
+      toast('服务器暂时无法同步（HTTP ' + r.status + '），本机改动已保存，稍后自动重试', true);
+      refreshSyncStatus(); scheduleRetry(); return;
+    }
+    srv.fatal = true; srv.noSelfTries = 0;
+    toast('服务器拒绝了同步（HTTP ' + r.status + '），本机改动仍保存在本地', true); refreshSyncStatus(); return;
+  }
+  srv.noSelfTries = 0;
+  const j = await r.json().catch(() => ({}));
+  if(typeof j.rev === 'number'){
+    srv.rev = j.rev;
+    markAllSlicesAt(j.rev);   /* 整树写把所有已知片都抬到了这个 rev（服务端契约） */
+    const same = ((metaGet() || {}).gen || 0) === gen;
+    if(same){
+      metaPatch({ rev: j.rev, dirty: false, dirtySlices: [], dirtyRevs: {}, pushSlices: [] });
+      srv.legacy = false;     /* 对齐完成，转入按片模式 */
+      markBase();
+    } else {
+      /* 在途又编辑了：仍按旧语义再推一轮整树（清成 undefined = 退回旧标记）；
+       * 注意别用推送前读到的旧 gen 覆盖共享 meta（另一标签页可能已经把它推高了） */
+      const m2 = metaGet() || {};
+      metaSet(Object.assign(m2, { rev: j.rev, dirty: true, dirtySlices: undefined, dirtyRevs: undefined, pushSlices: undefined }));
+      srv.legacy = true;
+    }
+    srv.blindNext = false;
+    srv.wantServer = false;
+  }
+  srv.online = true;
+  srv.lastSync = new Date();
+  refreshSyncStatus();
+}
+/* 整树写把所有已知片抬到 rev（含本机已知的已删片）——与 mapper.replaceUser 同一契约 */
+function markAllSlicesAt(rev){
+  const m = {};
+  sliceKeysOf(USERS || {}).forEach(k => { m[k] = rev; });
+  if(srv.sliceRevs) Object.keys(srv.sliceRevs).forEach(k => { m[k] = rev; });
+  srv.sliceRevs = m;
 }
 
 async function doPush(){
   if(srv.fatal) return;
-  if(srv.pushing){ srv.pushPending = true; return; }   /* v4.4 在途保护：同 rev 的 PUT 并发必自撞 409 */
+  if(srv.pushing){ srv.pushPending = true; return; }   /* v4.4 在途保护：同 rev 的 PUT 绝不并发 */
   srv.pushing = true;
   try {
-    if(srv.rev === null && !srv.blindNext){
-      /* v4.3 离线回线首推:用「本机上次对齐的版本」做 CAS 期望值——
-       * 旧写法先取服务器当前 rev 再拿它当期望值推,必然命中、永不 409,
-       * 等于离线启动的旧缓存静默覆盖其他设备的新写入(违背「绝不悄悄丢改动」)。
-       * 无 meta(从未对齐过)= 以 0 试探:服务器空库 = 首次建档;非空 → 409 → 人工裁决。 */
-      const meta = metaGet();
-      srv.rev = (meta && typeof meta.rev === 'number') ? meta.rev : 0;
+    const meta = metaGet() || {};
+    if(srv.legacy){ await pushLegacy(meta); return; }
+    if(srv.rev === null && pushKeys().length === 0 && !srv.blindNext && !srv.legacy){
+      const remote = await fetchState();     /* 干净但从未对齐：拉一次对齐基线 */
+      if(remote){ await converge(remote); }
     }
-    const gen = (metaGet() || {}).gen || 0;   /* v4.4:发出前的编辑代数(取自共享 meta,响应回来比对) */
+    const keys = pushKeys();
+    if(!keys.length){
+      /* 没脏片：可能只是脏标记残留（其他标签页已推完）——顺手收回，盲写标记也一并作废 */
+      if(meta.dirty && !(Array.isArray(meta.dirtySlices) && meta.dirtySlices.length)
+         && !(Array.isArray(meta.pushSlices) && meta.pushSlices.length)
+         && !(srv.badKeys && srv.badKeys.size))   /* 还有被拒的片挂着 → 不算「已同步」 */
+        metaPatch({ dirty: false, dirtySlices: [], dirtyRevs: {}, pushSlices: [] });
+      srv.blindKeys = null;
+      scheduleNextPoll();
+      return;
+    }
+    /* 本会话从未对齐过（离线启动，srv.sliceRevs 是内存态、重启即丢）：先拉服务器树走一次收敛——
+     * converge 会用「全局 rev 有没有动过」判断该直接补推还是该问用户，并把缺失的 CAS 基线补上。
+     * 不这么做的话，本机自己以前推过的片会拿 0 去撞服务器上的真 rev，弹出
+     * 「服务器上这几项又有更新（可能来自其他设备）」的假冲突——手机离线-回线是常态路径。 */
+    if(srv.rev === null && !srv.blindNext && !srv.legacy){
+      const remote = await fetchState();
+      if(remote){
+        const outcome = await converge(remote);
+        if(outcome === 'adopt'){
+          materialize(); applyTheme(); go(curView);
+          refreshSyncStatus(); scheduleNextPoll();
+          return;                                    /* 冲突项已被采纳，本轮不推 */
+        }
+        if(outcome === 'adopt-fail'){ scheduleRetry(); refreshSyncStatus(); return; }
+        /* 'push'：基线已就位（或用户选了本机覆盖 → blindKeys），落下去继续构造 payload */
+        if(!srv.base) srv.base = {};
+        markBase();
+      }
+    }
+    const gen = metaGet() ? (metaGet().gen || 0) : 0;   /* 上面的 await 期间可能又有编辑 */
+    const blind = srv.blindKeys || new Set();
+    const revs = (metaGet() || {}).dirtyRevs || {};
+    /* 定义先于逐日数据（与 applyRemoteSlices 的挂载顺序同一条契约）：
+     * 服务端读习惯打卡时会按「已定义的习惯」过滤，定义后到会让同批打卡读不回来 */
+    const ordered = keys.filter(k => k === 'habits').concat(keys.filter(k => k !== 'habits'));
+    /* B4：睡眠段是「服务端会归一化」的片（normalizeSleepDay 丢脏元素/脏字段、空数组即删）。
+     * 发出去之前先按**同一份契约**把本机这份归一化，保证 PUT 的值 == 服务端存回的值：
+     * 否则基线记的是「发出去的那份」而服务端存的是「归一化后那份」，按片同步又不周期性采纳整树，
+     * 这份差异就再没有自愈通道了（两设备同一天显示不同、再编辑还在脏形状上震荡）。 */
+    if(ordered.some(k => k.indexOf('sleep:') === 0)){
+      let normalized = false;
+      ordered.filter(k => k.indexOf('sleep:') === 0).forEach(k => {
+        const v0 = sliceValue(USERS, k);
+        const nv = normalizeSleepDay(v0);
+        if(!sliceValueEq(v0 === undefined ? null : v0, nv === undefined ? null : nv)){ writeSlice(USERS, k, nv); normalized = true; }
+      });
+      if(normalized){ persistCache(); srv.lastTreeStr = null; }
+    }
+    const slices = {}, sent = {};
+    ordered.forEach(k => {
+      const v = sliceValue(USERS, k);
+      const item = { value: (v === undefined ? null : v) };
+      /* null = 基线未知（离线冷启动）：按 0 去撞，对不上就走 409 人工裁决，不静默盲写 */
+      if(!blind.has(k)) item.rev = (typeof revs[k] === 'number') ? revs[k] : sliceRevOf(k);
+      slices[k] = item;
+      sent[k] = serializeSlice(USERS, k);
+    });
     let r;
     try {
-      r = await srvFetch('/state', {
+      r = await srvFetch('/slices', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(srv.blindNext ? { data: USERS } : { rev: srv.rev, data: USERS }),
+        body: JSON.stringify({ slices: slices }),
       }, 8000);
     } catch(e){ srv.online = false; refreshSyncStatus(); scheduleRetry(); return; }
     if(r.status === 401){ authExpired(); return; }
-    if(r.status === 409){ await handleConflict(); return; }
+    if(r.status === 409){ await handleConflict(await r.json().catch(() => ({}))); return; }
     if(!r.ok){
       const j = await r.json().catch(() => ({}));
-      if(r.status === 400 && j && j.error === 'invalid_state' && (srv.noSelfTries++) < 2){
-        /* v4.4:400 invalid_state = 树里没有本登录账户那一份(启动即离线时铸了随机 uid)。
-         * 拉一次服务器:fetchState 会把本机内容重挂到服务器 uid 下(离线编辑不丢),
-         * 再按原 CAS 规则重推——旧版直接置 fatal,同步在本会话内永久卡死直到刷新。 */
-        const fresh = await fetchState();
-        if(fresh){ refreshSyncStatus(); queuePush(); return; }
-        scheduleRetry(); refreshSyncStatus(); return;
+      /* 单片级 400（脏缓存里的坏值 / 超限的睡眠段）：只把这（几）片挂起来，别让整个同步瘫死——
+       * 旧整树路径遇到这种缓存是「整棵树上不去」，按片化不该退化成「什么都上不去」。
+       * 挂进 srv.badKeys（本会话不再重试，否则就是 400 死循环），其余片照常推。 */
+      if(r.status === 400 && j && (j.error === 'invalid_slice_value' || j.error === 'unknown_slice'
+        || j.error === 'sleep_too_many_segments' || j.error === 'invalid_slice_rev')){
+        /* 能认出是哪一片就只挂它；认不出（服务端没带 key）就把整批挂起来——
+         * 无论如何都不能原样重发，那会变成 400 死循环外加点不完的报错 */
+        const one = (typeof j.key === 'string' && j.key) ? j.key : (j.date ? sliceDayKey('sleep', j.date) : null);
+        const badList = one ? [one] : keys.slice();
+        srv.badKeys = srv.badKeys || new Map();
+        /* 记下「被拒的那一份值」：值一改就自动放行（见 sliceIsBad）。
+         * dirtyRevs **保留**：修好之后再推时，CAS 期望值仍是上次对齐的那版（精确、不盲写）。 */
+        badList.forEach(k => srv.badKeys.set(k, (sent[k] === undefined) ? null : sent[k]));
+        const m2 = metaGet() || {};
+        const drop = k => badList.indexOf(k) < 0;
+        metaPatch({ dirtySlices: (Array.isArray(m2.dirtySlices) ? m2.dirtySlices : []).filter(drop),
+          pushSlices: (Array.isArray(m2.pushSlices) ? m2.pushSlices : []).filter(drop) });
+        toast(badList.length > 1
+          ? '这批数据格式异常，已跳过 ' + badList.length + ' 项（其余照常同步）'
+          : '有 1 项数据格式异常，已跳过（其余照常同步）：' + sliceLabel(badList[0]), true);
+        refreshSyncStatus();
+        if(pushKeys().length) queuePush(); else scheduleNextPoll();
+        return;
       }
-      srv.fatal = true; srv.noSelfTries = 0;
-      toast('服务器拒绝了同步（HTTP ' + r.status + '），本机改动仍保存在本地', true); refreshSyncStatus(); return;
+      /* 5xx / 408 / 429 = 服务端暂时性问题 → 退避重试，**不**把本会话的同步判死；
+       * 4xx = 我们这次请求本身有问题（重试也一样），才置 fatal 并提示刷新 */
+      if(r.status >= 500 || r.status === 408 || r.status === 429){
+        srv.online = false;
+        toast('服务器暂时无法同步（HTTP ' + r.status + '），本机改动已保存，稍后自动重试', true);
+        refreshSyncStatus(); scheduleRetry();
+        return;
+      }
+      srv.fatal = true;
+      toast('服务器拒绝了同步（HTTP ' + r.status + (j && j.hint ? '：' + j.hint : '') + '），本机改动仍保存在本地', true);
+      refreshSyncStatus();
+      return;
     }
     srv.noSelfTries = 0;
     const j = await r.json().catch(() => ({}));
-    if(typeof j.rev === 'number'){
-      srv.rev = j.rev;
-      const meta = metaGet() || {};
-      /* v4.3 竞态修复 + v4.4:比对 meta.gen(跨标签页共享)而非内存计数器——
-       * 推送在途期间(本页或其他标签页)又发生 save() 时保持 dirty 并续推,
-       * 前一次推送的迟到响应不会抹掉新编辑的脏标记。 */
-      if((meta.gen || 0) === gen) metaSet({ rev: j.rev, dirty: false });   /* 期间无新编辑 = 已对齐 */
-      else { metaSet({ rev: j.rev, dirty: true }); queuePush(); }   /* 对齐基线更新,新改动继续推 */
-      srv.wantServer = false;   /* 已与服务器对齐,不再需要「用服务器」重试 */
-    }
-    srv.blindNext = false;
+    applyPushResult(keys, sent, j, gen);
     srv.online = true;
     srv.lastSync = new Date();
     refreshSyncStatus();
+    if(pushKeys().length) queuePush();   /* 脏片超过一批能带的上限：接着推下一批 */
+    else scheduleNextPoll();             /* 推完接上 30s 增量轮询（别的设备的改动不用等刷新） */
   } finally {
     srv.pushing = false;
     if(srv.pushPending){ srv.pushPending = false; queuePush(); }   /* 在途期间攒下的新推送接上 */
   }
 }
-async function handleConflict(){
-  /* rev 落后 = 本账户的另一台设备先完成了同步。两种走向都明示，绝不静默丢数据 */
+/* 整树人工裁决（旧缓存路径 / 409 未带冲突明细的兼容分支）：与 v4.4 行为一致 */
+async function legacyArbitration(){
   const useServer = confirm(CONFLICT_MSG);
   if(useServer){
-    /* v4.4:采纳失败(服务器瞬断/坏形状)不再静默收场——挂 wantServer,
-     * 由 30s 回线定时器静默拉取采纳(不再每次弹窗骚扰,也不会一直停在旧数据);
-     * wantGen 快照:若等待期间用户又产生新编辑,重试时不再盲采纳(见 retrySync) */
+    /* v4.4:采纳失败(服务器瞬断/坏形状)不再静默收场——挂 wantServer，
+     * 由 30s 回线定时器静默拉取采纳(不再每次弹窗骚扰);wantGen 快照:等待期间又编辑则不盲采纳 */
     srv.wantServer = true;
     srv.wantGen = (metaGet() || {}).gen || 0;
     const fresh = await fetchState();
     if(fresh && fresh.data && adoptRemote(fresh)){
       srv.wantServer = false;
       srv.rev = fresh.rev;
+      srv.legacy = false;
       materialize(); applyTheme();
       go(curView);
       toast('已更新为服务器最新数据');
@@ -529,6 +983,72 @@ async function handleConflict(){
   }
   refreshSyncStatus();
 }
+/* v4.20 切片冲突裁决：只对冲突片二选一，其余脏片照常上传（服务端 409 把冲突片现值一并带回） */
+async function handleConflict(j){
+  const conflicts = (j && j.conflicts && typeof j.conflicts === 'object') ? j.conflicts : null;
+  if(!conflicts || !Object.keys(conflicts).length){ await legacyArbitration(); return; }
+  const keys0 = Object.keys(conflicts);
+  /* 值一模一样的「冲突」不算冲突（多标签页 / 离线重开最常见的形状：两边其实是同一份内容）：
+   * 静默对齐即可——不弹窗，也不发那种毫无意义的盲写。409 已经把冲突片现值带回来了，不用再请求。 */
+  const same = keys0.filter(k => sliceValueEq(sliceValue(USERS, k), (conflicts[k] || {}).value));
+  const keys = keys0.filter(k => same.indexOf(k) < 0);
+  if(same.length){
+    const meta0 = metaGet() || {};
+    const drop = k => same.indexOf(k) < 0;
+    const oldRevs = meta0.dirtyRevs || {}, revs = {};
+    Object.keys(oldRevs).forEach(k => { if(drop(k)) revs[k] = oldRevs[k]; });
+    same.forEach(k => {
+      const c = conflicts[k] || {};
+      revs[k] = (typeof c.rev === 'number') ? c.rev : 0;
+      if(typeof c.rev === 'number'){ if(!srv.sliceRevs) srv.sliceRevs = {}; srv.sliceRevs[k] = c.rev; }
+    });
+    metaPatch({ dirtySlices: (Array.isArray(meta0.dirtySlices) ? meta0.dirtySlices : []).filter(drop),
+      pushSlices: (Array.isArray(meta0.pushSlices) ? meta0.pushSlices : []).filter(drop), dirtyRevs: revs });
+    if(!srv.base) srv.base = {};
+    same.forEach(k => { const sv = serializeSlice(USERS, k); if(sv === undefined) delete srv.base[k]; else srv.base[k] = sv; });
+    srv.baseTree = null;
+    if(srv.blindKeys) same.forEach(k => srv.blindKeys.delete(k));
+    toast('有 ' + same.length + ' 项与服务器内容一致，已自动对齐');
+  }
+  if(!keys.length){          /* 全是同一份内容：没有需要裁决的，接着推其余脏片 */
+    refreshSyncStatus();
+    if(pushKeys().length) queuePush(); else scheduleNextPoll();
+    return;
+  }
+  const useServer = confirm(conflictMsg(keys));
+  const meta = metaGet() || {};
+  if(useServer){
+    keys.forEach(k => {
+      const c = conflicts[k] || {};
+      writeSlice(USERS, k, c.value === undefined ? null : c.value);   /* 采纳服务器现值 */
+      if(typeof c.rev === 'number'){ if(!srv.sliceRevs) srv.sliceRevs = {}; srv.sliceRevs[k] = c.rev; }
+    });
+    persistCache();
+    const rest = (Array.isArray(meta.dirtySlices) ? meta.dirtySlices : []).filter(k => keys.indexOf(k) < 0);
+    const force = (Array.isArray(meta.pushSlices) ? meta.pushSlices : []).filter(k => keys.indexOf(k) < 0);
+    rest.forEach(k => { if(force.indexOf(k) < 0) force.push(k); });
+    const oldRevs = meta.dirtyRevs || {}, revs = {};
+    force.forEach(k => { revs[k] = (oldRevs[k] !== undefined) ? oldRevs[k] : sliceRevOf(k); });
+    metaPatch({ dirty: force.length > 0, dirtySlices: [], pushSlices: force, dirtyRevs: revs });
+    materialize(); applyTheme();
+    /* 只把这几个冲突片标成「与服务器一致」——不能整树 markBase：那会把别处（比如打开着的
+     * 弹窗里）尚未保存的半编辑值一并烤进基线，之后 save 再把它推上去盖掉别设备的真改动 */
+    if(!srv.base) srv.base = {};
+    keys.forEach(k => {
+      const s = serializeSlice(USERS, k);
+      if(s === undefined) delete srv.base[k]; else srv.base[k] = s;
+    });
+    srv.baseTree = null;
+    go(curView);
+    toast('已采用服务器的冲突项（其余本机改动继续上传）');
+    if(force.length) queuePush();
+  } else {
+    keys.forEach(k => { if(srv.blindKeys) srv.blindKeys.add(k); else srv.blindKeys = new Set([k]); });
+    toast('已用本机数据覆盖冲突项（其余项按版本校验上传）');
+    queuePush();
+  }
+  refreshSyncStatus();
+}
 function scheduleRetry(){
   if(srv.retryTimer) return;
   srv.retryTimer = setTimeout(() => { srv.retryTimer = null; retrySync(); }, 30000);
@@ -536,7 +1056,8 @@ function scheduleRetry(){
 /* v4.4 回线收敛:30s 定时器到点后按「上次意图」分派——
  *   · 用户已选「用服务器」但采纳失败(wantServer) → 静默拉取采纳并刷新界面;
  *   · 本会话从未对齐过(启动即离线) → 拉服务器走 converge 同款裁决(含人工裁决弹窗);
- *   · 已有对齐基线/盲写中 → 维持原推送节奏(queuePush)。 */
+ *   · 有脏片 → 按片补推；无脏片 → 只问「服务器有没有变」（since 短路），变了才拉变过的片。
+ * v4.20：干净时的轮询不再是整树 GET，而是「一条几十字节的 manifest 探测 + 只拉变过的片」。 */
 async function retrySync(){
   if(srv.fatal || !me) return;
   if(srv.wantServer){
@@ -560,19 +1081,150 @@ async function retrySync(){
     refreshSyncStatus();
     return;
   }
-  if(srv.rev !== null || srv.blindNext){ queuePush(); return; }
-  const remote = await fetchState();
-  if(!remote){ scheduleRetry(); refreshSyncStatus(); return; }
-  const outcome = await converge(remote);
-  if(outcome === 'adopt'){
-    materialize(); applyTheme(); go(curView);
-    toast('已恢复同步：本机已更新为服务器最新数据');
-  } else if(outcome === 'adopt-fail'){
-    scheduleRetry();   /* 多为瞬时/版本错配：恢复后再收敛 */
-  } else {
-    queuePush();       /* 本机为准/补推 */
+  const dirtyKeys = pushKeys();
+  if(dirtyKeys.length || srv.pushing){
+    /* 先把本机脏片补推完（doPush 成功后接上轮询）。脏片非空也涵盖「防抖待发」的情况
+     * （save 先记脏片再 queuePush）；srv.pushing 是回包已到、脏片刚清的那一小段窗口的保险。 */
+    queuePush(); scheduleNextPoll(); return;
   }
+  if(srv.rev === null){
+    /* 本会话从未对齐过（启动即离线/旧缓存）：拉整树走 converge 同款裁决 */
+    const remote = await fetchState();
+    if(!remote){ scheduleRetry(); refreshSyncStatus(); return; }
+    const outcome = await converge(remote);
+    if(outcome === 'adopt'){
+      materialize(); applyTheme(); go(curView);
+      toast('已恢复同步：本机已更新为服务器最新数据');
+    } else if(outcome === 'adopt-fail'){
+      scheduleRetry();   /* 多为瞬时/版本错配：恢复后再收敛 */
+    } else {
+      queuePush();       /* 本机为准/补推 */
+    }
+    scheduleNextPoll();
+    refreshSyncStatus();
+    return;
+  }
+  /* 干净且已对齐：先花一条几十字节的请求问「全局 rev 动没动」，动了才拉 manifest */
+  let man = null;
+  try {
+    const r = await srvFetch('/slices?since=' + encodeURIComponent(String(srv.rev)), { method: 'GET' }, 4000);
+    if(r.status === 401){ authExpired(); return; }
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    man = await r.json();
+  } catch(e){ srv.online = false; scheduleRetry(); refreshSyncStatus(); return; }
+  srv.online = true;
+  if(man && man.unchanged){
+    srv.lastSync = new Date();
+    scheduleNextPoll();
+    refreshSyncStatus();
+    return;
+  }
+  const changed = changedSliceKeys(man && man.slices);
+  const manRev = (man && typeof man.rev === 'number') ? man.rev : srv.rev;
+  if(!changed.length){
+    srv.rev = manRev;
+    metaPatch({ rev: manRev });
+    markBaseIfIdle();
+    srv.lastSync = new Date();
+    scheduleNextPoll();
+    refreshSyncStatus();
+    return;
+  }
+  /* 有编辑弹窗开着：本轮不拉——拉回来的片会换掉树里的对象，弹窗捕获的旧引用就成了孤儿
+   * （饮食改克数、食物/动作编辑、身体记录都直接改对象，睡眠段编辑器自己会重读）。
+   * 只有首次引导那种纯说明浮层例外：它不是编辑，挡着轮询反而让新账户看不到别端改动。
+   * 不动 srv.rev，5s 后再来一轮，用户关掉弹窗很快就补上。 */
+  if(curDialog && curDialog.name !== 'onboard'){ scheduleNextPoll(5000); return; }
+  /* 一次别拉太多片：?keys= 全塞进 URL 会撞请求头长度上限（整树 PUT 会把所有片的 rev 抬一遍，
+   * 那种情况下 changed 可能上千片），撞了就是永久 431 循环。分批拉，srv.rev 停在 manifest 那版，
+   * 下一轮 manifest 会继续把剩下的带出来（已拉过的片基线已推进，不会重复）。 */
+  const batch = changed.slice(0, PULL_MAX_SLICES);
+  const genAtPull = (metaGet() || {}).gen || 0;   /* 拉取期间用户可能又编辑了（见下） */
+  let got = null;
+  try {
+    const r = await srvFetch('/slices?keys=' + encodeURIComponent(batch.join(',')), { method: 'GET' }, 6000);
+    if(r.status === 401){ authExpired(); return; }
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    got = await r.json();
+  } catch(e){ scheduleRetry(); refreshSyncStatus(); return; }
+  if(((metaGet() || {}).gen || 0) !== genAtPull){
+    /* 拉到一半用户又编辑了（点一次 +1 水这种非模态操作挡不住）：本轮作废——
+     * 否则远端那份旧值会把刚落地的编辑盖掉，残留的脏条目再拿过期 rev 去推就是一次假冲突。
+     * srv.rev 不动，下一轮重新发现。 */
+    scheduleNextPoll();
+    refreshSyncStatus();
+    return;
+  }
+  if(curDialog && curDialog.name !== 'onboard'){
+    /* 拉取这几秒里刚打开的编辑弹窗同样要保护：换树会让弹窗捕获的对象变孤儿 */
+    scheduleNextPoll(5000);
+    return;
+  }
+  /* C2：只有「这一轮把 manifest 报的变更全拉完」才允许把全局游标推到 manRev。
+   * 分批拉了 200 片、还剩 50 片时若也推进，下一轮 ?since=manRev 就被服务端短路成 unchanged，
+   * 剩下的片永远拉不回来（除非之后有人再写一次或用户刷新）。 */
+  const complete = batch.length >= changed.length;
+  applyRemoteSlices(got, complete ? manRev : null);
+  toast('已同步其他设备的改动（' + batch.length + ' 项' + (complete ? '' : '，其余继续同步中') + '）');
+  scheduleNextPoll(complete ? 0 : 800);   /* 没拉完就快点再来一轮 */
   refreshSyncStatus();
+}
+/* 在线时保持 30s 一轮的增量轮询：v4.20 起一轮只是「since 短路探一下」+（变了才）拉几片，
+ * 代价极小，换来的是别的设备的改动不用刷新页面就能看到。
+ * 注意：拉回来的片会换掉树里的对象，所以有弹窗开着时不重画底层页面（见 applyRemoteSlices）。 */
+function scheduleNextPoll(delay){
+  if(srv.fatal || !me || srv.online === false) return;
+  if(srv.retryTimer) return;
+  if(!delay){ scheduleRetry(); return; }
+  srv.retryTimer = setTimeout(() => { srv.retryTimer = null; retrySync(); }, delay);
+}
+/* 服务器 manifest 里比本机基线新的片 */
+function changedSliceKeys(remoteSlices){
+  if(!remoteSlices || typeof remoteSlices !== 'object') return [];
+  const base = srv.sliceRevs || {};
+  return Object.keys(remoteSlices).filter(k => isValidSliceKey(k)
+    && (typeof remoteSlices[k] === 'number' ? remoteSlices[k] : 0)
+       > (typeof base[k] === 'number' ? base[k] : 0));
+}
+/* 只拉变过的片并挂回本机树（干净路径：不碰本机脏片，因为本函数只在无脏片时调）。
+ * baseRev = 本轮 manifest 探到的那条全局 rev：**不能用 got.rev**——manifest 与 keys 两次请求之间
+ * 别的设备完全可能又写了别的片，那个片的 rev 从没进过 srv.sliceRevs，一旦把 srv.rev 提到 got.rev，
+ * 下轮 `?since=` 就会短路成 unchanged，那片就永远拉不到了（直到全局 rev 又动）。
+ * 停在 baseRev 上，下轮就会再拿到一份带它的 manifest。 */
+function applyRemoteSlices(got, baseRev){
+  const values = (got && got.values && typeof got.values === 'object') ? got.values : {};
+  /* habits（定义）必须**先于** habitdone:<date> 挂：后者按本机习惯 id 落点，
+   * 同批里新加的自定义习惯还没进树时，它的打卡会被当成未知 id 静默丢掉 */
+  const order = Object.keys(values).filter(isValidSliceKey)
+    .sort((a, b) => (a === 'habits' ? 0 : 1) - (b === 'habits' ? 0 : 1));
+  order.forEach(k => { writeSlice(USERS, k, values[k]); });
+  persistCache();
+  /* 拉回来的片就是「与服务器一致」的，基线要跟着推进——否则本机别处还留着脏片时
+   * markBaseIfIdle 会跳过，这些刚拉回来的片看起来就像「本机改过」，下一轮会被原样推回去 */
+  if(!srv.base) srv.base = {};
+  Object.keys(values).forEach(k => {
+    if(!isValidSliceKey(k)) return;
+    const s = serializeSlice(USERS, k);
+    if(s === undefined) delete srv.base[k]; else srv.base[k] = s;
+  });
+  srv.baseTree = null;
+  if(typeof baseRev === 'number') srv.rev = baseRev;
+  srv.sliceRevs = Object.assign({}, srv.sliceRevs || {}, got.slices || {});
+  metaPatch({ rev: srv.rev });
+  markBaseIfIdle();
+  materialize(); applyTheme();
+  if(!curDialog) go(curView);   /* 有弹窗在编辑时不重画底层页面，免得把半截编辑挂到旧引用上 */
+}
+/* 空闲时把基线推进到当前树。三个前提缺一不可：
+ *   ① meta 里没有待推片；② 本机与基线逐片比对没有差异（可能是别的标签页刚记的，
+ *      此时共享 meta 里的 dirtySlices 已被那一页重算过、看不到本页的改动）；
+ *   ③ 有基线可比。 */
+function markBaseIfIdle(){
+  const meta = metaGet() || {};
+  if(Array.isArray(meta.dirtySlices) && meta.dirtySlices.length) return;
+  if(Array.isArray(meta.pushSlices) && meta.pushSlices.length) return;
+  if(srv.base && USERS && diffSliceKeys(srv.base, sliceSnap(USERS)).length) return;
+  markBase();
 }
 function syncStatusText(){
   if(srv.fatal) return '🔴 同步被服务器拒绝（本机改动已存本地），刷新页面或重新登录后可恢复';
@@ -580,6 +1232,9 @@ function syncStatusText(){
   if(!srv.online) return '🟠 同步服务器离线：数据暂存本机，每 30 秒自动重试，服务器恢复后自动补推';
   const t = srv.lastSync ? ' · 最近同步 ' + srv.lastSync.toLocaleTimeString('zh-CN', { hour12: false }) : ' · 等待首次同步';
   const who = me && me.username ? '（' + me.username + '）' : '';
+  /* B5：有被服务端拒过（数据格式异常）的片挂着时，别谎报「同步正常」——改好会自动重推 */
+  if(srv.badKeys && srv.badKeys.size)
+    return '🟠 已登录' + who + ' · 有 ' + srv.badKeys.size + ' 项数据格式异常未同步（改好会自动重试）' + t;
   return '🟢 已登录' + who + ' · 同步正常（数据版本 ' + srv.rev + '）' + t;
 }
 function refreshSyncStatus(){
@@ -621,11 +1276,19 @@ function target(){
 
 /* ---------- 饮食数据辅助 ---------- */
 function mealItem(food, g){ return { id:uid(), name:food.name, per100:Object.assign({}, food.per100), g:Math.round(g) }; }
-function dayMeals(date){
+/* 只读访问：没有这一天就返回空壳，**绝不写状态树**。
+ * v4.20：旧写法在读取时就 `state.meals[date] = {...}` 物化当天，而 state 与同步树是同一份
+ * （materialize 直接挂引用）——于是「打开概览/历史页」这种纯渲染会凭空造出空饮食日，
+ * 按片同步下它们会被当成用户编辑推上去（历史页 30 天一次就是 30 片空 meal_days），
+ * 还可能撞上别的设备同一天的真实记录。渲染就只是渲染。 */
+const EMPTY_DAY_MEALS = Object.freeze({ breakfast: Object.freeze([]), lunch: Object.freeze([]), dinner: Object.freeze([]), snack: Object.freeze([]) });
+function dayMeals(date){ return state.meals[date] || EMPTY_DAY_MEALS; }
+/* 真正要写入时才创建这一天：meal_days 标记的含义是「这天有记录」，不是「这天被看过」 */
+function ensureDayMeals(date){
   if(!state.meals[date]) state.meals[date] = { breakfast:[], lunch:[], dinner:[], snack:[] };
   return state.meals[date];
 }
-function addMealItem(date, slot, item){ dayMeals(date)[slot].push(item); save(); }
+function addMealItem(date, slot, item){ ensureDayMeals(date)[slot].push(item); save(); }
 function itemMacro(it){ return { kcal: it.per100.kcal*it.g/100, p: it.per100.p*it.g/100, c: it.per100.c*it.g/100, f: it.per100.f*it.g/100 }; }
 function mealSlotTotals(date, slot){
   const m = dayMeals(date)[slot];
@@ -861,7 +1524,8 @@ function showDialog(title, html, opts){
    * 按一次 Esc 会把内外两层一起关掉，且内层关了以后外层虽然还开着、curDialog 却是 null
    * （导入结尾的 if(curDialog) closeDialog() 与各测试取 curDialog.box 都会踩空）。
    * 现在维护一个栈：只有栈顶响应 Esc，curDialog 恒等于栈顶。 */
-  const entry = { box, el: d };
+  /* name：少数弹窗需要被认出（如首次引导浮层不算「编辑中」，不该让增量拉取让路） */
+  const entry = { box, el: d, name: opts.name || null };
   function close(){
     ov.remove();
     const i = dialogStack.indexOf(entry); if(i >= 0) dialogStack.splice(i, 1);
@@ -1032,7 +1696,7 @@ function showOnboard(){
     '<div class="d-f" style="position:static;justify-content:flex-end;margin-top:18px">' +
       '<button class="btn primary" id="ob_skip">直接开始</button>' +
     '</div>';
-  const dlg = showDialog('开始使用', html, {size:'lg'});
+  const dlg = showDialog('开始使用', html, {size:'lg', name:'onboard'});
   const b = dlg.box;
   $('#ob_act', b).value = String(state.activity);
   const collect = () => {
