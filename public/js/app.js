@@ -2913,14 +2913,16 @@ function renderBodyChart(metric){
   if(recs.length < 2){ if(sub) sub.textContent = ''; $('#chartBody').innerHTML = '<div class="empty"><div class="e-ic">📏</div>数据不足，先去记录几次吧</div>'; return; }
   const pts = recs.map(r => ({ x:r.date, y:r[metric] }));
   const out = pts.slice(Math.max(0, pts.length - 60));
-  /* 刻度与气泡都按指标的 dec 定小数位（以前传的 fmtY 是死参数：轴上一串重复整数、气泡也只给整数） */
+  /* 刻度按指标的 dec 定小数位，并带上单位（体重 "71.2kg"，血压 "128mmHg"）——
+     单位宽度不一，左留白由 padForTicks 按最长刻度自动加宽（2026-09-13 用户要求纵坐标显示单位） */
   const fmtDec = v => v.toFixed(mdef.dec);
   const svg = lineChartSVG({
     points: out,
     color: 'var(--brand)',
     area: true,
-    fmtTick: fmtDec,
+    fmtTick: v => fmtDec(v) + mdef.unit,
     fmtVal: v => fmtDec(v) + ' ' + mdef.unit,
+    fmtX: dateSlash,
   });
   if(sub) sub.textContent = '近' + out.length + '条 · 点按看数值';
   $('#chartBody').innerHTML = svg;
@@ -3279,13 +3281,16 @@ function renderSleepChart(){
   const el = $('#st_sleep'); if(!el) return;
   const ds = lastNDates(30);
   const pts = ds.map(x => ({ x, y: sleepTotalMins(x) }));   // 全天各段总时长
-  el.innerHTML = barChartSVG({ points: pts, color: 'var(--cat2)', target: SLEEP_GOAL_MINS, targetLabel:'10h', unit:'分钟', fmtY: v => (v/60).toFixed(1) + 'h' });
+  /* 纵轴按用户要求改**小时**（2026-09-13）：刻度 "7.5h"、目标线仍是 "10h"，气泡也随口径走小时
+     （原来 y 轴是一串裸分钟数，与目标线标着 "10h" 对不上；顶上的 fmtY 是死参数，真正生效的是 fmtTick/fmtVal）。 */
+  el.innerHTML = barChartSVG({ points: pts, color: 'var(--cat2)', target: SLEEP_GOAL_MINS, targetLabel:'10h', unit:'分钟',
+    fmtTick: v => (v/60).toFixed(1) + 'h', fmtVal: v => (v/60).toFixed(1) + ' 小时', fmtX: dateSlash });
 }
 function renderWaterChart(){
   const el = $('#st_water'); if(!el) return;
   const ds = lastNDates(30);
   const pts = ds.map(x => ({ x, y: waterFor(x) }));
-  el.innerHTML = barChartSVG({ points: pts, color: 'var(--cat1)', target: state.waterTarget, targetLabel: state.waterTarget + '杯', unit:'杯', fmtY: v => v + '' });
+  el.innerHTML = barChartSVG({ points: pts, color: 'var(--cat1)', target: state.waterTarget, targetLabel: state.waterTarget + '杯', unit:'杯', fmtY: v => v + '', fmtX: dateSlash });
 }
 
 /* =====================================================
@@ -3607,8 +3612,72 @@ function niceTicks(mn, mx, count){
   for(let v = start; v <= mx + 1e-9; v += step) arr.push(round(v, 6));
   return arr;
 }
-const CHART_W = 760, CHART_H = 238, P_L = 52, P_R = 18, P_T = 14, P_B = 34;
-const PLOT_W = CHART_W - P_L - P_R, PLOT_H = CHART_H - P_T - P_B;
+/* ---------- 图表几何：跟着渲染宽度走，手机上不再被缩成蚂蚁字 ----------
+ * 2026-09-13 用户反馈「手机上历史页图表、身体页体重图的坐标轴字看不清」。
+ * 根因不是字号写小了，而是 viewBox 固定 760×238 又配 width:100%：手机卡片内容宽只有 ~336px，
+ * 整张图被等比压到 44%，11 号轴字只剩 ~4.9 物理像素（线宽、圆点、柱宽同样缩水）。
+ * 现在每次画图前调 chartLayout()：viewBox 宽度取容器真实像素宽（≈1:1），轴字锁 11~14px 真像素，
+ * 左/下留白按字号算；桌面宽（≈986px）算出来的字号 ~14、高度 ~300，与旧版观感一致（旧版是 760×238 放大 1.3 倍）。
+ * 量不到 window（server/test 的 vm 桩没有 innerWidth）时退回 CHART_DEF 的老尺寸，测试几何保持确定。 */
+const CHART_DEF = { W: 760, H: 238, PL: 52, PR: 18, PT: 14, PB: 34, FS: 11 };
+let CHART_W = CHART_DEF.W, CHART_H = CHART_DEF.H;
+let P_L = CHART_DEF.PL, P_R = CHART_DEF.PR, P_T = CHART_DEF.PT, P_B = CHART_DEF.PB;
+let PLOT_W = CHART_W - P_L - P_R, PLOT_H = CHART_H - P_T - P_B;
+let FS_AX = CHART_DEF.FS, FS_SUB = round(CHART_DEF.FS * 0.95, 2);   /* FS_AX 轴字 / FS_SUB 目标线小字 */
+
+/* 图表卡里的 svg 实际有多宽：.main 左右 padding = clamp(12px,3vw,32px)、≥900px 才有 214px 侧栏、
+   .main 上限 1080px，.chart-card 自己还有 padding 14×2 + 边框 2。估偏一点点只会让 svg 轻微缩放，无碍。 */
+function chartHostW(){
+  const vw = (typeof window !== 'undefined' && window.innerWidth) || 0;
+  if(!(vw > 0)) return 0;
+  const pagePad = Math.max(12, Math.min(32, vw * 0.03));
+  const mainW = Math.min(1080, vw - (vw >= 900 ? 214 : 0));
+  return Math.max(260, Math.min(980, mainW - pagePad * 2 - 30));
+}
+function chartLayout(){
+  const w = chartHostW();
+  if(!w){
+    CHART_W = CHART_DEF.W; CHART_H = CHART_DEF.H;
+    P_L = CHART_DEF.PL; P_R = CHART_DEF.PR; P_T = CHART_DEF.PT; P_B = CHART_DEF.PB;
+    FS_AX = CHART_DEF.FS;
+  } else {
+    CHART_W = Math.round(w);
+    FS_AX = round(clamp(w * 0.0145, 11, 14), 2);     /* 窄屏 11px 真像素（旧写法只有 ~4.9）；桌面 ~14 */
+    CHART_H = Math.round(clamp(w * 0.313, 210, 300)); /* 窄屏不再压成一条扁带 */
+    P_L = Math.round(FS_AX * 3.6);                    /* 左侧留白跟着字号走：1.2k / 71.2 这类刻度不能被切 */
+    P_R = Math.round(FS_AX * 1.3);
+    P_T = Math.round(FS_AX * 1.0);
+    P_B = Math.round(FS_AX * 2.5);
+  }
+  FS_SUB = round(FS_AX * 0.95, 2);
+  PLOT_W = CHART_W - P_L - P_R;
+  PLOT_H = CHART_H - P_T - P_B;
+}
+/* x 轴最多放几个刻度：按绘图区实际宽度算，窄屏少放几个免挤成一团
+   （桌面 918px 算出 7/9，与旧版写死 6/9 的取点数一致，视觉不变） */
+function tickStep(n, max){ return Math.max(1, Math.ceil(n / Math.max(2, Math.min(max, Math.floor(PLOT_W / (FS_AX * 3.6)))))); }
+/* 刻度文本比默认左留白还宽时（例如体重刻度带单位 "71.2kg"、血压 "118mmHg"）把 P_L 加够，
+   否则手机上左端几个字会被 viewBox 边界切掉。宽度优先用 canvas 真量（跟 SVG 文本同一个字体），
+   量不到（无 canvas 的测试桩）才按 0.62em/字符 估——按字符数估对 "mmHg" 这种混大小写的串会偏窄。 */
+let cMeasCtx = null;   /* null=还没试过；false=这个环境量不了 */
+function textW(str, fs){
+  try {
+    if(cMeasCtx === null){
+      const cv = document.createElement('canvas');
+      cMeasCtx = (cv && cv.getContext) ? cv.getContext('2d') : false;
+    }
+    if(cMeasCtx){
+      cMeasCtx.font = fs + 'px ' + ((document.body && getComputedStyle(document.body).fontFamily) || 'sans-serif');
+      return cMeasCtx.measureText(String(str)).width;
+    }
+  } catch(e){ cMeasCtx = false; }
+  return String(str).length * fs * 0.62;
+}
+function padForTicks(texts){
+  const w = Math.max.apply(null, texts.map(t => textW(t, FS_AX)));
+  const need = Math.ceil(w) + 12;   /* 8px = 刻度到轴线的间距（axisY 里的 P_L-8），4px = 到画布左边的余量 */
+  if(need > P_L){ P_L = need; PLOT_W = CHART_W - P_L - P_R; }
+}
 function xAt(i, n){ return n === 1 ? P_L + PLOT_W/2 : P_L + i/(n-1) * PLOT_W; }
 function yAt(v, mn, mx){ return P_T + (1 - (v - mn)/(mx - mn)) * PLOT_H; }
 function axisY(mn, mx, tickFmt){
@@ -3617,16 +3686,16 @@ function axisY(mn, mx, tickFmt){
   ticks.forEach(tk => {
     const yy = yAt(tk, mn, mx);
     s += '<line x1="' + P_L + '" y1="' + yy + '" x2="' + (CHART_W - P_R) + '" y2="' + yy + '" stroke="' + CX.grid + '" stroke-width="1"/>';
-    s += '<text x="' + (P_L - 8) + '" y="' + (yy + 3.5) + '" text-anchor="end" font-size="11" fill="' + CX.ax + '">' + tickFmt(tk) + '</text>';
+    s += '<text x="' + (P_L - 8) + '" y="' + round(yy + FS_AX * 0.32, 2) + '" text-anchor="end" font-size="' + FS_AX + '" fill="' + CX.ax + '">' + tickFmt(tk) + '</text>';
   });
   return s;
 }
 function xLabels(points, fmt){
   const n = points.length;
-  const step = Math.max(1, Math.ceil(n / 6));
+  const step = tickStep(n, 7);
   let s = '';
   for(let i = 0; i < n; i += step){
-    s += '<text x="' + xAt(i, n) + '" y="' + (CHART_H - 10) + '" text-anchor="middle" font-size="11" fill="' + CX.ax + '">' + esc(fmt(points[i].x)) + '</text>';
+    s += '<text x="' + xAt(i, n) + '" y="' + round(CHART_H - FS_AX * 0.9, 2) + '" text-anchor="middle" font-size="' + FS_AX + '" fill="' + CX.ax + '">' + esc(fmt(points[i].x)) + '</text>';
   }
   return s;
 }
@@ -3647,6 +3716,7 @@ function hitBands(items, xOf, yOf, tipOf){
 }
 
 function lineChartSVG(o){
+  chartLayout();
   const pts = o.points.filter(p => p.y !== null && p.y !== undefined && !isNaN(p.y));
   if(pts.length < 2){
     return '<div class="empty"><div class="e-ic">📈</div>数据不足，先积累一些记录吧</div>';
@@ -3656,6 +3726,7 @@ function lineChartSVG(o){
   if(o.ref && o.ref.y !== null && o.ref.y !== undefined){ ys.push(o.ref.y); refY = o.ref.y; }
   const { mn, mx } = chartRange(ys);
   const tf = o.fmtTick || (v => v >= 1000 ? (v/1000).toFixed(1) + 'k' : String(Math.round(v)));
+  padForTicks(niceTicks(mn, mx, 4).map(tf));
   let s = '<svg viewBox="0 0 ' + CHART_W + ' ' + CHART_H + '" role="img" style="font-family:inherit">';
   s += axisY(mn, mx, tf);
   // x 轴
@@ -3664,7 +3735,7 @@ function lineChartSVG(o){
   if(refY !== null){
     const yy = yAt(refY, mn, mx);
     s += '<line x1="' + P_L + '" y1="' + yy + '" x2="' + (CHART_W - P_R) + '" y2="' + yy + '" stroke="' + CX.ink3 + '" stroke-width="1.5" stroke-dasharray="5 4"/>';
-    if(o.ref.label) s += '<text x="' + (CHART_W - P_R) + '" y="' + (yy - 5) + '" text-anchor="end" font-size="10.5" fill="' + CX.ink3 + '">' + esc(o.ref.label) + '</text>';
+    if(o.ref.label) s += '<text x="' + (CHART_W - P_R) + '" y="' + round(yy - FS_SUB * 0.45, 2) + '" text-anchor="end" font-size="' + FS_SUB + '" fill="' + CX.ink3 + '">' + esc(o.ref.label) + '</text>';
   }
   // 面积
   if(o.area){
@@ -3689,15 +3760,18 @@ function lineChartSVG(o){
 }
 
 function barChartSVG(o){
+  chartLayout();
   const pts = o.points.filter(p => p.y !== null && p.y !== undefined);
   if(!pts.length){ return '<div class="empty"><div class="e-ic">📊</div>暂无数据</div>'; }
   const maxV = Math.max(...pts.map(p => p.y), o.target || 0);
   const mx = maxV * 1.15 || 1;
+  const tf = o.fmtTick || (v => v >= 1000 ? (v/1000).toFixed(1)+'k' : String(Math.round(v)));
+  padForTicks(niceTicks(0, mx, 4).map(tf));
   let s = '<svg viewBox="0 0 ' + CHART_W + ' ' + CHART_H + '" role="img">';
-  s += axisY(0, mx, o.fmtTick || (v => v >= 1000 ? (v/1000).toFixed(1)+'k' : String(Math.round(v))));
+  s += axisY(0, mx, tf);
   s += '<line x1="' + P_L + '" y1="' + (CHART_H - P_B) + '" x2="' + (CHART_W - P_R) + '" y2="' + (CHART_H - P_B) + '" stroke="' + CX.ax + '" stroke-width="1"/>';
   const n = pts.length;
-  const step = Math.max(1, Math.ceil(n / 9));
+  const step = tickStep(n, 9);
   const bw = Math.min(22, PLOT_W / n * 0.62);
   const fmtV = o.fmtVal || (v => String(Math.round(v)));
   pts.forEach((p, i) => {
@@ -3706,30 +3780,33 @@ function barChartSVG(o){
     const y0 = CHART_H - P_B;
     const barW = Math.min(bw, 20);
     s += '<rect x="' + (cx - barW/2) + '" y="' + (y0 - h) + '" width="' + barW + '" height="' + Math.max(h, p.y>0?2:0) + '" rx="3" fill="' + o.color + '"/>';
-    if(i % step === 0) s += '<text x="' + cx + '" y="' + (CHART_H - 10) + '" text-anchor="middle" font-size="10.5" fill="' + CX.ax + '">' + esc((o.fmtX || (x=>x))(p.x, p)) + '</text>';   /* 第二参传整点，周图等需要 p.wk */
+    if(i % step === 0) s += '<text x="' + cx + '" y="' + round(CHART_H - FS_AX * 0.9, 2) + '" text-anchor="middle" font-size="' + FS_AX + '" fill="' + CX.ax + '">' + esc((o.fmtX || (x=>x))(p.x, p)) + '</text>';   /* 第二参传整点，周图等需要 p.wk */
   });
   // 柱子本身太窄（手机上 ~8px），取数值同样交给整高的列感应带
   s += hitBands(pts, (p, i) => xAt(i, n), p => CHART_H - P_B - (p.y / mx) * PLOT_H, p => p.tip || (p.x + ' · ' + fmtV(p.y)));
   if(o.target){
     const yy = yAt(o.target, 0, mx);
     s += '<line x1="' + P_L + '" y1="' + yy + '" x2="' + (CHART_W - P_R) + '" y2="' + yy + '" stroke="' + CX.ink3 + '" stroke-width="1.5" stroke-dasharray="5 4"/>';
-    if(o.targetLabel) s += '<text x="' + (CHART_W - P_R) + '" y="' + (yy - 5) + '" text-anchor="end" font-size="10.5" fill="' + CX.ink3 + '">' + esc(o.targetLabel) + '</text>';
+    if(o.targetLabel) s += '<text x="' + (CHART_W - P_R) + '" y="' + round(yy - FS_SUB * 0.45, 2) + '" text-anchor="end" font-size="' + FS_SUB + '" fill="' + CX.ink3 + '">' + esc(o.targetLabel) + '</text>';
   }
   s += '</svg>';
   return s;
 }
 
 function groupedBarSVG(o){
+  chartLayout();
   // o.days: [date]; o.series: [{label,color,data:[]}]
   const n = o.days.length;
   if(!n){ return '<div class="empty"><div class="e-ic">📊</div>暂无数据</div>'; }
   const maxV = Math.max(1, ...o.series.flatMap(se => se.data));
   const mx = maxV * 1.15;
+  const tf = o.fmtTick || (v => String(Math.round(v)));
+  padForTicks(niceTicks(0, mx, 4).map(tf));
   let s = '<svg viewBox="0 0 ' + CHART_W + ' ' + CHART_H + '" role="img">';
-  s += axisY(0, mx, o.fmtTick || (v => String(Math.round(v))));
+  s += axisY(0, mx, tf);
   s += '<line x1="' + P_L + '" y1="' + (CHART_H - P_B) + '" x2="' + (CHART_W - P_R) + '" y2="' + (CHART_H - P_B) + '" stroke="' + CX.ax + '" stroke-width="1"/>';
   const m = o.series.length;
-  const step = Math.max(1, Math.ceil(n / 9));
+  const step = tickStep(n, 9);
   const groupW = Math.min(46, PLOT_W / n * 0.8);
   const barW = groupW * 0.8 / m;
   const fmtV = o.fmtVal || (v => String(Math.round(v)));
@@ -3741,7 +3818,7 @@ function groupedBarSVG(o){
       const bx = gx - groupW/2 + j * barW + (barW * 0.1);
       s += '<rect x="' + bx + '" y="' + (CHART_H - P_B - h) + '" width="' + (barW*0.8) + '" height="' + Math.max(h, v>0?2:0) + '" rx="2.5" fill="' + se.color + '"/>';
     });
-    if(i % step === 0) s += '<text x="' + gx + '" y="' + (CHART_H - 10) + '" text-anchor="middle" font-size="10.5" fill="' + CX.ax + '">' + esc((o.fmtX || (x=>x))(d)) + '</text>';
+    if(i % step === 0) s += '<text x="' + gx + '" y="' + round(CHART_H - FS_AX * 0.9, 2) + '" text-anchor="middle" font-size="' + FS_AX + '" fill="' + CX.ax + '">' + esc((o.fmtX || (x=>x))(d)) + '</text>';
   });
   // 分组柱太窄，气泡给一整天的三项（按天取数，手指不用分柱）
   s += hitBands(o.days, (d, i) => xAt(i, n),
@@ -3834,6 +3911,15 @@ function bindChartTip(){
   const hide = () => { if(ctipEl) ctipEl.hidden = true; };
   window.addEventListener('resize', hide);
   window.addEventListener('orientationchange', hide);
+  /* 转屏 / 改窗口宽度：图的 viewBox 是按当时宽度画死的（见 chartLayout），宽度真变了就重画一次，
+     否则 svg 被 width:100% 拉伸，字反而跟着放大或缩小。只认宽度变化——手机上地址栏收起只改高度。 */
+  let lastHostW = chartHostW();
+  window.addEventListener('resize', () => {
+    const w = chartHostW();
+    if(!w || Math.abs(w - lastHostW) < 40) return;
+    lastHostW = w;
+    renderView();
+  });
 }
 
 /* =====================================================
@@ -3910,7 +3996,7 @@ function renderStats(){
   const wPts = wRecs.slice(Math.max(0, wRecs.length - 120)).map(r => ({ x:r.date, y:r.weight }));
   $('#st_weight').innerHTML = lineChartSVG({
     points: wPts, color: CX.brand, area: true,
-    fmtTick: v => v.toFixed(1), fmtVal: v => v.toFixed(1) + ' kg', fmtX: dateSlash,
+    fmtTick: v => v.toFixed(1) + 'kg', fmtVal: v => v.toFixed(1) + ' kg', fmtX: dateSlash,
   });
 
   // 热量图

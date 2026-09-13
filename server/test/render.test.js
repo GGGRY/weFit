@@ -711,6 +711,45 @@ async function main() {
   ev('state.habits = ' + habBak + '; renderStats()');   /* 复位：习惯定义与打卡记录 */
   ev('state.chartOrder = ' + coBak + '; renderStats()');
 
+  /* T9j 日期轴刻度统一 MM/DD（2026-09-13 用户反馈：睡眠/饮水两张图的横坐标是完整年月日，
+     10 个字符在手机上互相遮挡）——根因是这两张图没传 fmtX，刻度兜底直接把 'YYYY-MM-DD' 印出来；
+     体重/热量/宏量营养素三张早就走 dateSlash。这里把五张日期轴图的 <text> 全抠出来对账。 */
+  {
+    const chartIds = ['st_weight','st_sleep','st_cal','st_macro','st_water'];
+    const texts = chartIds.flatMap(id => (doc.getElementById(id).__html.match(/<text[^>]*>[^<]*<\/text>/g) || []))
+      .map(t => t.replace(/<[^>]*>/g, ''));
+    const full = texts.filter(t => /^\d{4}-\d{2}-\d{2}$/.test(t));
+    const slash = texts.filter(t => /^\d{2}\/\d{2}$/.test(t));
+    ok('T9j 历史页 5 张日期轴图的刻度一律 MM/DD：不再出现 YYYY-MM-DD（睡眠/饮水图此前把 10 字符的完整日期印出来互相遮挡）',
+       full.length === 0 && slash.length >= 5,
+       'full=' + full.slice(0, 3).join(' | ') + ' slash=' + slash.length + ' texts=' + texts.length);
+  }
+
+  /* T9k 纵坐标单位（2026-09-13 用户要求）：睡眠时长图纵轴改小时、体重图纵轴带 kg。
+     背景：两张图的 fmtY 都是死参数（图表只读 fmtTick/fmtVal），所以睡眠图 y 轴一直是一串裸分钟数，
+     与标着「10h」的目标虚线在同一个轴上口径不一；且轴刻度带单位后变宽，左留白得跟着加（padForTicks）。 */
+  {
+    const yTicks = id => ((doc.getElementById(id).__html.match(/<text[^>]*text-anchor="end"[^>]*>(.*?)<\/text>/g) || [])
+      .map(t => t.replace(/<[^>]*>/g, '')));
+    const sTicks = yTicks('st_sleep'), wTicks = yTicks('st_weight');
+    ok('T9k 睡眠时长图纵坐标=小时：每条 y 刻度都是「n.nh」（与目标虚线 10h 同口径），不再出现裸分钟数',
+       sTicks.length >= 2 && sTicks.every(t => /^\d+(\.\d+)?h$/.test(t))
+       && doc.getElementById('st_sleep').__html.includes('10h'),
+       'sleepY=' + sTicks.join(' | '));
+    ok('T9k2 体重趋势图纵坐标带单位 kg（刻度如 71.2kg），左留白按最长刻度自动加宽（P_L 因 6 字符刻度变宽）',
+       wTicks.length >= 2 && wTicks.every(t => /^\d+(\.\d+)?kg$/.test(t))
+       && ev('(function(){ chartLayout(); const before = P_L; padForTicks(["71.2kg"]); return P_L >= before; })()') === true
+       && ev('(function(){ chartLayout(); padForTicks(["71.2kg"]); return P_L; })()') >= 52,
+       'weightY=' + wTicks.join(' | '));
+    ok('T9k3 睡眠图气泡也随小时口径（不再是裸分钟），且与纵轴同值',
+       ev("(function(){ const bak = state.sleep, kept = state.sleep['2026-09-01'];" +
+         " state.sleep['2026-09-01'] = [{ t:'night', bed:'23:00', wake:'06:30', mins:450, quality:4 }];" +
+         " renderSleepChart(); const svg = $('#st_sleep').innerHTML;" +
+         " if(kept === undefined) delete state.sleep['2026-09-01']; else state.sleep['2026-09-01'] = kept;" +
+         " renderSleepChart(); return /data-tip=\"2026-09-01 · 7\\.5 小时\"/.test(svg); })()") === true,
+       ev("$('#st_sleep').innerHTML").slice(0, 120));
+  }
+
   /* T9h 设置页逃生口：顺序被改过才出现「恢复默认」按钮（与概览卡那条并列） */
   ev("state.chartOrder = ['water','weight','sleep','cal','macro','vol','mins']; state.homeOrder = HOME_ORDER_DEFAULT.slice(); go('settings')");
   ok('T9h 图表顺序改过后设置页出现「↺ 历史图表顺序：恢复默认」（概览卡未改则那条不占地方）',
@@ -1355,14 +1394,52 @@ async function main() {
        && !chartSvg.includes('<title>') && !chartSvg.includes('r="10"')
        && (chartSvg.match(/data-px="/g) || []).length === 2 && (chartSvg.match(/data-py="/g) || []).length === 2,
        'bands=' + bands.length + ' svg=' + chartSvg.slice(0, 120));
-    ok('T14s 气泡文案带单位与 dec 小数位（体重 71.2 kg），y 轴刻度也按 dec（不再是一串重复整数）',
-       chartSvg.includes('data-tip="2026-09-03 · 71.2 kg"') && /<text[^>]*>71\.\d<\/text>/.test(chartSvg),
+    ok('T14s 气泡文案带单位与 dec 小数位（体重 71.2 kg），y 轴刻度也按 dec 且带单位（71.2kg）',
+       chartSvg.includes('data-tip="2026-09-03 · 71.2 kg"') && /<text[^>]*>7\d\.\dkg<\/text>/.test(chartSvg),
        (chartSvg.match(/data-tip="[^"]*"/g) || []).join(' | '));
     ok('T14t 趋势卡只有一个标题行（此前卡头与 renderBodyChart 各写一份 → 卡上出现两个「体重 趋势」）+ 提示改「点按看数值」',
        (bHtml.match(/体重 趋势/g) || []).length === 1 && (bHtml.match(/class="cc-h"/g) || []).length === 1
        && !bHtml.includes('悬停') && bHtml.includes('<span id="bm_sub">')
        && ev("$('#bm_sub').textContent") === '近2条 · 点按看数值',
        'cc-h=' + (bHtml.match(/class="cc-h"/g) || []).length + ' sub=' + ev("$('#bm_sub').textContent"));
+  }
+
+  /* T14u 图表几何改成跟着容器宽度走（2026-09-13 用户反馈「手机上历史页图表、身体页体重图的坐标轴字太小」）：
+     病根不是字号写小了，而是 viewBox 固定 760×238 又配 width:100%——手机卡片内容宽只有 ~336px，
+     整张图被等比压到 44%，11 号轴字只剩 ~4.9 物理像素。现在 chartLayout() 把 viewBox 宽度取成容器真实像素宽、
+     轴字锁 11~14px 真像素。桩里没有 window.innerWidth（走 CHART_DEF 老尺寸）时必须与旧版完全一致，
+     上面 T14r 的 height="190" 就是在守这条；下面把两个真实视口宽度分别钉住。 */
+  {
+    const chartHTML = () => ev("$('#chartBody').innerHTML");
+    ev('window.innerWidth = 390'); ev("renderBodyChart('weight')");
+    const mob = chartHTML();
+    ok('T14u 手机宽(390)：按容器真实宽画图（viewBox 336×210、轴字 11px 真像素、感应带高 171），不再整图缩到 44%',
+       mob.includes('viewBox="0 0 336 210"') && mob.includes('font-size="11"')
+       && (mob.match(/height="171"/g) || []).length === 2 && !/font-size="[0-9]\./.test(mob),
+       mob.slice(0, 150));
+    ok('T14u2 左留白跟着字号算、并按最长刻度再补（手机 P_L=53：轴刻度带 kg 占 6 字符）；第一条感应带从 x=P_L/y=11 起',
+       mob.includes('<rect x="53" y="11"'), (mob.match(/<rect[^>]*x="\d+"/g) || []).slice(0, 2).join(' | '));
+    /* 30 点的折线：窄屏/桌面都按绘图区宽度定刻度密度，各自 ≤6 个日期标签（不挤成一团） */
+    const labelsAt = () => ev("(function(){ const pts = [];" +
+      " for(let i = 0; i < 30; i++) pts.push({ x:'09/' + (i+1), y:70 + i*0.1 });" +
+      " const svg = lineChartSVG({ points:pts, color:'var(--brand)', fmtX:x => x });" +
+      " return (svg.match(/text-anchor=\"middle\"/g) || []).length; })()");
+    const mobLabels = labelsAt();
+    ev('window.innerWidth = 1400'); ev("renderBodyChart('weight')");
+    const desk = chartHTML();
+    const deskLabels = labelsAt();
+    ok('T14u3 桌面宽(1400)：字号 14、图 980×300（旧版是 760×238 放大 ~1.3 倍 = 986×309，观感一致）',
+       desk.includes('viewBox="0 0 980 300"') && desk.includes('font-size="14"')
+       && (desk.match(/height="251"/g) || []).length === 2, desk.slice(0, 150));
+    ok('T14u4 30 点折线的日期标签按绘图区宽度取密度：手机 390 与桌面 1400 都是 6 个（不挤成一团、也不漏点）',
+       mobLabels === 6 && deskLabels === 6, 'mobile=' + mobLabels + ' desktop=' + deskLabels);
+    ev('delete window.innerWidth'); ev("renderBodyChart('weight')");
+    ok('T14u5 量不到窗口宽度（无 window.innerWidth）时退回 CHART_DEF 老尺寸：760×238 / 字 11 / PLOT_H 190，几何保持确定',
+       chartHTML().includes('viewBox="0 0 760 238"') && (chartHTML().match(/height="190"/g) || []).length === 2,
+       chartHTML().slice(0, 150));
+    ok('T14u6 身体页趋势图刻度也是 MM/DD（与 T9j 同口径，不再把 2026-09-03 这种 10 字符日期印出来）',
+       /<text[^>]*>\d{2}\/\d{2}<\/text>/.test(chartHTML()) && !/<text[^>]*>\d{4}-\d{2}-\d{2}<\/text>/.test(chartHTML()),
+       (chartHTML().match(/<text[^>]*>[^<]*<\/text>/g) || []).join(' ').slice(0, 160));
   }
 
   /* T15a 用户路径不带调试代码、不注入 js/dev.js、也不下载种子数据本体（v4.16）：
