@@ -1194,8 +1194,9 @@ function tileHTML(lab, val, unit, delta, deltaCls, valRight, deltaColor){
 /* ---------- 概览「今日卡片」的排序契约 ----------
  * 5 张卡共用 .home-cards 容器，DOM 顺序 = 用户顺序；拖动只摸 DOM + 落 state.homeOrder，
  * 不重渲染（卡内监听器不用重绑，也不闪）。顶部磁贴行不在容器里，固定不动。
- * HOME_CARD_WIDE：宽屏（≥900px）下整行占满的卡；其余（饮水/睡眠）可两列并排。 */
-const HOME_CARD_WIDE = { diet:1, workout:1, habits:1 };
+ * HOME_CARD_WIDE：宽屏（≥900px）下整行占满的卡。2026-09-12 起 5 张卡全部整行——
+ * 饮水/睡眠原本会并排成一行（窄卡挤在一起），按要求改成各占一行。 */
+const HOME_CARD_WIDE = { diet:1, workout:1, habits:1, water:1, sleep:1 };
 
 /* 只做「认识 + 去重」（不补缺）：mergeOrder 判定"当时可见"靠它，
  * 补缺会把不在 DOM 里的卡当成可见卡 */

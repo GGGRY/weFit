@@ -172,9 +172,11 @@ async function main() {
   /* T1e 概览「今日卡片」可拖动排序（2026-09-11）：容器内的卡片顺序 = state.homeOrder；
      顶部磁贴行不在容器里（固定不动）。纯函数 resolveHomeOrder/mergeOrder 直接断言 */
   const ho = () => ev("resolveHomeOrder(state.homeOrder).join(',')");
+  /* 2026-09-12 起饮水/睡眠也是整行卡（宽屏下不再并排）：5 张卡全带 data-wide */
   ok('T1e1 默认顺序 饮食→运动→饮水→睡眠→打卡，磁贴行在容器外',
      ho() === 'diet,workout,water,sleep,habits'
      && view.__html.includes('<div class="home-cards" id="home_cards"><div class="card" data-hcard="diet" data-wide="1">')
+     && ['diet','workout','water','sleep','habits'].every(id => view.__html.includes('data-hcard="' + id + '" data-wide="1"'))
      && view.__html.indexOf('data-hcard="water"') < view.__html.indexOf('data-hcard="sleep"')
      && view.__html.indexOf('data-hcard="sleep"') < view.__html.indexOf('data-hcard="habits"')
      && view.__html.indexOf('<div class="row mt">') < view.__html.indexOf('id="home_cards"'),
