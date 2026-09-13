@@ -320,6 +320,14 @@ body.hcard-dragging input,body.hcard-dragging textarea{user-select:text;-webkit-
 .chart-card .cc-t{font-size:15px;font-weight:700}
 .chart-card .cc-s{font-size:12px;color:var(--ink-3)}
 .chart-card svg{display:block;width:100%;height:auto}
+/* 图表数值气泡（app.js bindChartTip）：fixed 定位在数据点上方一点点，不能吃指针事件（否则挡住下面的感应带） */
+.chart-tip{
+  position:fixed;left:0;top:0;z-index:45;pointer-events:none;max-width:min(86vw,300px);
+  padding:5px 10px;border-radius:9px;background:var(--ink);color:var(--surface);
+  font-size:12.5px;line-height:1.35;white-space:normal;text-align:center;
+  box-shadow:var(--shadow);
+}
+.chart-tip[hidden]{display:none}
 .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-2);align-items:center;padding:0 2px 4px}
 .legend .li{display:inline-flex;align-items:center;gap:6px}
 .legend .sw{width:10px;height:10px;border-radius:3px;display:inline-block}

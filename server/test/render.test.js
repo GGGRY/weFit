@@ -115,6 +115,9 @@ const sandbox = {
   XMLHttpRequest: null,};
 sandbox.window = sandbox; sandbox.self = sandbox;
 sandbox.window.scrollTo = () => {};
+/* bindChartTip 在启动时就往 window 挂 resize/orientationchange（浏览器里恒存在，桩也补上） */
+sandbox.window.addEventListener = () => {};
+sandbox.window.removeEventListener = () => {};
 const ctx = vm.createContext(sandbox);
 
 const readPub = p => fs.readFileSync(path.join(__dirname, '..', '..', 'public', p), 'utf8');
@@ -1276,6 +1279,28 @@ async function main() {
   ok('T14q .grow 改成全局规则（不再只在那三处作用域里有效，新写一行不会再静默失效）',
      /^\.grow\{flex:1;min-width:0\}/m.test(cssSrc) && cssSrc.includes('.chkline{display:flex'),
      (cssSrc.match(/^\..*grow\{[^}]*\}/gm) || []).join(' | '));
+
+  /* T14r–T14t 趋势图取数值（2026-09-13）：手机没有悬停
+     原写法每个数据点只包一层原生 <title>（还藏在 r10 隐形大热圈里）——手机点不出来，桌面也要瞄半天；
+     改成整高感应带（每点一条 rect[data-tip]，分界线取相邻点中线 = 按 x 取最近点）+ 统一的
+     .chart-tip 气泡（bindChartTip：手机点按/横拖跟手、纵拖当滚动收起，桌面悬停）。 */
+  {
+    const chartSvg = ev("$('#chartBody').innerHTML");
+    const bands = chartSvg.match(/<rect[^>]*data-tip=/g) || [];
+    ok('T14r 趋势图每点一条整高感应带（rect[data-tip] + data-px/data-py），不再只挂原生 <title>',
+       bands.length === 2 && (chartSvg.match(/height="190"/g) || []).length === 2
+       && !chartSvg.includes('<title>') && !chartSvg.includes('r="10"')
+       && (chartSvg.match(/data-px="/g) || []).length === 2 && (chartSvg.match(/data-py="/g) || []).length === 2,
+       'bands=' + bands.length + ' svg=' + chartSvg.slice(0, 120));
+    ok('T14s 气泡文案带单位与 dec 小数位（体重 71.2 kg），y 轴刻度也按 dec（不再是一串重复整数）',
+       chartSvg.includes('data-tip="2026-09-03 · 71.2 kg"') && /<text[^>]*>71\.\d<\/text>/.test(chartSvg),
+       (chartSvg.match(/data-tip="[^"]*"/g) || []).join(' | '));
+    ok('T14t 趋势卡只有一个标题行（此前卡头与 renderBodyChart 各写一份 → 卡上出现两个「体重 趋势」）+ 提示改「点按看数值」',
+       (bHtml.match(/体重 趋势/g) || []).length === 1 && (bHtml.match(/class="cc-h"/g) || []).length === 1
+       && !bHtml.includes('悬停') && bHtml.includes('<span id="bm_sub">')
+       && ev("$('#bm_sub').textContent") === '近2条 · 点按看数值',
+       'cc-h=' + (bHtml.match(/class="cc-h"/g) || []).length + ' sub=' + ev("$('#bm_sub').textContent"));
+  }
 
   /* T15a 用户路径不带调试代码、不注入 js/dev.js、也不下载种子数据本体（v4.16）：
      演示数据与自测已拆到 js/dev.js（按需注入），主包不应出现这些全局；

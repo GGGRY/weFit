@@ -999,6 +999,7 @@ function bindPullToRefresh(){
 }
 function renderView(){
   cancelHomeDrag();   /* 切页时若有拖动中的卡片，收干净（否则监听器/样式会带到下一页） */
+  ctipHide();         /* 图表数值气泡也别跟到下一页 */
   const map = { home:renderHome, diet:renderDiet, train:renderTrain, body:renderBody, stats:renderStats, settings:renderSettings,
     foodlib:renderFoodLibPage, exlib:renderExLibPage };   /* v4.15 数据管理下的两个子页面 */
   (map[curView])();
@@ -2747,7 +2748,8 @@ function renderBody(){
   }).join('');
 
   const metricOpts = bodyMeasures().map(m => '<option value="' + m.id + '"' + (m.id===bodyMetric?' selected':'') + '>' + esc(m.label) + '</option>').join('');
-  const chart = chartCard('chartBody', (MEASURES.find(m=>m.id===bodyMetric)||{}).label + ' 趋势', '近60条 · 鼠标悬停查看数值',
+  /* 卡头（含指标下拉）留在这里，renderBodyChart 只画图——两边各写过一份标题，卡上会出现两个「体重 趋势」 */
+  const chart = chartCard('chartBody', (MEASURES.find(m=>m.id===bodyMetric)||{}).label + ' 趋势', '<span id="bm_sub"></span>',
     '<select class="select" id="bm_select" style="max-width:120px;padding:5px 8px">' + metricOpts + '</select>');
 
   // 最近记录表：同组指标并成一格（血压 → 120/80，缺一边显 —），近 14 条
@@ -2865,19 +2867,23 @@ function openBodyMetricsDialog(){
 
 function renderBodyChart(metric){
   const mdef = MEASURES.find(m => m.id === metric);
+  const sub = $('#bm_sub');
   // 汇总按日期取最近一条，取最近 60 条
   const recs = state.body.filter(r => r[metric] !== undefined && r[metric] !== null);
-  if(recs.length < 2){ $('#chartBody').innerHTML = '<div class="empty"><div class="e-ic">📏</div>数据不足，先去记录几次吧</div>'; return; }
+  if(recs.length < 2){ if(sub) sub.textContent = ''; $('#chartBody').innerHTML = '<div class="empty"><div class="e-ic">📏</div>数据不足，先去记录几次吧</div>'; return; }
   const pts = recs.map(r => ({ x:r.date, y:r[metric] }));
   const out = pts.slice(Math.max(0, pts.length - 60));
+  /* 刻度与气泡都按指标的 dec 定小数位（以前传的 fmtY 是死参数：轴上一串重复整数、气泡也只给整数） */
+  const fmtDec = v => v.toFixed(mdef.dec);
   const svg = lineChartSVG({
     points: out,
     color: 'var(--brand)',
-    fill: true,
-    yUnit: mdef.unit,
-    fmtY: v => mdef.dec === 0 ? v.toFixed(0) : (v < 10 ? v.toFixed(1) : v.toFixed(0)),
+    area: true,
+    fmtTick: fmtDec,
+    fmtVal: v => fmtDec(v) + ' ' + mdef.unit,
   });
-  $('#chartBody').innerHTML = '<div class="cc-h"><div class="cc-t">' + esc(mdef.label) + ' 趋势</div><span class="cc-s">近' + out.length + '条 · 悬停看数值</span></div>' + svg;
+  if(sub) sub.textContent = '近' + out.length + '条 · 点按看数值';
+  $('#chartBody').innerHTML = svg;
 }
 
 /* 卡片容器 html：给历史页（统计看板）与身体页复用 */
@@ -3546,6 +3552,21 @@ function xLabels(points, fmt){
   return s;
 }
 
+/* ---------- 图表的「整高感应带」与数值气泡 ----------
+ * 原来每个数据点只挂原生 <title>（藏在 r10 隐形大热圈里）：桌面要瞄准才弹、手机没有悬停点不出来。
+ * 现在给每张图铺一层透明的整高竖条，分界线取相邻两点的中线 → 手指/鼠标落在哪条带子里就取哪个点，
+ * 不用瞄准；气泡内容由 bindChartTip() 统一渲染（data-tip = 文案，data-px/data-py = 数据点的 viewBox 坐标）。 */
+function hitBands(items, xOf, yOf, tipOf){
+  const n = items.length, step = n > 1 ? PLOT_W / (n - 1) : PLOT_W;
+  let s = '';
+  items.forEach((it, i) => {
+    const px = xOf(it, i), py = yOf(it, i);
+    const l = Math.max(P_L, px - step / 2), r = Math.min(CHART_W - P_R, px + step / 2);
+    s += '<rect x="' + l + '" y="' + P_T + '" width="' + (r - l) + '" height="' + PLOT_H + '" fill="transparent" style="pointer-events:all;cursor:crosshair" data-tip="' + esc(tipOf(it, i)) + '" data-px="' + px + '" data-py="' + py + '"/>';
+  });
+  return s;
+}
+
 function lineChartSVG(o){
   const pts = o.points.filter(p => p.y !== null && p.y !== undefined && !isNaN(p.y));
   if(pts.length < 2){
@@ -3577,13 +3598,12 @@ function lineChartSVG(o){
   let d = 'M' + xAt(0, pts.length) + ' ' + yAt(pts[0].y, mn, mx);
   for(let i = 1; i < pts.length; i++) d += ' L' + xAt(i, pts.length) + ' ' + yAt(pts[i].y, mn, mx);
   s += '<path d="' + d + '" fill="none" stroke="' + o.color + '" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>';
-  // 点
+  // 点（圆点只负责显示，取数值交给下面的感应带）
+  const fmtV = o.fmtVal || (v => String(Math.round(v)));
   pts.forEach((p, i) => {
-    const px = xAt(i, pts.length), py = yAt(p.y, mn, mx);
-    const label = (o.fmtVal || (v => String(Math.round(v))))(p.y);
-    s += '<circle cx="' + px + '" cy="' + py + '" r="3" fill="' + o.color + '"><title>' + esc(p.x + ' · ' + label) + '</title></circle>';
-    s += '<circle cx="' + px + '" cy="' + py + '" r="10" fill="transparent" style="pointer-events:all;cursor:crosshair"><title>' + esc(p.x + ' · ' + label) + '</title></circle>';
+    s += '<circle cx="' + xAt(i, pts.length) + '" cy="' + yAt(p.y, mn, mx) + '" r="3" fill="' + o.color + '"/>';
   });
+  s += hitBands(pts, (p, i) => xAt(i, pts.length), p => yAt(p.y, mn, mx), p => p.x + ' · ' + fmtV(p.y));
   s += xLabels(pts, o.fmtX || (x => x));
   s += '</svg>';
   return s;
@@ -3600,15 +3620,17 @@ function barChartSVG(o){
   const n = pts.length;
   const step = Math.max(1, Math.ceil(n / 9));
   const bw = Math.min(22, PLOT_W / n * 0.62);
+  const fmtV = o.fmtVal || (v => String(Math.round(v)));
   pts.forEach((p, i) => {
     const cx = xAt(i, n);
     const h = (p.y / mx) * PLOT_H;
     const y0 = CHART_H - P_B;
     const barW = Math.min(bw, 20);
-    s += '<rect x="' + (cx - barW/2) + '" y="' + (y0 - h) + '" width="' + barW + '" height="' + Math.max(h, p.y>0?2:0) + '" rx="3" fill="' + o.color + '">' +
-      '<title>' + esc(p.tip || (p.x + ' · ' + (o.fmtVal || (v=>String(Math.round(v))))(p.y))) + '</title></rect>';
+    s += '<rect x="' + (cx - barW/2) + '" y="' + (y0 - h) + '" width="' + barW + '" height="' + Math.max(h, p.y>0?2:0) + '" rx="3" fill="' + o.color + '"/>';
     if(i % step === 0) s += '<text x="' + cx + '" y="' + (CHART_H - 10) + '" text-anchor="middle" font-size="10.5" fill="' + CX.ax + '">' + esc((o.fmtX || (x=>x))(p.x, p)) + '</text>';   /* 第二参传整点，周图等需要 p.wk */
   });
+  // 柱子本身太窄（手机上 ~8px），取数值同样交给整高的列感应带
+  s += hitBands(pts, (p, i) => xAt(i, n), p => CHART_H - P_B - (p.y / mx) * PLOT_H, p => p.tip || (p.x + ' · ' + fmtV(p.y)));
   if(o.target){
     const yy = yAt(o.target, 0, mx);
     s += '<line x1="' + P_L + '" y1="' + yy + '" x2="' + (CHART_W - P_R) + '" y2="' + yy + '" stroke="' + CX.ink3 + '" stroke-width="1.5" stroke-dasharray="5 4"/>';
@@ -3631,17 +3653,21 @@ function groupedBarSVG(o){
   const step = Math.max(1, Math.ceil(n / 9));
   const groupW = Math.min(46, PLOT_W / n * 0.8);
   const barW = groupW * 0.8 / m;
+  const fmtV = o.fmtVal || (v => String(Math.round(v)));
   o.days.forEach((d, i) => {
     const gx = xAt(i, n);
     o.series.forEach((se, j) => {
       const v = se.data[i] || 0;
       const h = (v / mx) * PLOT_H;
       const bx = gx - groupW/2 + j * barW + (barW * 0.1);
-      s += '<rect x="' + bx + '" y="' + (CHART_H - P_B - h) + '" width="' + (barW*0.8) + '" height="' + Math.max(h, v>0?2:0) + '" rx="2.5" fill="' + se.color + '">' +
-        '<title>' + esc(d + ' ' + se.label + ' ' + (o.fmtVal ? o.fmtVal(v) : String(Math.round(v)))) + '</title></rect>';
+      s += '<rect x="' + bx + '" y="' + (CHART_H - P_B - h) + '" width="' + (barW*0.8) + '" height="' + Math.max(h, v>0?2:0) + '" rx="2.5" fill="' + se.color + '"/>';
     });
     if(i % step === 0) s += '<text x="' + gx + '" y="' + (CHART_H - 10) + '" text-anchor="middle" font-size="10.5" fill="' + CX.ax + '">' + esc((o.fmtX || (x=>x))(d)) + '</text>';
   });
+  // 分组柱太窄，气泡给一整天的三项（按天取数，手指不用分柱）
+  s += hitBands(o.days, (d, i) => xAt(i, n),
+    (d, i) => Math.min.apply(null, o.series.map(se => CHART_H - P_B - ((se.data[i] || 0) / mx) * PLOT_H)),
+    (d, i) => d + ' · ' + o.series.map(se => se.label + ' ' + fmtV(se.data[i] || 0)).join(' · '));
   s += '</svg>';
   return s;
 }
@@ -3650,6 +3676,82 @@ function legendHTML(items){
 }
 function chartWrap(title, sub, id, controls){
   return '<div class="chart-card" style="margin-bottom:16px"><div class="cc-h"><div><div class="cc-t">' + esc(title) + '</div>' + (sub ? '<div class="cc-s">' + esc(sub) + '</div>' : '') + '</div>' + (controls||'') + '</div>' + (controls&&title===''?'': '') + '<div id="' + id + '"></div></div>';
+}
+
+/* ---------- 图表数值气泡（手机没有悬停）----------
+ * 触发方式沿用全站手势约定：点按 → 显数值并留着（再点别处 / 滚动 / 切页才收）；
+ * 手指横着在图里拖 → 跟着换点；纵向拖 >CTIP.MOVE px → 判为页面滚动，立刻收起、不抢滚动。
+ * 桌面鼠标仍是悬停即显、移出即收。气泡是 fixed 定位，滚动或转屏后原来的点已经不在原地，一并收起。 */
+const CTIP = { MOVE: 10 };
+let ctipEl = null, ctipTouch = null, ctipLast = null;
+
+function ctipNode(){
+  if(!ctipEl){
+    ctipEl = document.createElement('div');
+    ctipEl.className = 'chart-tip'; ctipEl.hidden = true;
+    document.body.appendChild(ctipEl);
+  }
+  return ctipEl;
+}
+function ctipBand(el){
+  return (el && el.getAttribute && el.getAttribute('data-tip')) ? el : null;
+}
+function ctipHide(){
+  ctipTouch = null; ctipLast = null;
+  if(ctipEl) ctipEl.hidden = true;
+}
+/* 气泡贴到数据点：默认点上方，顶不下就翻到下方；左右不出视口 */
+function ctipShow(band){
+  const svg = band.ownerSVGElement;
+  if(!svg){ ctipHide(); return; }
+  const tip = ctipNode();
+  ctipLast = band;
+  tip.textContent = band.getAttribute('data-tip');
+  tip.hidden = false;
+  const r = svg.getBoundingClientRect();
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  const cw = document.documentElement.clientWidth || 360;
+  const ch = document.documentElement.clientHeight || 640;
+  const x = r.left + (parseFloat(band.getAttribute('data-px')) / CHART_W) * r.width;
+  const y = r.top + (parseFloat(band.getAttribute('data-py')) / CHART_H) * r.height;
+  tip.style.left = Math.round(clamp(x - w / 2, 6, Math.max(6, cw - w - 6))) + 'px';
+  let top = y - h - 10;
+  if(top < 6) top = Math.min(y + 14, ch - h - 6);
+  tip.style.top = Math.round(top) + 'px';
+}
+function bindChartTip(){
+  /* 触屏用 touch 事件：滚动手势一接管，pointermove 就被 pointercancel 掐断（实测横拖也会），
+     而 touchmove 在整个手势里都会继续派发。（与全站手势约定一致：兼容 mouse 事件不带 pointerType，不认。）*/
+  document.addEventListener('touchstart', e => {
+    if(e.touches.length !== 1) return;
+    const t = e.touches[0], band = ctipBand(e.target);
+    if(band){ ctipTouch = { y:t.clientY, band }; ctipShow(band); } else ctipHide();
+  }, { passive:true, capture:true });
+  document.addEventListener('touchmove', e => {
+    if(!ctipTouch) return;
+    const t = e.touches[0]; if(!t) return;
+    if(Math.abs(t.clientY - ctipTouch.y) > CTIP.MOVE){ ctipHide(); return; }   /* 是在滚页面，不是在看图 */
+    const band = ctipBand(document.elementFromPoint(t.clientX, t.clientY));   /* 手指下面是谁：触屏的 touchmove 目标是起点元素，得按坐标重查 */
+    if(band) ctipShow(band);
+  }, { passive:true, capture:true });
+  document.addEventListener('touchend', () => { ctipTouch = null; }, { passive:true, capture:true });      /* 抬手后读数留着，但不再跟手 */
+  document.addEventListener('touchcancel', () => { ctipTouch = null; }, { passive:true, capture:true });
+  /* 鼠标：悬停即显、移出即收 */
+  document.addEventListener('pointermove', e => {
+    if(e.pointerType !== 'mouse') return;
+    const band = ctipBand(e.target);
+    if(band) ctipShow(band);
+    else if(!ctipTouch) ctipHide();
+  }, true);
+  /* 滚动：手指还压在图上时只跟着挪位（图表跟着页面走）；否则直接收起（气泡是 fixed 定位，
+     不重算就会悬在旧位置）。残留的滚动惯性也走这里，不必等 pointerup。 */
+  document.addEventListener('scroll', () => {
+    if(ctipTouch && ctipLast && ctipEl && !ctipEl.hidden) ctipShow(ctipLast);
+    else if(ctipEl) ctipEl.hidden = true;
+  }, true);
+  const hide = () => { if(ctipEl) ctipEl.hidden = true; };
+  window.addEventListener('resize', hide);
+  window.addEventListener('orientationchange', hide);
 }
 
 /* =====================================================
@@ -3700,7 +3802,7 @@ function renderStats(){
   const c2 = chartWrap('每日热量 vs 目标', '近30天', 'st_cal', '');
   const c3 = chartWrap('宏量营养素摄入', '近14天 · kcal', 'st_macro', legendHTML([{label:'蛋白',color:CX.c1},{label:'碳水',color:CX.c2},{label:'脂肪',color:CX.c3}]));
   const c4 = chartWrap('每周运动容量', '近12周 · Σ重量×次数', 'st_vol', '');
-  const c4b = chartWrap('每周运动时长', '近12周 · Σ分钟（当周有距离时显示在悬停提示里）', 'st_mins', '');
+  const c4b = chartWrap('每周运动时长', '近12周 · Σ分钟（当周有距离时一并显示）', 'st_mins', '');
   const c6 = chartWrap('每日饮水量', state.waterTarget ? '近30天 · 虚线为每日目标' : '近30天', 'st_water', '<button class="btn sm ghost" data-watshis title="补记/修改历史饮水记录">🕘 补记</button>');
 
   const html =
@@ -3911,4 +4013,5 @@ async function init(){
   }
 }
 bindPullToRefresh();   /* 脚本在 </body> 前、<main> 之后加载，元素已就位 */
+bindChartTip();        /* 图表取数值气泡（手机点按 / 桌面悬停），见 hitBands 注释 */
 init();
