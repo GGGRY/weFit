@@ -4032,11 +4032,7 @@ function renderSettings(){
         '<button class="btn danger ghost" id="st_wipe">🗑 清空数据</button>' +
       '</div>' +
       '<div class="tiny" id="st_sync" style="margin-top:10px;color:var(--ink-3)"></div>' +
-      /* 概览卡片/历史图表拖动顺序的逃生口（只在已被改过时出现，没改过就不占地方） */
-      (resolveHomeOrder(state.homeOrder).join(',') !== HOME_ORDER_DEFAULT.join(',')
-        ? '<div class="row" style="margin-top:8px"><button class="btn sm ghost" id="st_homeorder">↺ 概览卡片顺序：恢复默认</button></div>' : '') +
-      (resolveChartOrder(state.chartOrder).join(',') !== CHART_ORDER_DEFAULT.join(',')
-        ? '<div class="row" style="margin-top:8px"><button class="btn sm ghost" id="st_chartorder">↺ 历史图表顺序：恢复默认</button></div>' : '') +
+      /* 2026-09-13 按要求删掉「↺ 概览卡片顺序 / 历史图表顺序：恢复默认」两颗逃生口按钮（顺序仍可直接拖动改） */
       /* 2026-09-12 按要求删掉卡底那条「各设备登录同一账户…多设备说明」小字 */
       '<input type="file" id="st_file" accept=".json,application/json" style="display:none">' +
     '</div>' +
@@ -4064,10 +4060,6 @@ function renderSettings(){
   });
   $('#st_file').addEventListener('change', e => { const f = e.target.files[0]; if(f) importData(f); e.target.value = ''; });
   $('#st_wipe').addEventListener('click', () => { if(confirm('真的要清空本账户全部数据吗？此操作不可恢复（会同步清空服务器上的本人数据，不影响其他账户）。')) wipeAll(); });
-  const ho = $('#st_homeorder');
-  if(ho) ho.addEventListener('click', () => { state.homeOrder = HOME_ORDER_DEFAULT.slice(); save(); renderSettings(); toast('已恢复概览卡片默认顺序'); });
-  const co = $('#st_chartorder');
-  if(co) co.addEventListener('click', () => { state.chartOrder = CHART_ORDER_DEFAULT.slice(); save(); renderSettings(); toast('已恢复历史图表默认顺序'); });
   refreshSyncStatus();
 }
 

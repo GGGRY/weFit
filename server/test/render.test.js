@@ -807,12 +807,12 @@ async function main() {
        ev("$('#st_sleep').innerHTML").slice(0, 120));
   }
 
-  /* T9h 设置页逃生口：顺序被改过才出现「恢复默认」按钮（与概览卡那条并列） */
+  /* T9h 设置页「恢复默认顺序」逃生口已按用户要求删除（2026-09-13）：卡片/图表顺序改过后也不该再出现 */
   ev("state.chartOrder = ['water','weight','sleep','cal','macro','vol','mins']; state.homeOrder = HOME_ORDER_DEFAULT.slice(); go('settings')");
-  ok('T9h 图表顺序改过后设置页出现「↺ 历史图表顺序：恢复默认」（概览卡未改则那条不占地方）',
-     view.__html.includes('id="st_chartorder"') && view.__html.includes('历史图表顺序：恢复默认')
-     && !view.__html.includes('id="st_homeorder"'),
-     view.__html.includes('id="st_chartorder"'));
+  ok('T9h 顺序被改过后设置页不再有「恢复默认顺序」按钮（概览卡片与历史图表两条都已删）',
+     !view.__html.includes('st_chartorder') && !view.__html.includes('st_homeorder')
+     && !view.__html.includes('恢复默认'),
+     view.__html.includes('st_chartorder'));
   ev('state.chartOrder = CHART_ORDER_DEFAULT.slice(); go(\'stats\')');
 
   /* T10 动作库行内版式：名称 + 「大类 · 部位 · 方式」小字（v4.15 的平铺表格已换成食物库同款 lrow） */
