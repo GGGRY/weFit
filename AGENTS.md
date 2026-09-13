@@ -28,11 +28,13 @@
 - 新增页面/函数后,若命名或归属变了,顺手同步上面的锚点清单;若清单已维护不住,参考 PLANS.md §8 的 ES module 拆分方案(需用户确认后再动手)。
 
 ## 每次修改后必做
-- 检查并按需更新文档:CHANGELOG.md、MEMO.md、README.md、PLANS.md。
 - 改完服务端/前端代码,部署必须走「停服务 → 启服务 → 全端刷新」再验证;禁止新旧进程混跑测试(整树 PUT 会互相覆盖丢数据)。
 - 静态资源已带 `ETag`+`Cache-Control: no-cache`(v4.16):刷新时自动 304 复用,**改完前端不需要手动清缓存/加版本号**;但服务端 `serveStatic` 的内存缓存 key = (size, mtime),别用「改内容不改 mtime」的方式写文件。
 - 浏览器侧**不加载**种子数据本体（v4.16）：`SEED_FOODS`/`SEED_EXERCISES`/`seed-data.json` 只归服务端（`server/seed.js`）；用户端要系统库走 `GET /api/system/library`；调试钩子（`?selftest`/`?ftest`/`?shot`/`?probe`）与演示数据住在 `public/js/dev.js`，按需注入（要改演示库就改 dev.js 里的 `DEMO_FOODS`/`DEMO_EXERCISES`），不要把这些加回 app.js。
 - 提交前跑 `cd server && npm test` 确认通过。
+
+## 每次提交前必做
+- 检查并按需更新文档:CHANGELOG.md、MEMO.md、README.md、PLANS.md。
 
 ## 文档分工 (请按需读取)
 - 架构与功能详情 → MEMO.md;版本历史 → CHANGELOG.md;后续计划 → PLANS.md。本文件只放 agent 必须遵守的规则。
