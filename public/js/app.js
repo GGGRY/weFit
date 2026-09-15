@@ -2878,7 +2878,8 @@ function dayCardHTML(date, w, todayStr){
     '</h3>' +
     (meta ? '<div class="tiny" style="margin:-6px 0 6px">' + esc(meta) + '</div>' : '') +
     (!w
-      ? '<div class="empty" style="padding:10px"><div class="e-ic" style="font-size:22px">' + (past ? '😴' : '🗓') + '</div>' + (past ? '休息日' : '未安排') + '</div>'
+      /* 休息日图标：原来用 😴 会跟睡眠卡/习惯「睡满7小时」撞脸（2026-09-13 用户裁定改为 ☕） */
+      ? '<div class="empty" style="padding:10px"><div class="e-ic" style="font-size:22px">' + (past ? '☕' : '🗓') + '</div>' + (past ? '休息日' : '未安排') + '</div>'
       : (tot ? w.items.map(it => exRowHTML(w, it, true)).join('')
              : '<div class="empty" style="padding:10px">这天还没有动作<br><span class="tiny">点「＋ 添加运动」加一项</span></div>')) +
     '</div>';
