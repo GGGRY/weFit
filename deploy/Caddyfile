@@ -1,0 +1,44 @@
+# weFit 公网部署 · Caddy 反代示例
+#
+# 用法：
+#   1) 把下面所有 wefit.example.com 换成你的域名（DNS 需有 A/AAAA 记录指向本机，80/443 可达）
+#   2) sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
+#   3) sudo systemctl reload caddy        # Caddy 自动申请并续期 Let's Encrypt 证书
+#
+# 前置：weFit 服务端必须以 HOST=127.0.0.1 启动（只监听回环），
+#       并由防火墙只放行 80/443；8123 绝不能对公网开放。
+#       服务端还需 TRUST_PROXY=1（否则会拒绝采信 X-Forwarded-* ，见下）。
+
+wefit.example.com {
+	# 上游 server.js 已自行 gzip（Vary: Accept-Encoding）并带 ETag/304；
+	# Caddy 见到 Content-Encoding 不会二次压缩，这里只是兜底压缩未压缩的响应。
+	# 请求体大小无需在 Caddy 侧限制：server.js 自己按 MAX_BODY=10MB 返回 413。
+	encode zstd gzip
+
+	# Caddy 默认会把真实的客户端 IP **追加**到已有的 X-Forwarded-For 后面（nginx 的
+	# $proxy_add_x_forwarded_for 同理），这意味着请求自带的段是不可信的：不覆写的话，
+	# 攻击者带上随机的 `X-Forwarded-For: <伪造>` 就能把服务端的限速桶洗牌绕过限速。
+	# 所以这里显式覆写成单一值（服务端也只采信最后一段，双方一致）。
+	# X-Forwarded-Proto 无需显式设置：Caddy 默认就是覆写。
+	#
+	# 注意：若前面还有一层 CDN/负载均衡（客户端 → CDN → Caddy → weFit），覆写后落到服务端的是
+	# CDN 的 IP，所有用户会共用同一个限速桶（偏严格、不是漏洞）。要让真实客户端 IP 透过来，
+	# 需在 Caddy 里配 trusted_proxies 并相应调整这里的 header_up。
+	reverse_proxy 127.0.0.1:8123 {
+		header_up X-Forwarded-For {http.request.remote.host}
+	}
+
+	header {
+		# HSTS：先短窗口试跑（5 分钟），确认全站无混合内容/无明文依赖后再拉到一年：
+		#   "max-age=31536000; includeSubDomains"
+		# 注意 HSTS 一旦被浏览器记住就很难回退，includeSubDomains 会影响同域下所有子域。
+		Strict-Transport-Security "max-age=300"
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/wefit.log
+	}
+}

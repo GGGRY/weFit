@@ -27,6 +27,63 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const MAX_BODY = 10 * 1024 * 1024;
 
+/* ---------- 反向代理 / HTTPS 判定（v4.21 公网部署）----------
+ * 反代（Caddy/nginx）终止 TLS 后转发到本进程，本进程看到的永远是明文 HTTP，
+ * 所以「本请求是否 HTTPS」只能靠 COOKIE_SECURE 配置或 X-Forwarded-Proto。
+ * 优先级：COOKIE_SECURE=1/0 显式强制 > auto（TRUST_PROXY=1 且 X-Forwarded-Proto=https）。
+ * 默认 auto 且不信任代理头 = 不加 Secure，保住本地 localhost / 局域网明文可用
+ * （浏览器会丢弃明文 HTTP 上的 Secure Cookie，无条件加 Secure 等于本地登不上）。
+ * ⚠ X-Forwarded-* 只在 TRUST_PROXY=1 时才可信：同机反代会覆写这些头，
+ * 而直连（8123 被暴露）者可以自己塞 `X-Forwarded-Proto: https` 伪装。
+ * 公网部署必须让 8123 只监听 127.0.0.1（HOST=127.0.0.1）并由防火墙封住。 */
+function trustProxy() { return String(process.env.TRUST_PROXY || '') === '1'; }
+/* X-Forwarded-Proto 是被反代**覆写**的（Caddy 默认、nginx 的 proxy_set_header 都是覆盖式），取首段即可 */
+function firstHeaderToken(v) { return String(v || '').split(',')[0].trim(); }
+/* X-Forwarded-For 不同：反代多是**追加**而非覆写（nginx 的 $proxy_add_x_forwarded_for、Caddy 默认
+ * 也会在已有值后添上客户端 IP），所以请求里完全可能带着攻击者自造的伪造前缀。
+ * 只有「最近的受信反代添上的那一段」可信 = **最后一段**；若取首段，攻击者只要把
+ * `X-Forwarded-For: <随机值>` 一路随请求变化，就能把限速桶全部洗牌，两档限速当场失效。
+ * （多级代理链下最后一段是最靠近本进程的那跳；要让真实客户端 IP 落在这里请让反代**覆写**该头，
+ *  样例 Caddyfile 已显式 header_up X-Forwarded-For，避免所有用户被并进同一个桶。） */
+function lastHeaderToken(v) {
+  const parts = String(v || '').split(',');
+  for (let i = parts.length - 1; i >= 0; i--) { const s = parts[i].trim(); if (s) return s; }
+  return '';
+}
+function reqIsSecure(req) {
+  const mode = String(process.env.COOKIE_SECURE || 'auto').trim().toLowerCase();
+  if (mode === '1' || mode === 'true' || mode === 'on') return true;
+  if (mode === '0' || mode === 'false' || mode === 'off') return false;
+  return trustProxy() && firstHeaderToken(req.headers['x-forwarded-proto']).toLowerCase() === 'https';
+}
+/* 限速/审计用的来源 IP：只在 TRUST_PROXY=1 时采信 XFF，且只取**最后一段**（见 lastHeaderToken
+ * 的说明：反代追加式写头，前面的段全部不可信）。无 XFF 时退回 socket 地址 */
+function clientIP(req) {
+  if (trustProxy()) {
+    const xff = lastHeaderToken(req.headers['x-forwarded-for']);
+    if (xff) return xff;
+  }
+  return (req.socket && req.socket.remoteAddress) || 'unknown';
+}
+/* 回环监听判定（启动告警用）：TRUST_PROXY=1 只有配合「只监听回环 + 封端口」才安全 */
+function isLoopbackHost(h) {
+  const s = String(h || '').trim().toLowerCase();
+  return /^127\./.test(s) || s === '::1' || s === 'localhost';
+}
+/* 注册开关（公网默认应关）：ALLOW_REGISTER=0/false/off 关闭，未设=开放（保住本地即开即用） */
+function allowRegister() {
+  const v = String(process.env.ALLOW_REGISTER === undefined ? '1' : process.env.ALLOW_REGISTER).trim().toLowerCase();
+  return !(v === '0' || v === 'false' || v === 'off');
+}
+function cookieModeDesc() {
+  const mode = String(process.env.COOKIE_SECURE || 'auto').trim().toLowerCase();
+  if (mode === '1' || mode === 'true' || mode === 'on') return 'Secure 强制开启';
+  if (mode === '0' || mode === 'false' || mode === 'off') return 'Secure 强制关闭';
+  return trustProxy() ? 'Secure auto（信 X-Forwarded-Proto）' : 'Secure auto（未开 TRUST_PROXY → 不加）';
+}
+/* 登录失败限速：进程级单例（单进程服务；测试各自单独跑一个 node 进程，互不污染） */
+const loginLimiter = auth.createLoginLimiter();
+
 const STATIC_FILES = {
   '/': { file: 'index.html', type: 'text/html; charset=utf-8' },
   '/index.html': { file: 'index.html', type: 'text/html; charset=utf-8' },
@@ -249,20 +306,40 @@ async function handleRegister(db, req, res) {
   }
   const token = auth.createSession(db, username);
   sendJson(res, 201, { ok: true, username, role: isFirst ? 'admin' : 'user' },
-    { 'Set-Cookie': auth.cookieHeader(token) });
+    { 'Set-Cookie': auth.cookieHeader(token, { secure: reqIsSecure(req) }) });
 }
 
 async function handleLogin(db, req, res) {
   const body = await readJson(req, res); if (!body) return;
   const username = String(body.username || '').trim();
   const password = String(body.password || '');
+  /* 限速挡在验密之前：既省 CPU，也堵住「拿 scrypt 当放大器」的路子 */
+  const ip = clientIP(req);
+  /* 用户名参与限速 key，登录名本身长度不受限（body 上限 10MB）——截断后再拼，
+   * 否则一个 10MB 的用户名就能在限速表里存下一大块内存 */
+  const uname = username.slice(0, 64);
+  const rules = [
+    { key: 'u:' + ip + '|' + uname, max: loginLimiter.caps.maxPerUser },
+    { key: 'i:' + ip, max: loginLimiter.caps.maxPerIP },
+  ];
+  const limited = loginLimiter.check(rules);
+  if (limited) {
+    sendJson(res, 429, { error: 'too_many_attempts', message: '登录失败次数过多，请稍后再试', retry_after: limited.retryAfter },
+      { 'Retry-After': String(limited.retryAfter) });
+    return;
+  }
   const acc = db.prepare('SELECT pwd, role FROM accounts WHERE username = ?').get(username);
   if (!acc || !(await auth.verifyPassword(password, acc.pwd))) {   /* v4.3：异步 scrypt，不阻塞事件循环 */
+    const justBlocked = loginLimiter.fail(rules);
+    if (justBlocked.length) {
+      console.warn('[auth] 登录失败次数触顶，临时拒绝 ' + Math.round(loginLimiter.caps.blockMs / 1000) + 's：' + justBlocked.join(', '));
+    }
     sendJson(res, 401, { error: 'bad_credentials' }); return;
   }
+  loginLimiter.reset(rules[0].key);   /* 成功只清本组合；IP 计数保留，防「猜中一个就整台洗白」 */
   const token = auth.createSession(db, username);
   sendJson(res, 200, { ok: true, username, role: acc.role },
-    { 'Set-Cookie': auth.cookieHeader(token) });
+    { 'Set-Cookie': auth.cookieHeader(token, { secure: reqIsSecure(req) }) });
 }
 
 /* ---------- 业务路由（命中并已响应 → 返回 undefined；未命中 → false） ---------- */
@@ -384,7 +461,7 @@ async function handleState(db, req, res, sessionUser, pathname) {
   if (req.method === 'POST' && pathname === '/api/logout') {
     const cookies = auth.parseCookies(req);
     auth.deleteSession(db, cookies[auth.COOKIE_NAME]);
-    sendJson(res, 200, { ok: true }, { 'Set-Cookie': auth.clearCookieHeader() });
+    sendJson(res, 200, { ok: true }, { 'Set-Cookie': auth.clearCookieHeader({ secure: reqIsSecure(req) }) });
     return;
   }
   if (req.method === 'GET' && pathname === '/api/me') {
@@ -513,7 +590,15 @@ async function handle(db, req, res) {
       sendJson(res, 200, { ok: true, accounts, auth: true });
       return;
     }
-    if (req.method === 'POST' && pathname === '/api/register') { await handleRegister(db, req, res); return; }
+    if (req.method === 'POST' && pathname === '/api/register') {
+      /* 公网部署应设 ALLOW_REGISTER=0：开放注册意味着任何人都能自助建号；
+       * 更要紧的是「首个注册账户 = admin」——公开注册的站点上，第一个访客就是管理员。 */
+      if (!allowRegister()) {
+        sendJson(res, 403, { error: 'register_closed', message: '本站已关闭注册' });
+        return;
+      }
+      await handleRegister(db, req, res); return;
+    }
     if (req.method === 'POST' && pathname === '/api/login') { await handleLogin(db, req, res); return; }
     if ((req.method === 'GET' || req.method === 'HEAD') && STATIC_FILES[pathname]) { serveStatic(req, res, pathname); return; }
 
@@ -565,7 +650,26 @@ function start(opts) {
         console.log('   本机访问   http://localhost:' + actual);
         for (const { ip } of lanIPs()) console.log('   手机/同网   http://' + ip + ':' + actual);
         console.log('   数据库     ' + (opts.dbPath || process.env.DB_PATH || dbm.DEFAULT_DB));
-        console.log('   账户       ' + (n === 0 ? '尚无任何账户 — 打开网页注册第一个账户（自动成为管理员）' : '已注册 ' + n + ' 个账户'));
+        console.log('   HTTPS/Cookie ' + cookieModeDesc() + ' · ' + (allowRegister() ? '注册开放' : '注册已关闭'));
+        if (/^(1|true|on)$/i.test(String(process.env.COOKIE_SECURE || '').trim())) {
+          console.log('   ⚠ 已强制 Secure Cookie：明文 HTTP 访问将无法登录（局域网调试请设 COOKIE_SECURE=0）');
+        }
+        /* 错配告警：TRUST_PROXY=1 的可信前提是「只有反代能进得来」。
+         * 若同时监听非回环地址，直连者自塞 X-Forwarded-Proto/X-Forwarded-For 就能分别伪装
+         * HTTPS 判定与限速来源 IP（也能绕过 IP 档限速）——文档写了铁律，这里给一句硬提醒。 */
+        if (trustProxy() && !isLoopbackHost(opts.host || HOST)) {
+          console.log('   ⚠ TRUST_PROXY=1 却监听 ' + (opts.host || HOST) + '（非回环）：直连者能伪造 X-Forwarded-* 骗过 HTTPS 判定并绕过限速分桶。');
+          console.log('     公网部署请改 HOST=127.0.0.1，并由防火墙封住端口（只放行反代端口）');
+        }
+        if (!allowRegister() && n === 0) {
+          console.log('   ⚠ 注册已关闭且库中还没有任何账户：先临时 ALLOW_REGISTER=1 建好管理员，再关掉注册上线');
+        }
+        if (!allowRegister() && n > 0) {
+          console.log('   新增账户   需临时 ALLOW_REGISTER=1 注册后再关闭（管理后台没有建号入口）');
+        }
+        console.log('   账户       ' + (n === 0
+          ? (allowRegister() ? '尚无任何账户 — 打开网页注册第一个账户（自动成为管理员）' : '尚无任何账户（注册已关闭）')
+          : '已注册 ' + n + ' 个账户'));
         console.log('   保持本窗口开启；Ctrl+C 或关闭窗口即停止服务');
       }
       resolve({ server, port: actual, db });

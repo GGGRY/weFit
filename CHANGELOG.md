@@ -4,13 +4,26 @@
 > 添加新功能是询问是否增加版本号，如果回答不用的话，请将此次更新放到未标版号。下次增加版号时，最新的未标版号的修改一并归类到同一版号下，并去掉原来的标题。
 > 每次的改动仅需要作简要的摘要说明即可。
 
-## 运动周视图「休息日」图标 😴 换 ☕（2026-09-13，未标版号）
+## v4.21（2026-09-16）— 公网部署支持：反代 HTTPS + Cookie `Secure` + 关注册 + 登录限速
+
+### 公网部署支持
+
+- **Cookie 按请求判定 `Secure`**（`server/auth.js` 的 `cookieHeader`/`clearCookieHeader` 加 `opts.secure`，`server/server.js` 新增 `reqIsSecure()`）：`COOKIE_SECURE=auto`（默认）时仅当 `TRUST_PROXY=1` 且反代上报 `X-Forwarded-Proto: https` 才加，`1`/`0` 可强制。**默认不加是有意为之**：浏览器会丢弃明文 HTTP 上的 Secure Cookie，无条件加等于本地 localhost / 局域网手机登不上。登出清除 Cookie 与下发时属性一致（含 Secure），否则浏览器可能删不掉会话。
+- **注册开关** `ALLOW_REGISTER=0`：`POST /api/register` 返回 403 `register_closed`。公网必须关闭——**首个注册账户自动成为管理员**，开放注册等于把后台交给第一个访客；支持写路径仍保留（老账户登录不受影响）。
+- **登录失败限速**（新 `auth.createLoginLimiter()`，零依赖内存计数）：两档维度——`LOGIN_MAX_FAILS`（默认 5，同一来源+同一账户）与 `LOGIN_MAX_FAILS_IP`（默认 20，同一来源对任意账户，防扫号），触顶锁 `LOGIN_BLOCK_MS`（默认 15 分钟）并返回 **429 + `Retry-After`**（不再下发 Cookie）；窗口长度 `LOGIN_WINDOW_MS` 默认 15 分钟。限速检查在验密之前（省 scrypt 开销）；成功登录只清本组合，**不清 IP 计数**（否则猜中一个弱口令就整台洗白）；计数内存化，**进程重启即清零**，多实例部署需外部共享状态或前置限速。
+- **来源 IP 只在 `TRUST_PROXY=1` 时采信 `X-Forwarded-For`**（反代会覆写），否则用 socket 地址——直连者塞头无效。配套铁律：公网部署必须 `HOST=127.0.0.1` + 防火墙封 8123，否则伪造头即可骗过 HTTPS 判定。
+- **启动日志新增一行口径回显**：`HTTPS/Cookie Secure … · 注册开放/已关闭`，并在「关注册但库中无账户」「强制 Secure Cookie」时打显式警告。
+- **部署样例**：新增 `deploy/Caddyfile`（反代 + 自动证书 + HSTS 短窗口起步 + 安全头）与 `deploy/wefit.service`（systemd，含 `HOST`/`TRUST_PROXY`/`ALLOW_REGISTER`/`DB_PATH` 环境变量）；README 新增「公网部署（HTTPS 反代）」章节（环境变量表 + 上线顺序 + curl 验收命令）。
+- **代码审查修正（同日）**：① **`X-Forwarded-For` 只取末段**——反代（Caddy 默认、nginx `$proxy_add_x_forwarded_for`）是**追加**而非覆写该头，原先取首段等于让攻击者自造随机前缀把限速桶洗牌、两档限速当场失效；现在只采信最近一跳受信反代添的末段，`deploy/Caddyfile` 也改成显式 `header_up X-Forwarded-For {http.request.remote.host}` 覆写（两边一致）；② 启动时新增「`TRUST_PROXY=1` 却监听非回环地址」的 ⚠ 告警（直连者能伪造 `X-Forwarded-*` 骗过 HTTPS 判定并绕过限速分桶）；③ `deploy/wefit.service` 补 `ProtectSystem=strict` + `ReadWritePaths`（原先 `ReadWritePaths` 单独用不生效）、`NoNewPrivileges`/`PrivateTmp`/`RestrictSUIDSGID`，并显式 `PORT=8123`；④ 修掉 MEMO 技术债列表里重复的一行。
+- **测试**：新增 `server/test/auth-https.test.js` **37 项断言**（限速器语义注入 `now`：窗口过期/封锁解锁/两档维度/成功清零/表条目数硬上限；HTTP 接线：默认不加 Secure、未开 `TRUST_PROXY` 时伪头无效、`https` 头加 Secure、`COOKIE_SECURE` 双强制、登出属性一致、关注册、401×N→429+Retry-After、封锁期正确口令也 429、同 IP 换账户不牵连、XFF 末段分桶（带伪造前缀换值仍触顶）、超长用户名同样被限速），已并入 `npm test`。纯服务端改动，**无数据结构变更、不需迁移**；默认口径下本地/局域网行为与之前完全一致，升级重启服务即可。
+
+### 运动周视图「休息日」图标 😴 换 ☕（2026-09-13）
 
 - 按用户要求把运动页周视图里**过去空白天**的空态图标从 😴 换成 ☕（`dayCardHTML()`）；未来的空白天仍是 🗓「未安排」，文案不变。
 - 换的理由：😴 同时被概览/睡眠卡标题、睡眠历史弹窗与习惯「睡满 7 小时」占用，出现在运动页容易被误读成睡眠数据；☕ 一眼区分，也不与睡眠三档图标（🌙/⛅/🛋️）撞。
-- 纯前端改动（`public/js/app.js` 一行 emoji），无数据结构与服务端变更；观感微调，不加版本号。
+- 纯前端改动（`public/js/app.js` 一行 emoji），无数据结构与服务端变更。
 
-## 去掉「恢复默认顺序」按钮（2026-09-13，未标版号）
+### 去掉「恢复默认顺序」按钮（2026-09-13）
 
 - 按用户要求删除设置页「💾 数据管理」卡里的两颗逃生口按钮：「↺ 概览卡片顺序：恢复默认」「↺ 历史图表顺序：恢复默认」（连同它们的点击处理与 `toast`）。
 - 拖动排序本身不变（概览 5 张卡 + 历史 7 张图卡仍可拖），只是不再提供一键回默认序的入口；`state.homeOrder` / `state.chartOrder` 与 `HOME_ORDER_DEFAULT` / `CHART_ORDER_DEFAULT` 数据契约照旧。

@@ -1,0 +1,47 @@
+# weFit 服务端 systemd 单元示例（公网部署用）
+#
+# 用法：
+#   1) 按实际路径改 WorkingDirectory / ExecStart / User / DB_PATH
+#   2) sudo cp deploy/wefit.service /etc/systemd/system/
+#   3) sudo systemctl daemon-reload && sudo systemctl enable --now wefit
+#   4) 查日志：journalctl -u wefit -f
+#
+# 环境变量说明（都在 server/server.js 里读取）：
+#   HOST=127.0.0.1        只监听回环，公网入口交给 Caddy；改前请确认防火墙已封 8123
+#                         （TRUST_PROXY=1 只有配合回环监听才安全，否则启动时会告警）
+#   TRUST_PROXY=1         采信反代送来的 X-Forwarded-Proto / X-Forwarded-For（后者只取最后一段）
+#   COOKIE_SECURE=auto    默认值即 auto：TRUST_PROXY 生效且请求为 https 时给 Cookie 加 Secure
+#   ALLOW_REGISTER=0      公网强烈建议关注册（开放注册时第一个访客就是管理员）
+#   PORT=8123             显式钉死，与 Caddyfile 的 reverse_proxy 地址对齐
+#   DB_PATH=...           真实数据落盘位置；务必放在持久卷/备份覆盖得到的地方
+
+[Unit]
+Description=weFit 健康管理同步服务器
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wefit
+WorkingDirectory=/opt/wefit/server
+ExecStart=/usr/bin/node server.js
+Environment=HOST=127.0.0.1
+Environment=PORT=8123
+Environment=TRUST_PROXY=1
+Environment=COOKIE_SECURE=auto
+Environment=ALLOW_REGISTER=0
+Environment=DB_PATH=/var/lib/wefit/jjhealth.db
+Restart=always
+RestartSec=3
+# 最小权限：ProtectSystem=strict 把整个文件系统置为只读，再用 ReadWritePaths 放行数据目录。
+# （ReadWritePaths 单独写是无效的——它只在启用了 ProtectSystem/ProtectHome 等文件系统命名空间时生效）
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/wefit
+# （/var/lib/wefit 需预先建好并 chown wefit；或改用 StateDirectory=wefit 让 systemd 自动创建并授权）
+
+[Install]
+WantedBy=multi-user.target

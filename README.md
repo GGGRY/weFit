@@ -13,6 +13,37 @@
 
 浏览器打开 `http://localhost:8123`（手机：同一 Wi-Fi 下打开启动窗口打印的电脑 IP 地址）。
 
+## 公网部署（HTTPS 反代）
+
+服务端自己不做 TLS：把 443 交给反代（Caddy/nginx），weFit 只监听回环。仓库自带两份可直接用的样例：`deploy/Caddyfile`（Caddy 自动申请/续期证书）与 `deploy/wefit.service`（systemd 守护）。
+
+```bash
+# 1) 反代（把 Caddyfile 里的域名换成你的，DNS 需指到本机、80/443 可达）
+sudo cp deploy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
+# 2) 服务端只监听回环 + 采信反代头 + 关注册
+HOST=127.0.0.1 TRUST_PROXY=1 ALLOW_REGISTER=0 node server.js   # 或改 deploy/wefit.service 后 systemctl enable --now wefit
+# 3) 防火墙只放行 80/443，8123 绝不暴露公网
+```
+
+启动日志会打印当前口径，例如 `HTTPS/Cookie Secure auto（信 X-Forwarded-Proto） · 注册已关闭`，对照一眼就能确认配置吃上了。
+
+| 环境变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `COOKIE_SECURE` | `auto` | `auto` = 仅当 `TRUST_PROXY=1` 且反代上报 `X-Forwarded-Proto: https` 时给会话 Cookie 加 `Secure`；`1` 强制加、`0` 强制不加 |
+| `TRUST_PROXY` | 关 | 置 `1` 才采信 `X-Forwarded-Proto` / `X-Forwarded-For`。注意 `X-Forwarded-For` 反代通常是**追加**而非覆写，所以服务端只取**最后一段**（最近一跳受信反代添的）——若取首段，攻击者带个随机前缀就能把限速桶洗牌绕过限速。样例 Caddyfile 已显式覆写该头，两边一致 |
+| `ALLOW_REGISTER` | 开 | `0` 关闭注册（返回 403 `register_closed`）。公网务必关闭——**首个注册账户自动成为管理员**，公开注册等于把后台交给第一个访客 |
+| `LOGIN_MAX_FAILS` / `LOGIN_MAX_FAILS_IP` | 5 / 20 | 同一来源对同一账户 / 同一来源对任意账户的失败上限，触顶锁 `LOGIN_BLOCK_MS`（默认 15 分钟），返回 429 + `Retry-After` |
+| `LOGIN_WINDOW_MS` / `LOGIN_BLOCK_MS` | 15 分钟 / 15 分钟 | 失败计数窗口与封锁时长 |
+| `HOST` / `PORT` / `DB_PATH` | `0.0.0.0` / `8123` / `server/data/jjhealth.db` | 监听地址/端口与数据库位置（`DB_PATH` 请指向会被备份的持久位置） |
+
+> **本地/局域网明文访问不受影响**：默认口径下明文 HTTP 不加 `Secure`，`./start.sh` 与手机同网访问照旧。只有显式 `COOKIE_SECURE=1` 才会让明文 HTTP 登不上（启动日志会警告）。
+
+**首次公网上线顺序**：先在本地 `./start.sh` 注册好管理员账户（第一个账户）→ 确认数据无误 → 停服务并备份 `server/data/jjhealth.db` → 按上面三步起反代与服务（`ALLOW_REGISTER=0`）→ 浏览器与手机各登录一次验证同步。
+
+**验收**：`curl -I https://<域名>/api/health` 应为 200；`curl -I http://<域名>/` 应 301 到 https；`curl -sv -X POST https://<域名>/api/login -d '{"username":"x","password":"y"}' -H 'Content-Type: application/json'` 的 `Set-Cookie` 应带 `Secure`（登录失败时不下发 Cookie，所以先用真实账户验证）。另可验证限速分桶确实只认最后一跳：连续带**不同的伪造前缀、相同的末段**请求（如 `-H 'X-Forwarded-For: 1.1.1.$i, <真实IP>'`）应稳定累计并最终 429，而不是每次都当新来源。
+
+**上线后维护**：新增账户需临时 `ALLOW_REGISTER=1` 注册后再关（管理后台没有建号入口）；数据库定时备份见 MEMO.md 使用备忘（`VACUUM INTO` 取一致快照）。
+
 ## 账户与数据隔离
 
 - 打开页面需**注册/登录**，每个账户只看得见、改得动自己的数据；多人同时使用互不影响。
@@ -32,6 +63,7 @@
 
 - `public/` 前端（无构建：`index.html` + `admin.html` + `css/style.css` + `js/seed-data.js` + `js/sleep-shape.js` + `js/app.js`；`js/dev.js` = 调试钩子，仅在 URL 带 `?selftest/?ftest/?shot/?probe` 时按需加载）
 - `server/` 后端 + `data/jjhealth.db`（SQLite，全部数据都在这里）
+- `deploy/` 公网部署样例（`Caddyfile` 反代 + `wefit.service` systemd 单元）
 - `MEMO.md` 项目备忘录（架构、功能、技术债、使用备忘）
 - `CHANGELOG.md` 版本变更日志
 - `PLANS.md` 后续开发计划建议
@@ -73,4 +105,4 @@ cd server && npm test                        # 一次跑完下面七个文件
 
 > ⚠️ **v4.11 破坏性版本（历史）**：若你从 v4.10 或更早版本升级，运动项由 `sets` 数组拍平为列、`workout_sets` 表取消，旧运动数据与个人动作库同样会被清空（v4.12 才取消清动作库）。饮食、身体、睡眠、饮水、习惯、账户与食物库不受影响。
 
-> v4 升级说明：v3 及以前的旧成员数据不再展示（"从零开始"决策）；需要留底先备份 `server/data/jjhealth.db`。局域网内即开即用；公网部署请先上 HTTPS（详见 MEMO.md 技术债）。
+> v4 升级说明：v3 及以前的旧成员数据不再展示（"从零开始"决策）；需要留底先备份 `server/data/jjhealth.db`。局域网内即开即用；公网部署见上文「公网部署（HTTPS 反代）」。

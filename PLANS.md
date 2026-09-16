@@ -4,8 +4,9 @@
 
 本地全栈已就位，上云 = 把同一套代码放到云服务器：
 
-- 任何有固定 IP/域名的 VPS 或 Docker 主机：`node server.js` + 反代 + HTTPS
-- 公网部署仍需：反代套 HTTPS + Cookie 加 `Secure`、登录失败限速、（可选）把 SQLite 数据文件放持久卷
+- 任何有固定 IP/域名的 VPS 或 Docker 主机：`node server.js` + 反代 + HTTPS；零依赖样例见 `deploy/`（Caddyfile + wefit.service），步骤见 README「公网部署（HTTPS 反代）」
+- ✅ 已完成（v4.21）：Cookie 按反代上报的 `X-Forwarded-Proto` 自动加 `Secure`（默认口径不破坏本地明文）、登录失败两档限速（来源+账户 / 来源）、`ALLOW_REGISTER=0` 关注册（防「首个访客即管理员」）
+- ⬜ 仍未做：把 SQLite 数据文件放持久卷的自动化（样例 systemd 里给了 `DB_PATH`，备份仍靠手工/cron）、多实例共享限速状态与审计日志、自助改密/删号
 - 多账户远程各用各的 = 当前架构即支持；规模再大（几十账户以上/要细粒度端点）时评估 Postgres 重写
 
 ## 2. PWA 化
