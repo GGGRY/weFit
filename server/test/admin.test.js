@@ -2,6 +2,7 @@
 /* =====================================================
    管理后台 API 测试(v4.1,真实 HTTP + 临时库,无测试框架)
    覆盖:静态页公开、401/403 守卫、用户列表附加信息、
+   新建用户(2026-09-16:代建号不下发 Cookie、注册关闭时仍可用)、
    设/撤管理员(即时生效 + 最后一个管理员护栏)、
    重置密码(强制下线)、删除账户(级联清数据)。
    运行:node test/admin.test.js
@@ -196,6 +197,49 @@ async function main() {
   const uN = db.prepare('SELECT COUNT(*) n FROM users').get().n;
   const cN = db.prepare('SELECT COUNT(*) n FROM body_records').get().n;
   ok('T7h 库级联计数:users=2 且旧身体记录=0', uN === 2 && cN === 0, 'users=' + uN + ' body=' + cN);
+
+  /* T8 新建用户(2026-09-16):管理员代建号,绕过 ALLOW_REGISTER */
+  const sidBefore = A.jar.sid;
+  r = await A.req('POST', '/api/admin/users', { username: 'carol', password: 'carol123', name: '卡' });
+  ok('T8a 管理员新建用户→201 role=user', r.status === 201 && r.json.ok === true && r.json.role === 'user', JSON.stringify(r.json));
+  ok('T8b 建号不下发会话 Cookie(管理员会话未被顶替)', A.jar.sid === sidBefore);
+  r = await A.req('GET', '/api/me');
+  ok('T8c 建号后管理员仍是自己', r.status === 200 && r.json.username === 'alice' && r.json.role === 'admin', JSON.stringify(r.json));
+  const C = makeJar(base);
+  r = await C.req('POST', '/api/login', { username: 'carol', password: 'carol123' });
+  ok('T8d 新账户可登录', r.status === 200 && r.json.role === 'user');
+  r = await C.req('GET', '/api/state');
+  ok('T8e 新账户是全新空库(rev 0、个人库空、不拷系统库)', r.status === 200 && r.json.rev === 0
+    && (r.json.data.users[Object.keys(r.json.data.users)[0]].body || []).length === 0, JSON.stringify(r.json).slice(0, 160));
+  r = await A.req('POST', '/api/admin/users', { username: 'carol', password: 'carol123', name: '又卡' });
+  ok('T8f 重名→409 username_taken', r.status === 409 && r.json.error === 'username_taken');
+  r = await A.req('POST', '/api/admin/users', { username: 'eve', password: '123', name: '夏' });
+  ok('T8g 弱密码→400 invalid_credentials', r.status === 400 && r.json.error === 'invalid_credentials', JSON.stringify(r.json));
+  r = await A.req('POST', '/api/admin/users', { username: 'eve', password: 'eve12345', name: '' });
+  ok('T8h 缺昵称→400', r.status === 400 && r.json.error === 'invalid_credentials');
+  r = await A.req('POST', '/api/admin/users', { username: 'e', password: 'eve12345', name: '夏' });
+  ok('T8i 非法用户名→400', r.status === 400, 'status=' + r.status);
+  r = await anon.req('POST', '/api/admin/users', { username: 'mallory', password: 'mallory1', name: '马' });
+  ok('T8j 未登录建号→401', r.status === 401);
+  r = await B3.req('POST', '/api/admin/users', { username: 'mallory', password: 'mallory1', name: '马' });
+  ok('T8k 普通用户建号→403 admin_only', r.status === 403 && r.json.error === 'admin_only');
+  r = await A.req('POST', '/api/admin/users', { username: 'dora', password: 'dora1234', name: '多', role: 'admin' });
+  ok('T8l role=admin 建号→201 role=admin', r.status === 201 && r.json.role === 'admin');
+  const D = makeJar(base);
+  r = await D.req('POST', '/api/login', { username: 'dora', password: 'dora1234' });
+  ok('T8m 新建管理员可登录', r.status === 200 && r.json.role === 'admin');
+  r = await D.req('GET', '/api/admin/users');
+  ok('T8n 新建管理员可进后台', r.status === 200 && (r.json.users || []).length === 4, 'status=' + r.status + ' n=' + ((r.json.users || []).length));
+  /* 注册已关时后台建号仍可用(公网部署正是这个组合) */
+  process.env.ALLOW_REGISTER = '0';
+  r = await anon.req('POST', '/api/register', { username: 'frank', password: 'frank123', name: '弗' });
+  ok('T8o 注册关闭→用户端注册 403 register_closed', r.status === 403 && r.json.error === 'register_closed');
+  r = await A.req('POST', '/api/admin/users', { username: 'frank', password: 'frank123', name: '弗' });
+  ok('T8p 注册关闭时后台仍可建号', r.status === 201 && r.json.role === 'user', 'status=' + r.status + ' ' + JSON.stringify(r.json));
+  delete process.env.ALLOW_REGISTER;
+  /* T8q 后台页带上建号入口(结构断言:按钮/接口调用被删时测试才看得见) */
+  r = await anon.req('GET', '/admin');
+  ok('T8q /admin 含「新建用户」入口与建号接口调用', r.status === 200 && r.text.includes('＋ 新建用户') && r.text.includes("'POST', '/admin/users'"), 'status=' + r.status);
 
   console.log('---');
   console.log(failed === 0 ? '全部通过:' + passed + ' 项断言(管理后台 API)' : '通过 ' + passed + ',失败 ' + failed);

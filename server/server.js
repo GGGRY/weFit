@@ -8,7 +8,7 @@
    - GET/PUT /api/state：本人数树读写（每用户 rev 乐观并发，写路径只触碰自己子树）
    - GET/PUT /api/slices：按片同步（v4.20；写只写脏片、CAS 按片、冲突只冲突同片）
    - GET /api/system/library：读系统共享库；PUT：仅 admin
-   - /api/admin/*（v4.1，仅 admin）：用户列表 / 设撤管理员 / 重置密码（踢会话）/ 删除账户（CASCADE 清数据）
+   - /api/admin/*（v4.1，仅 admin）：用户列表 / 新建用户 / 设撤管理员 / 重置密码（踢会话）/ 删除账户（CASCADE 清数据）
    - GET /api/health：诊断
    手机与电脑登录同一账户 = 同一份数据，天然同步；不同账户彼此隔离。
    ===================================================== */
@@ -265,47 +265,56 @@ function sanitizeLibrary(body) {
   return { foods, exercises };
 }
 
+/* ---------- 建号（注册与后台代建共用）---------
+ * 校验 → 事务内建 users 行 + accounts 行；返回 {status:<2xx>, username, role} 或
+ * {status:<4xx>, body}（调用方只负责写响应/发会话 Cookie，不再各自手抄一遍校验与回滚）。
+ * roleFor 在写事务内求值：注册要「首个账户 = admin」的判定与 INSERT 处于同一把锁下。
+ * 2026-09-12 用户裁定：新建账户**不再**整份拷贝系统库，个人库初始为空（系统库不追溯，
+ * 要什么去系统库页「＋我的库」挑入）。copyLibrary 仍留在 seed.js 供一次性工具使用。 */
+async function createAccount(db, username, password, name, roleFor) {
+  const bad = auth.checkCredentials(username, password);
+  if (bad) return { status: 400, body: { error: 'invalid_credentials', message: bad } };
+  if (!name) return { status: 400, body: { error: 'invalid_credentials', message: '请填写昵称' } };
+  if (db.prepare('SELECT 1 FROM accounts WHERE username = ?').get(username)) {
+    return { status: 409, body: { error: 'username_taken' } };
+  }
+  const uid = auth.genId();
+  const pwdHash = await auth.hashPassword(password);   /* v4.3：CPU 密集哈希在开写事务之前完成，不持锁跑 scrypt */
+  let role;
+  try {
+    db.exec('BEGIN IMMEDIATE');   /* 串行化写者：并发首注册不会双 admin，并发同名也不会双写 */
+    /* v4.4:事务内重查用户名——上方的预检与写事务之间隔着几十 ms 的 scrypt 异步哈希,
+     * 并发同名注册此前只靠 accounts UNIQUE 主键兜底(走异常路径也能 409,但显式重查
+     * 让败者在事务内干净收场,语义清晰) */
+    if (db.prepare('SELECT 1 FROM accounts WHERE username = ?').get(username)) {
+      db.exec('ROLLBACK');
+      return { status: 409, body: { error: 'username_taken' } };
+    }
+    role = roleFor();
+    mapper.createUser(db, uid, { name });
+    db.prepare('INSERT INTO accounts(username, user_id, pwd, role, created_at) VALUES (?,?,?,?,?)')
+      .run(username, uid, pwdHash, role, Date.now());
+    db.exec('COMMIT');
+  } catch (e) {
+    try { db.exec('ROLLBACK'); } catch (e2) { /* ignore */ }
+    if (/UNIQUE/i.test(String(e && e.message))) return { status: 409, body: { error: 'username_taken' } };
+    throw e;
+  }
+  return { status: 201, username, role };
+}
+
 /* ---------- 鉴权端点 ---------- */
 async function handleRegister(db, req, res) {
   const body = await readJson(req, res); if (!body) return;
   const username = String(body.username || '').trim();
   const password = String(body.password || '');
   const name = String(body.name || '').trim().slice(0, 40);
-  const bad = auth.checkCredentials(username, password);
-  if (bad) { sendJson(res, 400, { error: 'invalid_credentials', message: bad }); return; }
-  if (!name) { sendJson(res, 400, { error: 'invalid_credentials', message: '请填写昵称' }); return; }
-  if (db.prepare('SELECT 1 FROM accounts WHERE username = ?').get(username)) {
-    sendJson(res, 409, { error: 'username_taken' }); return;
-  }
-  const uid = auth.genId();
-  /* 2026-09-12 用户裁定：新注册用户**不再**整份拷贝系统库，个人库初始为空
-   * （旧的 copyLibrary(readSystemLibrary(db)) 已删；系统库不追溯、要什么去系统库页
-   *  「＋我的库」挑入，个人库只装用户自己挑/录的条目）。copyLibrary 仍留在 seed.js
-   *  供一次性工具 server/test/reset-food-library.js 使用。 */
-  const pwdHash = await auth.hashPassword(password);   /* v4.3：CPU 密集哈希在开写事务之前完成，不持锁跑 scrypt */
-  let isFirst;
-  try {
-    db.exec('BEGIN IMMEDIATE');
-    /* 首账户判定放进写事务内：BEGIN IMMEDIATE 串行化写者，杜绝并发首注册双 admin */
-    isFirst = !db.prepare('SELECT 1 FROM accounts LIMIT 1').get();
-    /* v4.4:事务内重查用户名——上方的预检与写事务之间隔着几十 ms 的 scrypt 异步哈希,
-     * 并发同名注册此前只靠 accounts UNIQUE 主键兜底(走异常路径也能 409,但显式重查
-     * 让败者在事务内干净收场,语义清晰) */
-    if (db.prepare('SELECT 1 FROM accounts WHERE username = ?').get(username)) {
-      db.exec('ROLLBACK');
-      sendJson(res, 409, { error: 'username_taken' }); return;
-    }
-    mapper.createUser(db, uid, { name });
-    db.prepare('INSERT INTO accounts(username, user_id, pwd, role, created_at) VALUES (?,?,?,?,?)')
-      .run(username, uid, pwdHash, isFirst ? 'admin' : 'user', Date.now());
-    db.exec('COMMIT');
-  } catch (e) {
-    try { db.exec('ROLLBACK'); } catch (e2) { /* ignore */ }
-    if (/UNIQUE/i.test(String(e && e.message))) { sendJson(res, 409, { error: 'username_taken' }); return; }
-    throw e;
-  }
+  /* 首账户判定放进写事务内（人由 createAccount 传入的 roleFor 在锁内执行） */
+  const out = await createAccount(db, username, password, name, () =>
+    db.prepare('SELECT 1 FROM accounts LIMIT 1').get() ? 'user' : 'admin');
+  if (out.status !== 201) { sendJson(res, out.status, out.body); return; }
   const token = auth.createSession(db, username);
-  sendJson(res, 201, { ok: true, username, role: isFirst ? 'admin' : 'user' },
+  sendJson(res, 201, { ok: true, username: out.username, role: out.role },
     { 'Set-Cookie': auth.cookieHeader(token, { secure: reqIsSecure(req) }) });
 }
 
@@ -501,6 +510,20 @@ async function handleAdmin(db, req, res, sessionUser, pathname) {
     return;
   }
 
+  /* 新建用户（2026-09-16，未标版号）：绕过 ALLOW_REGISTER 开关——公网部署正是「注册已关、只能由管理员建号」。
+   * 关键：**不下发会话 Cookie**，管理员代建的账户不会顶掉管理员自己的会话（注册端点才发）。 */
+  if (req.method === 'POST' && pathname === '/api/admin/users') {
+    const body = await readJson(req, res); if (!body) return;
+    const username = String(body.username || '').trim();
+    const password = String(body.password || '');
+    const name = String(body.name || '').trim().slice(0, 40);
+    const role = body.role === 'admin' ? 'admin' : 'user';
+    const out = await createAccount(db, username, password, name, () => role);
+    if (out.status !== 201) { sendJson(res, out.status, out.body); return; }
+    sendJson(res, 201, { ok: true, username: out.username, role: out.role });
+    return;
+  }
+
   if (req.method === 'PUT' && pathname === '/api/admin/role') {
     const body = await readJson(req, res); if (!body) return;
     const username = String(body.username || '');
@@ -665,7 +688,7 @@ function start(opts) {
           console.log('   ⚠ 注册已关闭且库中还没有任何账户：先临时 ALLOW_REGISTER=1 建好管理员，再关掉注册上线');
         }
         if (!allowRegister() && n > 0) {
-          console.log('   新增账户   需临时 ALLOW_REGISTER=1 注册后再关闭（管理后台没有建号入口）');
+          console.log('   新增账户   用户端注册已关：登录管理后台 →「用户管理 → 新建用户」建号');
         }
         console.log('   账户       ' + (n === 0
           ? (allowRegister() ? '尚无任何账户 — 打开网页注册第一个账户（自动成为管理员）' : '尚无任何账户（注册已关闭）')

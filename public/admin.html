@@ -32,7 +32,8 @@
 /* =====================================================
    weFit 管理后台(v4.1)
    - 三态:未登录登录卡 / 已登录非管理员无权限页 / 管理员工作台
-   - 分页:用户管理(/api/admin/*)+ 系统共享库编辑(PUT /api/system/library);
+   - 分页:用户管理(/api/admin/*,含 2026-09-16 新增的「新建用户」——注册已关时的唯一建号入口)
+     + 系统共享库编辑(PUT /api/system/library);
      系统库内部再分「食物库 / 动作库」两个子分页(2026-09-11),增删都走弹窗
    - 危险操作二次确认(按钮变红再点);鉴权靠服务端,本页只呈现
    ===================================================== */
@@ -174,7 +175,8 @@ async function loadUsers(box){
   if (status !== 200) { box.innerHTML = '<div class="card"><div class="empty">载入失败（HTTP ' + status + '）</div></div>'; return; }
   usersList = j.users;
   box.innerHTML =
-    '<div class="card"><h3>👥 用户管理（' + usersList.length + ' 个账户）</h3>' +
+    '<div class="card"><h3><span>👥 用户管理（' + usersList.length + ' 个账户）</span><span class="grow"></span>' +
+    '<button class="btn sm primary" id="u_new">＋ 新建用户</button></h3>' +
     '<div style="overflow-x:auto"><table class="tbl"><thead><tr>' +
       '<th>账户</th><th>昵称</th><th>角色</th><th>数据概况</th><th>同步版本</th><th>注册于</th><th style="text-align:right">操作</th>' +
     '</tr></thead><tbody>' +
@@ -196,10 +198,11 @@ async function loadUsers(box){
         '</div></td></tr>';
     }).join('') +
     '</tbody></table></div>' +
-    '<div class="tiny muted" style="margin-top:10px">重置密码会让该账户(含你自己)的所有设备下线并需重新登录;删除账户会级联清空其全部记录,不可恢复。</div></div>';
+    '<div class="tiny muted" style="margin-top:10px">新建用户不受用户端注册开关影响;重置密码会让该账户(含你自己)的所有设备下线并需重新登录;删除账户会级联清空其全部记录,不可恢复。</div></div>';
   bindUsers();
 }
 function bindUsers(){
+  const btnNew = $('#u_new'); if (btnNew) btnNew.addEventListener('click', openUserDialog);
   $$('#tabBody tbody tr').forEach(tr => {
     const username = tr.dataset.u;
     const row = usersList.find(u => u.username === username);
@@ -235,6 +238,39 @@ function bindUsers(){
       toast('已删除账户 ' + username + ' 及其全部数据'); loadUsers($('#tabBody'));
     });
   });
+}
+/* 新建用户(2026-09-16):管理员代建号,不受 ALLOW_REGISTER 影响——公网「注册已关」时这是唯一的建号入口。
+ * 服务端不给新建账户下发会话 Cookie,所以你建完仍是当前管理员(不会顶掉自己的登录)。
+ * 新账户个人库为空(不拷贝系统库),要什么自行从系统库挑入。 */
+function openUserDialog(){
+  showDialog('新建用户',
+    '<div class="field"><label>用户名</label><input class="input" id="nu_u" placeholder="2-32 位字母/数字/下划线/连字符" autocomplete="off"></div>' +
+    '<div class="field"><label>昵称</label><input class="input" id="nu_n" placeholder="如：陈" autocomplete="off"></div>' +
+    '<div class="field"><label>初始密码</label><input class="input" id="nu_p" type="text" placeholder="6-128 位" autocomplete="new-password"></div>' +
+    '<div class="field"><label>角色</label><select class="select" id="nu_r"><option value="user">用户</option><option value="admin">管理员（可进入本后台）</option></select></div>' +
+    '<div class="tiny muted">新账户的个人库初始为空（不拷贝系统库），需自行从系统库挑入；初始密码请线下告知使用者（用户端暂无自助改密，遗忘时由你在本页重置）。</div>' +
+    '<div class="d-f"><button class="btn ghost" id="nu_cancel">取消</button><button class="btn primary" id="nu_ok">创建</button></div>',
+    (b, close) => {
+      const q = s => b.querySelector(s);
+      const create = async () => {
+        const username = q('#nu_u').value.trim(), name = q('#nu_n').value.trim(), password = q('#nu_p').value;
+        if (!username || !password) return toast('请填写用户名与初始密码', true);
+        if (!name) return toast('请填写昵称', true);
+        const btn = q('#nu_ok'); btn.disabled = true;   /* 建号要跑 scrypt+写事务,防连点双提交 */
+        const r = await api('POST', '/admin/users', { username, password, name, role: q('#nu_r').value });
+        btn.disabled = false;
+        if (!guard(r)) return;   /* 0(连不上)/401/403 统一收口 */
+        if (r.status === 409) return toast('用户名「' + username + '」已存在', true);
+        if (r.status === 400) return toast((r.j && r.j.message) || '用户名或密码不符合要求', true);
+        if (r.status !== 201 && r.status !== 200) return toast('创建失败（HTTP ' + r.status + '）', true);
+        toast('已创建账户 ' + username + '（' + ((r.j && r.j.role) === 'admin' ? '管理员' : '用户') + '）');
+        close(); loadUsers($('#tabBody'));
+      };
+      q('#nu_ok').addEventListener('click', create);
+      q('#nu_cancel').addEventListener('click', close);
+      ['nu_u','nu_n','nu_p'].forEach(s => q('#' + s).addEventListener('keydown', e => { if (e.key === 'Enter') create(); }));
+      q('#nu_u').focus();
+    });
 }
 /* 二次确认:第一次点击把按钮变红改文案,5 秒内再点一次才执行 */
 const confirmTimers = new WeakMap();

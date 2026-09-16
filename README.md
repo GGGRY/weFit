@@ -42,7 +42,7 @@ HOST=127.0.0.1 TRUST_PROXY=1 ALLOW_REGISTER=0 node server.js   # 或改 deploy/w
 
 **验收**：`curl -I https://<域名>/api/health` 应为 200；`curl -I http://<域名>/` 应 301 到 https；`curl -sv -X POST https://<域名>/api/login -d '{"username":"x","password":"y"}' -H 'Content-Type: application/json'` 的 `Set-Cookie` 应带 `Secure`（登录失败时不下发 Cookie，所以先用真实账户验证）。另可验证限速分桶确实只认最后一跳：连续带**不同的伪造前缀、相同的末段**请求（如 `-H 'X-Forwarded-For: 1.1.1.$i, <真实IP>'`）应稳定累计并最终 429，而不是每次都当新来源。
 
-**上线后维护**：新增账户需临时 `ALLOW_REGISTER=1` 注册后再关（管理后台没有建号入口）；数据库定时备份见 MEMO.md 使用备忘（`VACUUM INTO` 取一致快照）。
+**上线后维护**：新增账户走管理后台「用户管理 → 新建用户」（不受关注册影响，公网部署下就是唯一建号入口）；数据库定时备份见 MEMO.md 使用备忘（`VACUUM INTO` 取一致快照）。
 
 ## 账户与数据隔离
 
@@ -57,7 +57,7 @@ HOST=127.0.0.1 TRUST_PROXY=1 ALLOW_REGISTER=0 node server.js   # 或改 deploy/w
 访问 `http://<服务器>:8123/admin`（管理员在用户端设置页「🛠 后台管理」卡里也有入口链接）。非管理员账户登录后台会看到"无管理权限"页。
 
 - **系统共享库**：分「食物库 / 动作库」两个子分页，各用一颗「＋ 添加」按钮开弹窗录入（列表行尾 🗑 删除；食物弹窗可填**营养来源**，默认 `USDA`），保存后对所有用户的"系统库"页生效
-- **用户管理**：查看全部账户（含数据概况）；**设为/撤销管理员**（系统至少保留一名）；**重置密码**（该账户全部设备强制下线）；**删除账户**（级联清空其全部记录，不可恢复）
+- **用户管理**：查看全部账户（含数据概况）；**新建用户**（填用户名/昵称/初始密码，可选直接建成管理员；不经用户端注册入口，所以关注册后也照常能建号）；**设为/撤销管理员**（系统至少保留一名）；**重置密码**（该账户全部设备强制下线）；**删除账户**（级联清空其全部记录，不可恢复）
 
 ## 目录
 
@@ -73,7 +73,7 @@ HOST=127.0.0.1 TRUST_PROXY=1 ALLOW_REGISTER=0 node server.js   # 或改 deploy/w
 ```bash
 cd server && npm test                        # 一次跑完下面七个文件
      node test/roundtrip.test.js   # 鉴权 + 双账户隔离 + 往返保真 + 按片同步（写入/CAS/删片/墓碑/兼容整树，121 项）
-     node test/admin.test.js       # 管理后台 API：角色/重置密码/删号护栏 + 系统库三件套白名单（46 项）
+     node test/admin.test.js       # 管理后台 API：新建用户/角色/重置密码/删号护栏 + 系统库三件套白名单（63 项）
      node test/sleep-shape.test.js # 睡眠形状契约纯函数（前后端共用同一份，17 项）
      node test/slices.test.js      # 同步切片契约纯函数（切片键语法 / 树上取写 / 人话名，27 项）
      node test/migration.test.js   # 破坏性迁移（sets 拍平 / 计划记录合并）+ 同版本第二步就地补列：下放 done、rev 不变、回填只做一次（41 项）
