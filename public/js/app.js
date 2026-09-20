@@ -124,11 +124,11 @@ const DATA_FIELDS = ['profile','goal','activity','waterTarget','nutrition','meal
 const HOME_ORDER_DEFAULT = ['diet','workout','water','sleep','habits'];
 
 /* 历史页「图表卡」的默认顺序（顶部磁贴行同样不参与拖动，见 renderStats/#st_charts）。
- * 与 homeOrder 完全同一套契约：state.chartOrder＝这 8 个 key 的全排列，与「当前是否显示」
+ * 与 homeOrder 完全同一套契约：state.chartOrder＝这 7 个 key 的全排列，与「当前是否显示」
  * 无关。key 与 chartWrap 的第一个参数一一对应（不是 DOM id `st_weight` 那套）。
- * 2026-09-13 新增 habits（习惯打卡卡）并放在**末尾**：resolveOrder 对存量 state.chartOrder
- * 正是把缺的 key 补在末尾，默认序取同一位置才能保证新老账户一致，老账户零迁移。 */
-const CHART_ORDER_DEFAULT = ['weight','sleep','cal','macro','vol','mins','water','habits'];
+ * 2026-09-20 删掉 habits（习惯打卡卡，已移入概览页「今日打卡」卡）：resolveOrder 会把不在
+ * 默认序里的存量 key 当未知项丢掉，所以存量 state.chartOrder 里的 'habits' 无需迁移。 */
+const CHART_ORDER_DEFAULT = ['weight','sleep','cal','macro','vol','mins','water'];
 
 /* 2026-09-12：个人库初始为空——「空库」不再拿种子填满（空库就是空库，要什么去系统库页挑）。 */
 function freshShared(){ return { foods: [], exercises: [] }; }
@@ -4119,20 +4119,31 @@ function openNutritionEditor(){
   const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
 }
 
-/* ---------- 今日打卡卡（概览页：只负责点圆圈打卡） ---------- */
+/* ---------- 今日打卡卡（概览页：点圆圈打卡 + 看一眼近 30 天） ----------
+ * 2026-09-14：行头升级，和原历史页「习惯打卡」卡同款（图标 + 名称 + 近30天完成率/连续天数），
+ *          行尾仍是当天打卡圆钮（本卡唯一的写入口），下面跟同一条 30 格热力格。
+ * 2026-09-20：历史页那张卡已按用户要求整卡移除，热力格只在本卡出现。
+ * 热力格**只读**：单格约 7-9px 点不准，补记不做在格子上。 */
 const HAB_COLORS = [['var(--brand)','绿'],['var(--cat1)','蓝'],['var(--cat2)','橙'],['var(--cat3)','青']];
 function habColorOptions(sel){
   return HAB_COLORS.map(([v,l]) => '<option value="' + v + '"' + (v===sel?' selected':'') + '>' + l + '</option>').join('');
 }
 function habitCardHTML(){
   const t = today();
+  const days = lastNDates(HAB_HIS_DAYS);
   const rows = state.habits.length ? state.habits.map(h => {
     const done = !!h.done[t];
     const strk = habitStreak(h, t);
-    return '<div class="lrow"><span class="thumb" style="background:' + h.color + ';font-size:16px">' + esc(h.icon) + '</span>' +
+    const r = habitRateText(h, days);
+    const pct = Math.round(r.cnt / days.length * 100);
+    const sub = r.txt + ' · ' + pct + '%' +
+      (strk > 0 ? ' · 🔥 连续 ' + strk + ' 天' : (done ? '' : ' · 今天还没打卡'));
+    return '<div class="hab-row hab-line">' +
+      '<div class="hab-h"><span class="thumb" style="background:' + h.color + ';font-size:16px">' + esc(h.icon) + '</span>' +
       '<div class="grow"><div class="b">' + esc(h.name) + '</div>' +
-      '<div class="sub">' + (strk > 0 ? '🔥 连续 ' + strk + ' 天' : '今天还没打卡') + '</div></div>' +
-      '<button class="hab-dot ' + (done ? 'on' : '') + '" data-hab="' + h.id + '" data-day="' + t + '" style="' + (done ? 'background:' + h.color + ';border-color:' + h.color + '' : '') + '" title="点击打卡">✓</button></div>';
+      '<div class="sub">' + sub + '</div></div>' +
+      '<button class="hab-dot ' + (done ? 'on' : '') + '" data-hab="' + h.id + '" data-day="' + t + '" style="' + (done ? 'background:' + h.color + ';border-color:' + h.color + '' : '') + '" title="点击打卡">✓</button></div>' +
+      habitGridHTML(h, days) + '</div>';
   }).join('') : '';
   const body = rows || '<div class="empty" style="padding:14px 4px"><div class="e-ic">📌</div>还没有习惯<br><button class="btn primary sm mt" data-go2="settings">去「设置」页添加</button></div>';
 
@@ -4148,10 +4159,11 @@ function bindHabitEvents(){
   }));
 }
 
-/* ---------- 历史页「习惯打卡」卡 ----------
+/* ---------- 习惯打卡的共享件（概览页「今日打卡」卡用） ----------
  * 数据源就是 state.habits[].done（{日期:true}，与服务端 habits/habit_done 表直通）。
- * **纯只读**（2026-09-13 裁定）：本卡不开补记入口——30 格摊在手机宽度上单格仅 ~8px，点不准；
- * 打卡本体在概览页「今日打卡」卡，改历史不在历史页做。不改习惯定义（增删改仍在设置页）。 */
+ * 热力格**纯只读**（2026-09-13 裁定，2026-09-20 仍沿用）：单格摊在手机宽度上仅 ~7–9px，
+ * 点不准；打卡本体是卡上那颗当天圆钮，改历史不做在格子上。
+ * 原先这套件服务的「历史页·习惯打卡卡」已于 2026-09-20 按用户要求整卡移除。 */
 const HAB_HIS_DAYS = 30;
 function habitRateText(h, days){
   const cnt = days.filter(d => h.done && h.done[d]).length;
@@ -4163,24 +4175,6 @@ function habitGridHTML(h, days){
     return '<span class="habcell' + (on ? ' on' : '') + '"' + (on ? ' style="background:' + h.color + '"' : '') +
       ' title="' + esc(d + (on ? ' 已打卡' : ' 未打卡')) + '"></span>';
   }).join('') + '</div>';
-}
-function renderHabitChart(){
-  const el = $('#st_habits'); if(!el) return;
-  if(!state.habits.length){
-    el.innerHTML = '<div class="empty" style="padding:14px 4px"><div class="e-ic">📌</div>还没有习惯<br><button class="btn primary sm mt" data-go2="settings">去「设置」页添加</button></div>';
-    const g = $('#view [data-go2="settings"]'); if(g) g.addEventListener('click', () => go('settings'));
-    return;
-  }
-  const days = lastNDates(HAB_HIS_DAYS);
-  el.innerHTML = state.habits.map(h => {
-    const r = habitRateText(h, days), strk = habitStreak(h, today());
-    return '<div class="hab-row">' +
-      '<div class="hab-h"><span class="thumb" style="background:' + h.color + ';font-size:16px">' + esc(h.icon) + '</span>' +
-      '<div class="grow"><div class="b">' + esc(h.name) + '</div>' +
-      '<div class="sub">近30天 ' + r.txt + ' · ' + Math.round(r.cnt / days.length * 100) + '%' +
-        (strk > 0 ? ' · 🔥 连续 ' + strk + ' 天' : '') + '</div></div></div>' +
-      habitGridHTML(h, days) + '</div>';
-  }).join('');
 }
 /* ---------- 打卡设置卡（设置页：只管理习惯的添加 / 修改 / 删除，打卡在概览页进行） ---------- */
 function habitSettingsCardHTML(){
@@ -4632,7 +4626,6 @@ function renderStats(){
     vol:    chartWrap('vol', '每周运动容量', '近12周 · Σ重量×次数', 'st_vol', ''),
     mins:   chartWrap('mins', '每周运动时长', '近12周 · Σ分钟（当周有距离时一并显示）', 'st_mins', ''),
     water:  chartWrap('water', '每日饮水量', state.waterTarget ? '近30天 · 虚线为每日目标' : '近30天', 'st_water', '<button class="btn sm ghost" data-watshis title="补记/修改历史饮水记录">🕘 补记</button>'),
-    habits: chartWrap('habits', '习惯打卡', '近30天', 'st_habits', ''),
   };
 
   const html =
@@ -4693,10 +4686,9 @@ function renderStats(){
     fmtVal: v => v + ' 分钟', fmtX: (d, p) => p.wk,
   });
 
-  // 睡眠时长 & 每日饮水 & 习惯打卡
+  // 睡眠时长 & 每日饮水
   renderSleepChart();
   renderWaterChart();
-  renderHabitChart();
 }
 function wDeltaText(S){
   if(S.wDelta === null) return '';

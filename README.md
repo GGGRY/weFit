@@ -77,7 +77,7 @@ cd server && npm test                        # 一次跑完下面七个文件
      node test/sleep-shape.test.js # 睡眠形状契约纯函数（前后端共用同一份，17 项）
      node test/slices.test.js      # 同步切片契约纯函数（切片键语法 / 树上取写 / 人话名，27 项）
      node test/migration.test.js   # 破坏性迁移（sets 拍平 / 计划记录合并）+ 同版本第二步就地补列：下放 done、rev 不变、回填只做一次（41 项）
-     node test/render.test.js      # 前端渲染逻辑无头验证：启动冒烟 + 六页导航 + 页面记忆 + 卡片排序/习惯卡/图表感应带 + 脏片推送/分批/冲突裁决（214 项，零依赖 node:vm 桩；布局/视觉仍需目测）
+     node test/render.test.js      # 前端渲染逻辑无头验证：启动冒烟 + 六页导航 + 页面记忆 + 卡片排序/概览打卡卡热力格/图表感应带 + 脏片推送/分批/冲突裁决（215 项，零依赖 node:vm 桩；布局/视觉仍需目测）
      node test/sync-http.test.js   # 真链路端到端（真 app.js 同步层 × 真 http 服务 × 真 SQLite，多个 vm「设备」各带 localStorage/Cookie，35 项；含「改完关页 → 重开补推」回归）
 ```
 

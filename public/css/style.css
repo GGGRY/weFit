@@ -333,15 +333,21 @@ body.hcard-dragging input,body.hcard-dragging textarea{user-select:text;-webkit-
 .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-2);align-items:center;padding:0 2px 4px}
 .legend .li{display:inline-flex;align-items:center;gap:6px}
 .legend .sw{width:10px;height:10px;border-radius:3px;display:inline-block}
-/* 历史页「习惯打卡」卡（app.js renderHabitChart）:
+/* 习惯行 + 30 格热力格（app.js habitGridHTML，现在只由概览页「今日打卡」卡 habitCardHTML 使用）:
    每习惯一行 = 图标 + 名称 + 近30天完成率 + 一条 30 格热力格（30 列均分整宽）。
-   纯只读、不可点（2026-09-13 裁定去掉补记：单格 ~8px 点不准，打卡本体在概览页）。 */
+   热力格纯只读、不可点（2026-09-13 裁定去掉补记：单格 ~7-9px 点不准，打卡本体是卡上的当天圆钮）。
+   2026-09-20：原「历史页·习惯打卡」卡整卡移除，这套样式只剩概览页一个使用方。 */
 .hab-row{margin-bottom:12px}
 .hab-row:last-child{margin-bottom:2px}
 .hab-h{display:flex;align-items:center;gap:9px;padding:0 2px}
 .hab-h .b{font-size:14px}
 .hab-h .sub{font-size:12px;color:var(--ink-3);margin-top:1px}
 .habgrid{display:grid;grid-template-columns:repeat(30,minmax(0,1fr));gap:2px;margin-top:7px;padding:0 2px}
+/* 概览页「今日打卡」卡（app.js habitCardHTML）：行头同 .hab-h，行尾多一个当天打卡圆钮，
+   下面跟同一条 30 格热力格；行间用细分隔线（原 .lrow 的观感）。 */
+.hab-row.hab-line{border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:10px}
+.hab-row.hab-line:last-child{border-bottom:0;padding-bottom:2px;margin-bottom:2px}
+.hab-row.hab-line .hab-dot{margin-left:auto}
 .habcell{display:block;width:100%;aspect-ratio:1/1;border-radius:3px;background:var(--surface-3)}
 .habcell.on{box-shadow:inset 0 0 0 1px rgba(255,255,255,.16)}
 
@@ -369,7 +375,7 @@ body.hcard-dragging input,body.hcard-dragging textarea{user-select:text;-webkit-
 .empty{text-align:center;padding:26px 12px;color:var(--ink-3)}
 .empty .e-ic{font-size:34px;margin-bottom:6px}
 
-/* 习惯打卡（概览页）：lrow 一行一条习惯，行尾为当天打卡圆钮（原多日横滑网格已随"仅当天"布局移除） */
+/* 习惯打卡（概览页）：行尾为当天打卡圆钮（原多日横滑网格已随"仅当天"布局移除） */
 .hab-dot{width:34px;height:34px;border-radius:11px;border:1.5px solid var(--line);background:var(--surface-2);color:transparent;font-size:15px;display:grid;place-items:center;transition:.12s;flex:0 0 auto}
 .hab-dot.on{background:var(--brand);border-color:var(--brand);color:#fff}
 @media (max-width:560px){

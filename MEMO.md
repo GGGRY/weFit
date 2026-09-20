@@ -1,6 +1,6 @@
 # 健康管理 · 项目备忘录
 
-> 当前版本 **v4.20** · 最后更新 2026-09-13 · 版本变更历史见 [CHANGELOG.md](CHANGELOG.md) · 后续计划见 [PLANS.md](PLANS.md)
+> 当前版本 **v4.22** · 最后更新 2026-09-20 · 版本变更历史见 [CHANGELOG.md](CHANGELOG.md) · 后续计划见 [PLANS.md](PLANS.md)
 > 本文只记**项目定位、功能清单与结构**；交互细节、样式与按钮行为不记（改动前先读代码）。
 
 ## 一、项目定位
@@ -24,7 +24,7 @@
 
 - 问候行（时刻问候 + 昵称 + 日期）
 - 四 tile（固定）：热量（已摄入/目标）｜BMI（数值 + 分档小字，`bmiTone()`）｜运动（当天已打勾项/全部项，无安排显「休息」）｜打卡（今日完成数/习惯总数）
-- 5 张今日卡片：**饮食**（已摄入 vs 目标 + 进度条 + 蛋白/碳水/脂肪三 chip + 「记录一下」）｜**运动**（当天各运动项逐项打卡 + `n/N` + 「添加运动」）｜**饮水**（± 步进 + 进度条 + 达标文案；目标 0 = 隐藏本卡）｜**睡眠**（全天合计小时 + 达标；逐段一行；「记录一段」）｜**打卡**（一行一习惯 + 当天圆钮 + 连续天数）
+- 5 张今日卡片:**饮食**(已摄入 vs 目标 + 进度条 + 蛋白/碳水/脂肪三 chip + 「记录一下」)|**运动**(当天各运动项逐项打卡 + `n/N` + 「添加运动」)|**饮水**(± 步进 + 进度条 + 达标文案;目标 0 = 隐藏本卡)|**睡眠**(全天合计小时 + 达标;逐段一行;「记录一段」)|**打卡**（一行一习惯：名称行 + `n/30 天 · x%` + 连续天数 + 行尾当天圆钮，下面跟同一条 30 格热力格；热力格只读）
 - **卡片顺序可拖**（饮食/运动/饮水/睡眠/打卡），存本人状态树 `state.homeOrder`（↔ `users.home_order_json`）；2026-09-13 起不再提供「恢复默认」按钮（要回默认序就自己拖回去）
 - 不展示体重 7 天差值、睡眠「今日概览」卡、体重主目标相关卡；习惯的增删改归「设置」页
 
@@ -74,11 +74,11 @@
 
 ### 7. 历史 📊（视图 id `stats`）
 
-- **6 个汇总卡 + 8 张图表卡**（各占一行竖排），顺序 = `state.chartOrder`（↔ `users.chart_order_json`，可拖，只认卡头抓手 `⠿`；与概览卡共用同一套排序机器）
-- 默认序：体重趋势 → 睡眠时长 → 每日热量 vs 目标 → 宏量营养素供能 → 每周运动容量 → 每周运动时长 → 每日饮水量 → 习惯打卡
+- **6 个汇总卡 + 7 张图表卡**（各占一行竖排），顺序 = `state.chartOrder`（↔ `users.chart_order_json`，可拖，只认卡头抓手 `⠿`；与概览卡共用同一套排序机器）
+- 默认序：体重趋势 → 睡眠时长 → 每日热量 vs 目标 → 宏量营养素供能 → 每周运动容量 → 每周运动时长 → 每日饮水量
 - 汇总口径统一近 30 天（营养素供能图为近 14 天）
 - 「睡眠时长」「每日饮水量」卡头 🕘 补记 → 各自的历史弹窗（翻任意日期查看/补记/修改/删除，改动同步刷新背后页面）
-- **「习惯打卡」卡**＝每习惯一行（名称 + 近 30 天完成率 + 🔥连续天数）+ 30 格热力格（填习惯色，纯只读、不可点，不开补记入口；打卡只在概览页）
+- 2026-09-20：原「习惯打卡」卡**整卡移除**（其 30 格热力格已移到概览页「今日打卡」卡上，见 §1）；习惯的增删改仍在设置页
 
 ### 8. 账户体系、管理后台与双层库 👥
 
@@ -141,7 +141,7 @@ weFit/
 
 - **前端约定**：业务代码只读写 `state`（当前账户工作副本），`save()` = 写回 + localStorage + `queuePush()`；视图导航收敛在 `go(v)`，视图名与**每页滚动位置**记在 localStorage / 内存，刷新回上次页面；设置页的「食物库/动作库」是不进 `NAV` 的子页面，靠 `SUBVIEW` 声明父级（高亮与刷新落回「设置」）
 - **弹窗**：`showDialog` 维护 `dialogStack`，只有栈顶响应 Esc（睡眠编辑器是叠在历史弹窗上再开一层）
-- **数据接口**：公开 = `POST /api/register`、`POST /api/login`、`GET /api/health`、静态页；登录后 = `GET/PUT /api/state`（本人数树，`{rev?, data}`，GET 另带 `slices` manifest；rev 过期 409，缺本人键 400）、`GET /api/slices[?since=&keys=]` 与 `PUT /api/slices`（v4.20 按片同步：写只写脏片、CAS 按片、冲突只冲突同片）、`GET /api/me`、`POST /api/logout`、`GET /api/system/library`（PUT 仅 admin）；后台 = `GET /api/admin/users`、`PUT /api/admin/role`、`PUT /api/admin/password`、`DELETE /api/admin/users`（均仅 admin）
+- **数据接口**：公开 = `POST /api/register`、`POST /api/login`、`GET /api/health`、静态页；登录后 = `GET/PUT /api/state`（本人数树，`{rev?, data}`，GET 另带 `slices` manifest；rev 过期 409，缺本人键 400）、`GET /api/slices[?since=&keys=]` 与 `PUT /api/slices`（v4.20 按片同步：写只写脏片、CAS 按片、冲突只冲突同片）、`GET /api/me`、`POST /api/logout`、`GET /api/system/library`（PUT 仅 admin）；后台 = `GET /api/admin/users`、`POST /api/admin/users`（新建用户：不受 `ALLOW_REGISTER` 影响、不下发会话 Cookie）、`PUT /api/admin/role`、`PUT /api/admin/password`、`DELETE /api/admin/users`（均仅 admin）
 - **同步入口两套并存**：客户端日常走按片 `/api/slices`；`GET/PUT /api/state` 保留作兼容壳（旧客户端、备份导入、测试），整树 PUT 会把所有已知片的 rev 抬到新全局 rev
 - 数据同步仍以「单账户整棵子树」为原子边界（写路径只触碰自己那份）；按片只是在此之内把粒度收窄
 
