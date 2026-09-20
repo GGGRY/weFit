@@ -4307,7 +4307,7 @@ function chartLayout(){
 /* x 轴最多放几个刻度：按绘图区实际宽度算，窄屏少放几个免挤成一团
    （桌面 918px 算出 7/9，与旧版写死 6/9 的取点数一致，视觉不变） */
 function tickStep(n, max){ return Math.max(1, Math.ceil(n / Math.max(2, Math.min(max, Math.floor(PLOT_W / (FS_AX * 3.6)))))); }
-/* 刻度文本比默认左留白还宽时（例如体重刻度带单位 "71.2kg"、血压 "118mmHg"）把 P_L 加够，
+/* 刻度文本比默认左留白还宽时（例如身体页体重刻度带单位 "71.2kg"、血压 "118mmHg"）把 P_L 加够，
    否则手机上左端几个字会被 viewBox 边界切掉。宽度优先用 canvas 真量（跟 SVG 文本同一个字体），
    量不到（无 canvas 的测试桩）才按 0.62em/字符 估——按字符数估对 "mmHg" 这种混大小写的串会偏窄。 */
 let cMeasCtx = null;   /* null=还没试过；false=这个环境量不了 */
@@ -4619,7 +4619,7 @@ function renderStats(){
   /* 图表卡（key 落 data-schart，顺序由 state.chartOrder 决定、可拖动调整——只能从卡头抓柄起拖，
      卡片本体留给取数值气泡）。默认序里睡眠时长紧跟体重趋势（2026-09-12 裁定）。 */
   const cards = {
-    weight: chartWrap('weight', '体重趋势', '近120条记录', 'st_weight', ''),
+    weight: chartWrap('weight', '体重趋势（kg）', '近120条记录', 'st_weight', ''),
     sleep:  chartWrap('sleep', '睡眠时长', '近30天 · 虚线为目标 10 小时', 'st_sleep', '<button class="btn sm ghost" data-slehis title="补记/修改历史睡眠记录">🕘 补记</button>'),
     cal:    chartWrap('cal', '每日热量 vs 目标', '近30天', 'st_cal', ''),
     macro:  chartWrap('macro', '宏量营养素摄入', '近14天 · kcal', 'st_macro', legendHTML([{label:'蛋白',color:CX.c1},{label:'碳水',color:CX.c2},{label:'脂肪',color:CX.c3}])),
@@ -4644,9 +4644,11 @@ function renderStats(){
   // 体重图
   const wRecs = state.body.filter(r => r.weight !== undefined && r.weight !== null);
   const wPts = wRecs.slice(Math.max(0, wRecs.length - 120)).map(r => ({ x:r.date, y:r.weight }));
+  /* 纵轴刻度只印数字，单位 kg 挪到卡片标题（2026-09-20 用户要求）：
+     刻度短了左留白跟着变窄、手机上绘图区更宽；取数值气泡仍带 kg。身体页的趋势图不在此列（那边多指标切换，单位随指标走）。 */
   $('#st_weight').innerHTML = lineChartSVG({
     points: wPts, color: CX.brand, area: true,
-    fmtTick: v => v.toFixed(1) + 'kg', fmtVal: v => v.toFixed(1) + ' kg', fmtX: dateSlash,
+    fmtTick: v => v.toFixed(1), fmtVal: v => v.toFixed(1) + ' kg', fmtX: dateSlash,
   });
 
   // 热量图

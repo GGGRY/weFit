@@ -782,9 +782,10 @@ async function main() {
        'full=' + full.slice(0, 3).join(' | ') + ' slash=' + slash.length + ' texts=' + texts.length);
   }
 
-  /* T9k 纵坐标单位（2026-09-13 用户要求）：睡眠时长图纵轴改小时、体重图纵轴带 kg。
+  /* T9k 纵坐标单位（2026-09-13 用户要求）：睡眠时长图纵轴改小时。
      背景：两张图的 fmtY 都是死参数（图表只读 fmtTick/fmtVal），所以睡眠图 y 轴一直是一串裸分钟数，
-     与标着「10h」的目标虚线在同一个轴上口径不一；且轴刻度带单位后变宽，左留白得跟着加（padForTicks）。 */
+     与标着「10h」的目标虚线在同一个轴上口径不一；轴刻度带单位后变宽，左留白得跟着加（padForTicks）。
+     2026-09-20 补：体重图反过来——刻度去掉 kg、单位上标题（见 T9k2）。 */
   {
     const yTicks = id => ((doc.getElementById(id).__html.match(/<text[^>]*text-anchor="end"[^>]*>(.*?)<\/text>/g) || [])
       .map(t => t.replace(/<[^>]*>/g, '')));
@@ -793,11 +794,17 @@ async function main() {
        sTicks.length >= 2 && sTicks.every(t => /^\d+(\.\d+)?h$/.test(t))
        && doc.getElementById('st_sleep').__html.includes('10h'),
        'sleepY=' + sTicks.join(' | '));
-    ok('T9k2 体重趋势图纵坐标带单位 kg（刻度如 71.2kg），左留白按最长刻度自动加宽（P_L 因 6 字符刻度变宽）',
-       wTicks.length >= 2 && wTicks.every(t => /^\d+(\.\d+)?kg$/.test(t))
-       && ev('(function(){ chartLayout(); const before = P_L; padForTicks(["71.2kg"]); return P_L >= before; })()') === true
-       && ev('(function(){ chartLayout(); padForTicks(["71.2kg"]); return P_L; })()') >= 52,
-       'weightY=' + wTicks.join(' | '));
+    /* 2026-09-20 用户要求：历史页体重图的单位从纵轴刻度挪到卡片标题（刻度只印 "71.2"），
+       刻度变短后左留白不再被单位撑宽（P_L 停在 chartLayout 的默认值）。 */
+    ok('T9k2 体重趋势图纵坐标只印数字、单位 kg 挪到标题「体重趋势（kg）」，左留白不再因单位加宽',
+       wTicks.length >= 2 && wTicks.every(t => /^\d+\.\d$/.test(t))
+       && view.__html.includes('体重趋势（kg）')
+       && ev('(function(){ chartLayout(); const before = P_L; padForTicks(' + JSON.stringify(wTicks) + '); return P_L === before; })()') === true,
+       'weightY=' + wTicks.join(' | ') + ' titleHasKg=' + view.__html.includes('体重趋势（kg）'));
+    /* 身体页的趋势图不跟着改：那边多指标切换，单位随指标走（体重 71.2kg / 血压 118mmHg），T14s 钉着 */
+    ok('T9k2b 身体页体重趋势图纵坐标仍带单位 kg（与历史页口径分开）',
+       /kg<\/text>/.test(ev("(function(){ renderBodyChart('weight'); return $('#chartBody').innerHTML; })()")),
+       'bodyY=' + ev("$('#chartBody').innerHTML").slice(0, 160));
     ok('T9k3 睡眠图气泡也随小时口径（不再是裸分钟），且与纵轴同值',
        ev("(function(){ const bak = state.sleep, kept = state.sleep['2026-09-01'];" +
          " state.sleep['2026-09-01'] = [{ t:'night', bed:'23:00', wake:'06:30', mins:450, quality:4 }];" +
