@@ -805,13 +805,58 @@ async function main() {
     ok('T9k2b 身体页体重趋势图纵坐标仍带单位 kg（与历史页口径分开）',
        /kg<\/text>/.test(ev("(function(){ renderBodyChart('weight'); return $('#chartBody').innerHTML; })()")),
        'bodyY=' + ev("$('#chartBody').innerHTML").slice(0, 160));
+    /* 日期锚定 today()（2026-10-13 修）：睡眠图窗口是「近30天」，原来硬编码 2026-09-01，
+       真实日期滑出窗口后气泡不在图上、测试必然过气。改成取窗口内的相对日期，哪天跑都成立。 */
     ok('T9k3 睡眠图气泡也随小时口径（不再是裸分钟），且与纵轴同值',
-       ev("(function(){ const bak = state.sleep, kept = state.sleep['2026-09-01'];" +
-         " state.sleep['2026-09-01'] = [{ t:'night', bed:'23:00', wake:'06:30', mins:450, quality:4 }];" +
+       ev("(function(){ const d = addDays(today(), -3), kept = state.sleep[d];" +
+         " state.sleep[d] = [{ t:'night', bed:'23:00', wake:'06:30', mins:450, quality:4 }];" +
          " renderSleepChart(); const svg = $('#st_sleep').innerHTML;" +
-         " if(kept === undefined) delete state.sleep['2026-09-01']; else state.sleep['2026-09-01'] = kept;" +
-         " renderSleepChart(); return /data-tip=\"2026-09-01 · 7\\.5 小时\"/.test(svg); })()") === true,
+         " if(kept === undefined) delete state.sleep[d]; else state.sleep[d] = kept;" +
+         " renderSleepChart(); return svg.indexOf('data-tip=\"' + d + ' · 7.5 小时\"') >= 0; })()") === true,
        ev("$('#st_sleep').innerHTML").slice(0, 120));
+  }
+
+  /* T9w 体重趋势图「日历轴」（2026-10-13 用户要求）：停记的空窗不能照旧等距排、线拉过去。
+     钉四层：① 缺口处折线断成多个子路径（留空不连线，面积也逐段封底）；② 空窗的水平间距按真实天数放大；
+     ③ 自己的常态节奏内（隔2天记、每周记、天天记偶尔漏1天）不被误切断；④ 其它序号轴图（热量）不被牵连。 */
+  {
+    const lineD = svg => { const m = svg.match(/<path d="([^"]*)" fill="none"/); return m ? m[1] : ''; };
+    const nSub = d => (d.match(/M/g) || []).length;
+    const mkSvg = (pts, scale) => ev("(function(){ return lineChartSVG({ points:" + JSON.stringify(pts) +
+      ", color:'c', area:true" + (scale ? ", dateScale:true" : "") + " }); })()");
+    const cxOf = svg => Array.from(svg.matchAll(/<circle cx="([\d.]+)"/g), m => parseFloat(m[1]));
+    const gapPts = [ {x:'2026-06-01',y:70},{x:'2026-06-03',y:70.2},{x:'2026-06-05',y:70.3},
+                     {x:'2026-07-06',y:71},{x:'2026-07-08',y:71.1},{x:'2026-07-10',y:71.3} ];
+    const gs = mkSvg(gapPts, true), gd = lineD(gs);
+    const gcx = cxOf(gs);
+    ok('T9w1 日历轴缺口断线：6 点中间空 31 天 → 折线 2 个子路径、圆点仍是 6 个、面积也断成 2 段',
+       nSub(gd) === 2 && gcx.length === 6
+       && nSub((gs.match(/<path d="([^"]*)" fill="c"/) || [,''])[1]) === 2,
+       'M=' + nSub(gd) + ' circles=' + gcx.length);
+    ok('T9w2 空窗按真实天数留白：缺口两侧点的像素距 ≥ 5× 正常点距（序号轴下两者恒等）',
+       gcx[3] - gcx[2] > 5 * (gcx[2] - gcx[1]),
+       'gap=' + Math.round(gcx[3]-gcx[2]) + ' step=' + Math.round(gcx[2]-gcx[1]));
+    const wk = ['2026-06-01','2026-06-08','2026-06-15','2026-06-22','2026-06-29']
+      .map((d, i) => ({ x:d, y:70 + i*0.1 }));
+    const miss = ['2026-07-01','2026-07-02','2026-07-03','2026-07-06','2026-07-07','2026-07-08','2026-07-09','2026-07-10']
+      .map((d, i) => ({ x:d, y:70 + i*0.05 }));
+    ok('T9w3 不误切断常态节奏：每周固定记（间隔7天，cut=17.5）、天天记偶尔漏2天（中位1，cut=7）都仍是单段连线',
+       nSub(lineD(mkSvg(wk, true))) === 1 && nSub(lineD(mkSvg(miss, true))) === 1,
+       'weekly=' + nSub(lineD(mkSvg(wk, true))) + ' miss=' + nSub(lineD(mkSvg(miss, true))));
+    ok('T9w4 非 dateScale（热量图口径）不受牵连：30 天逐日序列照旧单段线',
+       nSub(lineD(ev("$('#st_cal').innerHTML"))) === 1,
+       'cal M=' + nSub(lineD(ev("$('#st_cal').innerHTML"))));
+    /* 真图接线：历史页体重图与身体页趋势图都开了日历轴 */
+    const wBak = ev('JSON.stringify(state.body)');
+    ev("state.body = " + JSON.stringify([
+      {date:'2026-08-01',weight:70.0},{date:'2026-08-03',weight:70.2},{date:'2026-08-05',weight:70.4},
+      {date:'2026-09-20',weight:71.0},{date:'2026-09-22',weight:71.2},{date:'2026-09-24',weight:71.5}
+    ]) + '; renderStats(); renderBodyChart(\'weight\')');
+    const stW = ev("$('#st_weight').innerHTML"), bdW = ev("$('#chartBody').innerHTML");
+    ok('T9w5 历史页「体重趋势（kg）」与身体页趋势图同步走日历轴：同样空窗都断成 2 段',
+       nSub(lineD(stW)) === 2 && nSub(lineD(bdW)) === 2,
+       'st=' + nSub(lineD(stW)) + ' body=' + nSub(lineD(bdW)));
+    ev('state.body = ' + wBak + '; renderStats()');
   }
 
   /* T9h 设置页「恢复默认顺序」逃生口已按用户要求删除（2026-09-13）：卡片/图表顺序改过后也不该再出现 */

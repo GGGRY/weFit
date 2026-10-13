@@ -3585,6 +3585,7 @@ function renderBodyChart(metric){
     points: out,
     color: 'var(--brand)',
     area: true,
+    dateScale: true,   /* 稀疏记录日历轴：停记空窗留白、缺口不连线（2026-10-13，与历史页体重图同口径） */
     fmtTick: v => fmtDec(v) + mdef.unit,
     fmtVal: v => fmtDec(v) + ' ' + mdef.unit,
     fmtX: dateSlash,
@@ -4341,12 +4342,13 @@ function axisY(mn, mx, tickFmt){
   });
   return s;
 }
-function xLabels(points, fmt){
+function xLabels(points, fmt, xPos){
   const n = points.length;
   const step = tickStep(n, 7);
+  const PX = xPos || (i => xAt(i, n));
   let s = '';
   for(let i = 0; i < n; i += step){
-    s += '<text x="' + xAt(i, n) + '" y="' + round(CHART_H - FS_AX * 0.9, 2) + '" text-anchor="middle" font-size="' + FS_AX + '" fill="' + CX.ax + '">' + esc(fmt(points[i].x)) + '</text>';
+    s += '<text x="' + PX(i) + '" y="' + round(CHART_H - FS_AX * 0.9, 2) + '" text-anchor="middle" font-size="' + FS_AX + '" fill="' + CX.ax + '">' + esc(fmt(points[i].x)) + '</text>';
   }
   return s;
 }
@@ -4355,16 +4357,22 @@ function xLabels(points, fmt){
  * 原来每个数据点只挂原生 <title>（藏在 r10 隐形大热圈里）：桌面要瞄准才弹、手机没有悬停点不出来。
  * 现在给每张图铺一层透明的整高竖条，分界线取相邻两点的中线 → 手指/鼠标落在哪条带子里就取哪个点，
  * 不用瞄准；气泡内容由 bindChartTip() 统一渲染（data-tip = 文案，data-px/data-py = 数据点的 viewBox 坐标）。 */
+/* 分界线取与相邻点的实际中点：序号轴下 xAt 是等距线性，中点 = px ± step/2，与旧公式逐位一致（老图几何不变）；
+   日历轴下点距不等宽，中点才真正把空白归给缺口两侧、不串带。 */
 function hitBands(items, xOf, yOf, tipOf){
-  const n = items.length, step = n > 1 ? PLOT_W / (n - 1) : PLOT_W;
+  const n = items.length;
   let s = '';
   items.forEach((it, i) => {
     const px = xOf(it, i), py = yOf(it, i);
-    const l = Math.max(P_L, px - step / 2), r = Math.min(CHART_W - P_R, px + step / 2);
+    const l = i > 0 ? px - (px - xOf(items[i-1], i-1)) / 2 : P_L;
+    const r = i < n-1 ? px + (xOf(items[i+1], i+1) - px) / 2 : CHART_W - P_R;
     s += '<rect x="' + l + '" y="' + P_T + '" width="' + (r - l) + '" height="' + PLOT_H + '" fill="transparent" style="pointer-events:all;cursor:crosshair" data-tip="' + esc(tipOf(it, i)) + '" data-px="' + px + '" data-py="' + py + '"/>';
   });
   return s;
 }
+
+/* 日期 → 天数刻度（日历轴用）。parseISO 按本地零点建 Date，同一口径下相减即自然日差。 */
+function dateDays(s){ return Math.round(parseISO(s).getTime() / 86400000); }
 
 function lineChartSVG(o){
   chartLayout();
@@ -4378,6 +4386,33 @@ function lineChartSVG(o){
   const { mn, mx } = chartRange(ys);
   const tf = o.fmtTick || (v => v >= 1000 ? (v/1000).toFixed(1) + 'k' : String(Math.round(v)));
   padForTicks(niceTicks(mn, mx, 4).map(tf));
+  /* 日历轴模式（dateScale，2026-10-13 用户要求）：体重这类稀疏记录原来按「第几条」等距排，
+     停记的空窗被压成正常点距、线直接拉过去看不出中断。开启后横轴按真实日期等比定位，
+     空窗留成真实空白；线在缺口处断开：断点阈值 cut = max(7 天, 2.5×记录间隔中位数)——
+     比自己的常态节奏明显大很多才算中断，天天记的人偶尔漏两天、每周固定称一次的人都不被误切断。
+     日期不可排进（同一天/倒序）退回序号轴，与非 dateScale 图行为一致。 */
+  let dx = null;
+  if(o.dateScale){
+    dx = pts.map(p => dateDays(p.x));
+    if(!(dx[dx.length - 1] > dx[0])) dx = null;
+  }
+  const X = dx ? (i => P_L + (dx[i] - dx[0]) / (dx[dx.length - 1] - dx[0]) * PLOT_W)
+               : (i => xAt(i, pts.length));
+  const segs = [];
+  {
+    let cur = [0];
+    if(dx){
+      const gaps = [];
+      for(let i = 1; i < dx.length; i++) gaps.push(dx[i] - dx[i-1]);
+      const med = gaps.slice().sort((a, b) => a - b)[Math.floor(gaps.length / 2)] || 1;
+      const cut = Math.max(7, med * 2.5);
+      for(let i = 1; i < pts.length; i++){
+        if(dx[i] - dx[i-1] > cut){ segs.push(cur); cur = [i]; }
+        else cur.push(i);
+      }
+    }
+    segs.push(cur);
+  }
   let s = '<svg viewBox="0 0 ' + CHART_W + ' ' + CHART_H + '" role="img" style="font-family:inherit">';
   s += axisY(mn, mx, tf);
   // x 轴
@@ -4388,24 +4423,31 @@ function lineChartSVG(o){
     s += '<line x1="' + P_L + '" y1="' + yy + '" x2="' + (CHART_W - P_R) + '" y2="' + yy + '" stroke="' + CX.ink3 + '" stroke-width="1.5" stroke-dasharray="5 4"/>';
     if(o.ref.label) s += '<text x="' + (CHART_W - P_R) + '" y="' + round(yy - FS_SUB * 0.45, 2) + '" text-anchor="end" font-size="' + FS_SUB + '" fill="' + CX.ink3 + '">' + esc(o.ref.label) + '</text>';
   }
-  // 面积
+  // 面积（逐段封底到基线，单点段不画面积，缺口不搭桥）
   if(o.area){
-    let d = 'M' + xAt(0, pts.length) + ' ' + yAt(pts[0].y, mn, mx);
-    for(let i = 1; i < pts.length; i++) d += ' L' + xAt(i, pts.length) + ' ' + yAt(pts[i].y, mn, mx);
-    d += ' L' + xAt(pts.length-1, pts.length) + ' ' + (CHART_H - P_B) + ' L' + xAt(0, pts.length) + ' ' + (CHART_H - P_B) + ' Z';
-    s += '<path d="' + d + '" fill="' + o.color + '" opacity="0.12"/>';
+    let d = '';
+    segs.forEach(sg => {
+      if(sg.length < 2) return;
+      d += 'M' + X(sg[0]) + ' ' + yAt(pts[sg[0]].y, mn, mx);
+      for(let k = 1; k < sg.length; k++) d += ' L' + X(sg[k]) + ' ' + yAt(pts[sg[k]].y, mn, mx);
+      d += ' L' + X(sg[sg.length-1]) + ' ' + (CHART_H - P_B) + ' L' + X(sg[0]) + ' ' + (CHART_H - P_B) + ' Z';
+    });
+    if(d) s += '<path d="' + d + '" fill="' + o.color + '" opacity="0.12"/>';
   }
-  // 折线
-  let d = 'M' + xAt(0, pts.length) + ' ' + yAt(pts[0].y, mn, mx);
-  for(let i = 1; i < pts.length; i++) d += ' L' + xAt(i, pts.length) + ' ' + yAt(pts[i].y, mn, mx);
+  // 折线（一条 path 多个子路径：断点处天然留空，不连线）
+  let d = '';
+  segs.forEach(sg => {
+    d += 'M' + X(sg[0]) + ' ' + yAt(pts[sg[0]].y, mn, mx);
+    for(let k = 1; k < sg.length; k++) d += ' L' + X(sg[k]) + ' ' + yAt(pts[sg[k]].y, mn, mx);
+  });
   s += '<path d="' + d + '" fill="none" stroke="' + o.color + '" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>';
-  // 点（圆点只负责显示，取数值交给下面的感应带）
+  // 点（圆点只负责显示，取数值交给感应带；单点段也照常有点）
   const fmtV = o.fmtVal || (v => String(Math.round(v)));
   pts.forEach((p, i) => {
-    s += '<circle cx="' + xAt(i, pts.length) + '" cy="' + yAt(p.y, mn, mx) + '" r="3" fill="' + o.color + '"/>';
+    s += '<circle cx="' + X(i) + '" cy="' + yAt(p.y, mn, mx) + '" r="3" fill="' + o.color + '"/>';
   });
-  s += hitBands(pts, (p, i) => xAt(i, pts.length), p => yAt(p.y, mn, mx), p => p.x + ' · ' + fmtV(p.y));
-  s += xLabels(pts, o.fmtX || (x => x));
+  s += hitBands(pts, (p, i) => X(i), p => yAt(p.y, mn, mx), p => p.x + ' · ' + fmtV(p.y));
+  s += xLabels(pts, o.fmtX || (x => x), dx ? X : undefined);
   s += '</svg>';
   return s;
 }
@@ -4647,7 +4689,7 @@ function renderStats(){
   /* 纵轴刻度只印数字，单位 kg 挪到卡片标题（2026-09-20 用户要求）：
      刻度短了左留白跟着变窄、手机上绘图区更宽；取数值气泡仍带 kg。身体页的趋势图不在此列（那边多指标切换，单位随指标走）。 */
   $('#st_weight').innerHTML = lineChartSVG({
-    points: wPts, color: CX.brand, area: true,
+    points: wPts, color: CX.brand, area: true, dateScale: true,
     fmtTick: v => v.toFixed(1), fmtVal: v => v.toFixed(1) + ' kg', fmtX: dateSlash,
   });
 
