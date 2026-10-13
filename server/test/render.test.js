@@ -867,6 +867,39 @@ async function main() {
      view.__html.includes('st_chartorder'));
   ev('state.chartOrder = CHART_ORDER_DEFAULT.slice(); go(\'stats\')');
 
+  /* T9x 设置页「每日打卡」↑↓ 排序（2026-10-13 用户要求：习惯顺序可在设置里调整）。
+     桩里 $$ 恒空 → 钮接线做结构断言，移动逻辑走 moveHabit 直测（含越界），两页同序走 habitCardHTML。 */
+  {
+    const ids = JSON.parse(ev('JSON.stringify(state.habits.map(h => h.id))'));
+    const names = JSON.parse(ev('JSON.stringify(state.habits.map(h => h.name))'));
+    const habBak = ev('JSON.stringify(state.habits)');
+    ev("go('settings')");
+    const hs = view.__html;
+    ok('T9x1 设置页打卡每条都有 ↑/↓ 钮，首行↑/末行↓置灰禁点',
+       ids.length >= 2
+       && (hs.match(/data-hup="/g) || []).length === ids.length
+       && (hs.match(/data-hdown="/g) || []).length === ids.length
+       && hs.includes('data-hup="' + ids[0] + '" style="width:26px;height:26px;font-size:13px;color:var(--ink-3);flex:0 0 auto;opacity:.25" title="上移" disabled')
+       && hs.includes('data-hdown="' + ids[ids.length-1] + '" style="width:26px;height:26px;font-size:13px;color:var(--ink-3);flex:0 0 auto;opacity:.25" title="下移" disabled'),
+       'hup=' + (hs.match(/data-hup="/g) || []).length + '/' + ids.length);
+    const want = [ids[1], ids[0]].concat(ids.slice(2)).join(',');
+    ok('T9x2 moveHabit(id,-1)：第二条前移换序、返回 true（数组序=展示序，save 走 habits 定义片，服务端按数组下标落 seq）',
+       ev("moveHabit('" + ids[1] + "', -1)") === true
+       && ev('state.habits.map(h => h.id).join(",")') === want,
+       'now=' + ev('state.habits.map(h => h.id).join(",")') + ' want=' + want);
+    const hc = ev('habitCardHTML()');
+    ok('T9x3 概览页「今日打卡」行序跟随 state.habits 数组序（换序后第一行是原第二条习惯）',
+       hc.indexOf(names[1]) >= 0 && hc.indexOf(names[1]) < hc.indexOf(names[0]),
+       'n1=' + hc.indexOf(names[1]) + ' n0=' + hc.indexOf(names[0]));
+    ev('state.habits = ' + habBak);
+    ok('T9x4 越界移动返回 false 且状态不动（首行不能再上移、末行不能再下移）',
+       ev("moveHabit('" + ids[0] + "', -1)") === false
+       && ev("moveHabit('" + ids[ids.length-1] + "', 1)") === false
+       && ev('state.habits.map(h => h.id).join(",")') === ids.join(','),
+       'after=' + ev('state.habits.map(h => h.id).join(",")'));
+    ev('state.habits = ' + habBak + '; go(\'stats\')');
+  }
+
   /* T10 动作库行内版式：名称 + 「大类 · 部位 · 方式」小字（v4.15 的平铺表格已换成食物库同款 lrow） */
   const libRow = ev("exLibRowHTML(state.exercises.find(e => e.name === '杠铃卧推'), 'data-id=\"e0\"', '<button>✏️</button>')");
   ok('T10 动作库行内 = lrow（名称 + 大类 · 部位 · 方式小字）+ 行内按钮',

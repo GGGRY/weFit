@@ -4180,18 +4180,36 @@ function habitGridHTML(h, days){
 /* ---------- 打卡设置卡（设置页：只管理习惯的添加 / 修改 / 删除，打卡在概览页进行） ---------- */
 function habitSettingsCardHTML(){
   const t = today();
-  const rows = state.habits.length ? state.habits.map(h => {
+  const n = state.habits.length;
+  /* ↑↓ 两颗排序钮（2026-10-13 用户要求）：定义数组顺序就是概览页「今日打卡」的行序，
+     首行 ↑、末行 ↓ 置灰（disabled），中段可双向移动；样式钮 ✎/🗑 照旧。 */
+  const arrow = (attr, id, sym, title, dis) =>
+    '<button class="iconbtn2" ' + attr + '="' + id + '" style="width:26px;height:26px;font-size:13px;color:var(--ink-3);flex:0 0 auto' + (dis ? ';opacity:.25' : '') + '" title="' + title + '"' + (dis ? ' disabled' : '') + '>' + sym + '</button>';
+  const rows = n ? state.habits.map((h, idx) => {
     const doneCnt = Object.keys(h.done || {}).filter(d => h.done[d]).length;
     const strk = habitStreak(h, t);
     return '<div class="lrow"><div class="thumb" style="background:' + h.color + ';font-size:16px">' + esc(h.icon) + '</div>' +
       '<div class="grow"><div class="b">' + esc(h.name) + '</div>' +
       '<div class="sub">累计 ' + doneCnt + ' 天' + (strk > 0 ? ' · 连续 ' + strk + ' 天' : '') + '</div></div>' +
+      arrow('data-hup', h.id, '↑', '上移', idx === 0) +
+      arrow('data-hdown', h.id, '↓', '下移', idx === n - 1) +
       '<button class="iconbtn2" data-edithab="' + h.id + '" style="width:26px;height:26px;font-size:12px;color:var(--ink-3);flex:0 0 auto" title="修改习惯">✎</button>' +
       '<button class="iconbtn2" data-delhab="' + h.id + '" style="width:26px;height:26px;font-size:12px;color:var(--danger);flex:0 0 auto" title="删除习惯">🗑</button></div>';
   }).join('')
     : '<div class="empty" style="padding:14px 4px"><div class="e-ic">📌</div>还没有习惯，点右上角「添加习惯」创建第一个</div>';
   return '<div class="card"><h3><span>📌 每日打卡</span><span class="grow"></span><button class="btn sm" id="hab_add_btn">添加习惯</button></h3>' + rows +
-    '<div class="tiny muted mt">✎ 修改 · 🗑 删除；每天在概览页「今日打卡」点圆圈打卡。</div></div>';
+    '<div class="tiny muted mt">↑↓ 调整顺序（概览页打卡同序）· ✎ 修改 · 🗑 删除；每天在概览页「今日打卡」点圆圈打卡。</div></div>';
+}
+/* 打卡顺序：state.habits 数组序 = 两页展示序。落库走 habits 定义片原路
+   （服务端 writeHabits 按数组下标写 seq、readHabits ORDER BY seq），零新契约。 */
+function moveHabit(id, dir){
+  const i = state.habits.findIndex(h => h.id === id), j = i + dir;
+  if(i < 0 || j < 0 || j >= state.habits.length) return false;
+  const a = state.habits.slice();
+  a.splice(j, 0, a.splice(i, 1)[0]);
+  state.habits = a;
+  save();
+  return true;
 }
 function bindHabitSettings(){
   const v = $('#view');
@@ -4203,6 +4221,12 @@ function bindHabitSettings(){
   }));
   $$('[data-edithab]', v).forEach(btn => btn.addEventListener('click', () => {
     const h = state.habits.find(x => x.id === btn.dataset.edithab); if(h) openHabitEditor(h);
+  }));
+  $$('[data-hup]', v).forEach(btn => btn.addEventListener('click', () => {
+    if(moveHabit(btn.dataset.hup, -1)) renderView();
+  }));
+  $$('[data-hdown]', v).forEach(btn => btn.addEventListener('click', () => {
+    if(moveHabit(btn.dataset.hdown, 1)) renderView();
   }));
   $('#hab_add_btn', v).addEventListener('click', openHabitAdder);
 }
