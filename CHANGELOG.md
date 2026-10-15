@@ -6,6 +6,8 @@
 
 ## 未标版号（下次升版号时并入下方版本）
 
+- **开机自启（局域网 · 免 sudo）**：新增 `deploy/wefit.user.service`（systemd **用户级**单元样例：`ExecStartPre` 轮询等数据盘挂载、`Restart=always`；路径按本机钉死，node 用 nvm 绝对路径）。legion 已安装为 `wefit` 并 `enable --now` + `loginctl enable-linger`：开机无人登录也在后台监听 8123，`./start.sh` 手动起会撞端口，改走 `systemctl --user stop/start/restart wefit`。README 加「开机自启」章节、MEMO 启动/技术债口径同步。**公网部署口径不变**（系统级 `wefit.service` + 反代 + 关注册）。
+
 - **设置页「每日打卡」↑↓ 调顺序**：习惯行新增上移/下移钮（首行↑、末行↓置灰禁点），`moveHabit()` 改 `state.habits` 数组序后 `save()` + 整卡重渲。数组序 = 概览页打卡行序 = 落库 `seq`（`writeHabits` 按下标、`readHabits` ORDER BY seq），habits 定义片整片序列化本来就含序——**零新契约、无迁移**。新增 T9x 系列 4 条断言，`render.test.js` 225 项、`npm test` 全套全绿。
 
 - **体重图「日历轴」：停记空窗留白、缺口不连线**：`lineChartSVG()` 新增 `dateScale`（横轴按真实日期等比定位，替代按记录条数等距），断线阈值 `cut = max(7 天, 2.5×记录间隔中位数)`——天天记偶尔漏几天、每周固定称都不被误切断。历史页「体重趋势（kg）」与身体页趋势图启用；睡眠/热量/宏量/饮水等逐日图不变。`hitBands()` 分界线改为相邻点实际中点（序号轴下与旧公式逐位一致）。新增 T9w 系列 5 条断言；顺手修 T9k3 过气写法（硬编码 2026-09-01 滑出近30天窗口必挂 → 改锚定 `today()`）。纯前端，`render.test.js` 221 项、`npm test` 全套全绿。

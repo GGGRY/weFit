@@ -13,6 +13,20 @@
 
 浏览器打开 `http://localhost:8123`（手机：同一 Wi-Fi 下打开启动窗口打印的电脑 IP 地址）。
 
+## 开机自启（本机 · 局域网，免 sudo）
+
+个人机上想让 weFit 开机就在后台跑、不用每次手动 `./start.sh`：用 systemd **用户级**单元 + linger（用户未登录也启动）。仓库自带样例 `deploy/wefit.user.service`（路径/`node` 版本按你机器改，用法在文件头）。
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/wefit.user.service ~/.config/systemd/user/wefit.service   # 先按文件头改对 node 绝对路径
+systemctl --user daemon-reload
+systemctl --user enable --now wefit          # enable=开机自启，--now=这次立刻起
+loginctl enable-linger $USER                 # 关键：不开这个， logout / 没人登录时服务不拉起
+```
+
+之后：`systemctl --user status wefit` 看状态，`journalctl --user -u wefit -f` 看日志，`systemctl --user stop wefit` 停（想临时手动跑就先停它，避免端口占用）。这份只管局域网监听（0.0.0.0:8123）、不套 HTTPS、保持可注册——**只适合家里/可信网络**；公网仍要走下面反代方案并关注册。
+
 ## 公网部署（HTTPS 反代）
 
 服务端自己不做 TLS：把 443 交给反代（Caddy/nginx），weFit 只监听回环。仓库自带两份可直接用的样例：`deploy/Caddyfile`（Caddy 自动申请/续期证书）与 `deploy/wefit.service`（systemd 守护）。
