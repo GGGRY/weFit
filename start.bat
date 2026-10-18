@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title JJHealth Sync Server
+title weFit Sync Server
 cd /d "%~dp0server"
 node server.js
 echo.

@@ -14,6 +14,10 @@
 #   ALLOW_REGISTER=0      公网强烈建议关注册（开放注册时第一个访客就是管理员）
 #   PORT=8123             显式钉死，与 Caddyfile 的 reverse_proxy 地址对齐
 #   DB_PATH=...           真实数据落盘位置；务必放在持久卷/备份覆盖得到的地方
+#                         ⚠ 从旧版本升级且已有数据：默认库名已从 jjhealth.db 改为 wefit.db，
+#                           起服务前先停服并改名，否则会新建空库：
+#                           sudo mv /var/lib/wefit/jjhealth.db /var/lib/wefit/wefit.db
+#                           （或显式把 DB_PATH 指回旧文件）
 
 [Unit]
 Description=weFit 健康管理同步服务器
@@ -30,7 +34,7 @@ Environment=PORT=8123
 Environment=TRUST_PROXY=1
 Environment=COOKIE_SECURE=auto
 Environment=ALLOW_REGISTER=0
-Environment=DB_PATH=/var/lib/wefit/jjhealth.db
+Environment=DB_PATH=/var/lib/wefit/wefit.db
 Restart=always
 RestartSec=3
 # 最小权限：ProtectSystem=strict 把整个文件系统置为只读，再用 ReadWritePaths 放行数据目录。

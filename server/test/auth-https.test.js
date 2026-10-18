@@ -15,7 +15,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const TMP_DB = path.join(os.tmpdir(), 'jjhealth-auth-https-test-' + process.pid + '.db');
+const TMP_DB = path.join(os.tmpdir(), 'wefit-auth-https-test-' + process.pid + '.db');
 try { fs.rmSync(TMP_DB, { force: true }); } catch (e) {}
 process.env.DB_PATH = TMP_DB;
 /* 限速参数必须在 require('../server') 之前设好（服务端登录限速是模块级单例） */

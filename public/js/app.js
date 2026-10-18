@@ -2,16 +2,55 @@
    常量与工具
 ===================================================== */
 /* 离线缓存按账户隔离:v3 起键名带用户名,同浏览器多账户互不污染 */
-const AUTH_KEY = 'jjhealth_auth_user';
-const AUTH_ROLE_KEY = 'jjhealth_auth_role';
+const AUTH_KEY = 'wefit_auth_user';
+const AUTH_ROLE_KEY = 'wefit_auth_role';
+/* v4.23 应用更名 weFit:localStorage 键前缀 jjhealth_* → wefit_*。
+ * 规则:只有旧键 → 搬到新键并删旧键;只有新键 → 不动;新旧并存 → 旧树/meta 若带
+ * 未推送改动(旧页签、回退版本的离线编辑)则旧键胜出,否则清掉孤儿旧键。
+ * 注意:回退到旧版本时读不到这批新键,但服务器仍是准数据源。 */
+const LEGACY_AUTH_KEY = 'jjhealth_auth_user';
+const LEGACY_AUTH_ROLE_KEY = 'jjhealth_auth_role';
+/* meta 先于树迁移时记住「旧树仍该胜出」,避免随后 storeKey() 看不到旧 meta 而误删旧树 */
+const legacyDirtyWho = Object.create(null);
+function legacyMetaDirty(who){
+  try {
+    const m = JSON.parse(localStorage.getItem('jjhealth_v3meta:' + who) || 'null');
+    return !!(m && (m.dirty || (Array.isArray(m.dirtySlices) && m.dirtySlices.length)
+      || (Array.isArray(m.pushSlices) && m.pushSlices.length)));
+  } catch(e){ return false; }
+}
+function lsMigrate(newKey, oldKey, oldWins){
+  try {
+    const oldVal = localStorage.getItem(oldKey);
+    if(oldVal === null) return;
+    const hasNew = localStorage.getItem(newKey) !== null;
+    if(!hasNew || (oldWins && oldWins())) localStorage.setItem(newKey, oldVal);
+    localStorage.removeItem(oldKey);
+  } catch(e){}
+}
+/* 登录态要在任何读取之前迁好(含 init() 的离线启动分支) */
+lsMigrate(AUTH_KEY, LEGACY_AUTH_KEY);
+lsMigrate(AUTH_ROLE_KEY, LEGACY_AUTH_ROLE_KEY);
 function storeWho(){
   return (typeof me !== 'undefined' && me && me.username) || localStorage.getItem(AUTH_KEY) || 'guest';
 }
-function storeKey(){ return 'jjhealth_v3:' + storeWho(); }
+function storeKey(){
+  const who = storeWho(), k = 'wefit_v3:' + who, oldK = 'jjhealth_v3:' + who;
+  const oldWins = legacyMetaDirty(who) || !!legacyDirtyWho[who];
+  delete legacyDirtyWho[who];
+  lsMigrate(k, oldK, () => oldWins);
+  return k;
+}
 /* 同步元数据:记录「最后一次与服务器对齐时的 rev」+ 是否有未推送改动(dirty)。
  * 用于关闭页面期间发生过的离线编辑:重开时与服务器 rev 比对,分叉则弹窗人工裁决,
  * 绝不在未提示的情况下用服务器数据覆盖本机未同步改动(也不反向静默覆盖)。 */
-function metaKey(){ return 'jjhealth_v3meta:' + storeWho(); }
+function metaKey(){
+  const who = storeWho(), k = 'wefit_v3meta:' + who, oldK = 'jjhealth_v3meta:' + who;
+  const oldWins = legacyMetaDirty(who) || !!legacyDirtyWho[who];
+  if(oldWins) legacyDirtyWho[who] = true;   /* meta 先迁时仍要让随后的 storeKey() 认旧树 */
+  lsMigrate(k, oldK, () => oldWins);
+  return k;
+}
 function metaGet(){ try { const m = JSON.parse(localStorage.getItem(metaKey())); if(!m) return null;
   /* v4.4:类型归一——rev 只认 number/null(历史脏数据/手改 localStorage 的字符串会让
    * 语义比较走样),gen 只认 number,其余一律归零/置空后按干净状态处理 */
@@ -1576,7 +1615,7 @@ function rebuildNav(){
 }
 /* 记住当前页面（v4.14）：刷新后回到上次浏览的页面而不是总回概览。
  * 键名按账户隔离，与离线缓存同一口径；只存 UI 状态，不参与服务器同步。 */
-function viewKey(){ return 'jjhealth_view:' + storeWho(); }
+function viewKey(){ const who = storeWho(), k = 'wefit_view:' + who; lsMigrate(k, 'jjhealth_view:' + who); return k; }
 function readView(){
   try { const v = localStorage.getItem(viewKey()); return NAV.some(n => n.id === v) ? v : 'home'; } catch(e){ return 'home'; }
 }

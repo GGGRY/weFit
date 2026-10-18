@@ -48,11 +48,14 @@ HOST=127.0.0.1 TRUST_PROXY=1 ALLOW_REGISTER=0 node server.js   # 或改 deploy/w
 | `ALLOW_REGISTER` | 开 | `0` 关闭注册（返回 403 `register_closed`）。公网务必关闭——**首个注册账户自动成为管理员**，公开注册等于把后台交给第一个访客 |
 | `LOGIN_MAX_FAILS` / `LOGIN_MAX_FAILS_IP` | 5 / 20 | 同一来源对同一账户 / 同一来源对任意账户的失败上限，触顶锁 `LOGIN_BLOCK_MS`（默认 15 分钟），返回 429 + `Retry-After` |
 | `LOGIN_WINDOW_MS` / `LOGIN_BLOCK_MS` | 15 分钟 / 15 分钟 | 失败计数窗口与封锁时长 |
-| `HOST` / `PORT` / `DB_PATH` | `0.0.0.0` / `8123` / `server/data/jjhealth.db` | 监听地址/端口与数据库位置（`DB_PATH` 请指向会被备份的持久位置） |
+| `HOST` / `PORT` / `DB_PATH` | `0.0.0.0` / `8123` / `server/data/wefit.db` | 监听地址/端口与数据库位置（`DB_PATH` 请指向会被备份的持久位置） |
+
+> ⚠ **已有部署升级**：数据库默认文件名已从 `jjhealth.db` 改为 `wefit.db`。升级前先停服务，把旧库改名（或显式把 `DB_PATH` 指回旧文件），否则启动会新建空库：
+> `sudo mv /var/lib/wefit/jjhealth.db /var/lib/wefit/wefit.db`
 
 > **本地/局域网明文访问不受影响**：默认口径下明文 HTTP 不加 `Secure`，`./start.sh` 与手机同网访问照旧。只有显式 `COOKIE_SECURE=1` 才会让明文 HTTP 登不上（启动日志会警告）。
 
-**首次公网上线顺序**：先在本地 `./start.sh` 注册好管理员账户（第一个账户）→ 确认数据无误 → 停服务并备份 `server/data/jjhealth.db` → 按上面三步起反代与服务（`ALLOW_REGISTER=0`）→ 浏览器与手机各登录一次验证同步。
+**首次公网上线顺序**：先在本地 `./start.sh` 注册好管理员账户（第一个账户）→ 确认数据无误 → 停服务并备份 `server/data/wefit.db` → 按上面三步起反代与服务（`ALLOW_REGISTER=0`）→ 浏览器与手机各登录一次验证同步。
 
 **验收**：`curl -I https://<域名>/api/health` 应为 200；`curl -I http://<域名>/` 应 301 到 https；`curl -sv -X POST https://<域名>/api/login -d '{"username":"x","password":"y"}' -H 'Content-Type: application/json'` 的 `Set-Cookie` 应带 `Secure`（登录失败时不下发 Cookie，所以先用真实账户验证）。另可验证限速分桶确实只认最后一跳：连续带**不同的伪造前缀、相同的末段**请求（如 `-H 'X-Forwarded-For: 1.1.1.$i, <真实IP>'`）应稳定累计并最终 429，而不是每次都当新来源。
 
@@ -76,7 +79,7 @@ HOST=127.0.0.1 TRUST_PROXY=1 ALLOW_REGISTER=0 node server.js   # 或改 deploy/w
 ## 目录
 
 - `public/` 前端（无构建：`index.html` + `admin.html` + `css/style.css` + `js/seed-data.js` + `js/sleep-shape.js` + `js/app.js`；`js/dev.js` = 调试钩子，仅在 URL 带 `?selftest/?ftest/?shot/?probe` 时按需加载）
-- `server/` 后端 + `data/jjhealth.db`（SQLite，全部数据都在这里）
+- `server/` 后端 + `data/wefit.db`（SQLite，全部数据都在这里）
 - `deploy/` 公网部署样例（`Caddyfile` 反代 + `wefit.service` systemd 单元）
 - `MEMO.md` 项目备忘录（架构、功能、技术债、使用备忘）
 - `CHANGELOG.md` 版本变更日志
@@ -85,14 +88,15 @@ HOST=127.0.0.1 TRUST_PROXY=1 ALLOW_REGISTER=0 node server.js   # 或改 deploy/w
 ## 测试
 
 ```bash
-cd server && npm test                        # 一次跑完下面七个文件
+cd server && npm test                        # 一次跑完下面八个文件
      node test/roundtrip.test.js   # 鉴权 + 双账户隔离 + 往返保真 + 按片同步（写入/CAS/删片/墓碑/兼容整树，121 项）
      node test/admin.test.js       # 管理后台 API：新建用户/角色/重置密码/删号护栏 + 系统库三件套白名单（63 项）
+     node test/auth-https.test.js  # 公网部署安全：登录限速 / Cookie Secure / 关注册 / TRUST_PROXY（37 项）
      node test/sleep-shape.test.js # 睡眠形状契约纯函数（前后端共用同一份，17 项）
      node test/slices.test.js      # 同步切片契约纯函数（切片键语法 / 树上取写 / 人话名，27 项）
      node test/migration.test.js   # 破坏性迁移（sets 拍平 / 计划记录合并）+ 同版本第二步就地补列：下放 done、rev 不变、回填只做一次（41 项）
-     node test/render.test.js      # 前端渲染逻辑无头验证：启动冒烟 + 六页导航 + 页面记忆 + 卡片排序/概览打卡卡热力格/图表感应带 + 脏片推送/分批/冲突裁决（215 项，零依赖 node:vm 桩；布局/视觉仍需目测）
-     node test/sync-http.test.js   # 真链路端到端（真 app.js 同步层 × 真 http 服务 × 真 SQLite，多个 vm「设备」各带 localStorage/Cookie，35 项；含「改完关页 → 重开补推」回归）
+     node test/render.test.js      # 前端渲染逻辑无头验证：启动冒烟 + 六页导航 + 页面记忆 + 卡片排序/概览打卡卡热力格/图表感应带 + 脏片推送/分批/冲突裁决（229 项，零依赖 node:vm 桩；布局/视觉仍需目测）
+     node test/sync-http.test.js   # 真链路端到端（真 app.js 同步层 × 真 http 服务 × 真 SQLite，多个 vm「设备」各带 localStorage/Cookie，41 项；含「改完关页 → 重开补推」回归）
 ```
 
 > 同步切片的规则（哪一块状态算哪片、值长什么样、怎么读怎么写）只写在 `public/js/slices.js` 一处：浏览器先于 app.js 加载它，`server/mapper.js` 直接 require。`mapper.js` 的**整树写与逐片写复用同一批小函数**，改一处两路同步生效；测试拿前端 `writeSlice` 与逐片写的结果对账，防两侧漂移。
@@ -115,8 +119,8 @@ cd server && npm test                        # 一次跑完下面七个文件
 
 > ⚠️ **v4.15 的库与种子变更（无破坏性迁移）**：食物种子由 14 条中文基础食物换血为 USDA Foundation Foods **321 条**（`public/js/seed-data.json`），食物条目新增**营养来源** `src` 小签（系统库 = `USDA`、自录 = 「用户」、编辑后记「用户」），**新注册用户的个人库初始为空**（不再整份拷贝系统库，旧行为下被填充的存量个人库已由一次性工具清空）；概览卡片顺序新增 `home_order_json` 列（`ALTER TABLE ADD COLUMN` 幂等补列，**不动 `rev`、不删数据**）。**存量数据库里的系统库不会被自动改写**——想把线上系统库与个人库也换成这 321 条（并补上 `src`），跑一次性工具 `node server/test/reset-food-library.js [--yes]` 与 `node server/test/set-food-src.js [--yes]`（都默认干跑、写前自动备份；细节见 CHANGELOG 对应条目）。**已打开的旧页面请强制刷新**（旧 `app.js` 不认识新形状）。
 
-> ⚠️ **v4.12 的运动数据变更（分两步，按来源库分别触发）**：① **破坏性重置**——从 **v4.11 及更早**升级会清空周计划与旧运动日志（`plans` 键、`plan_defs`/`plan_items` 取消），各账户 `rev` +1，请先备份 `server/data/jjhealth.db`；② **就地补列**——从 **v4.12 中间态**（已合并、尚未逐项打勾）升级只给 `workout_items` 补 `done` 并把旧的整天完成下放给它的每一项，**不删数据、不动 `rev`**（`workouts.done` 仅废弃，不删除）。个人动作库、饮食、身体、睡眠、饮水、习惯、账户与食物库两步都不受影响；第二步完成后运动页不再分「计划 / 记录」两个 tab。**已打开的旧页面请强制刷新**（旧 `app.js` 不认识新结构）。
+> ⚠️ **v4.12 的运动数据变更（分两步，按来源库分别触发）**：① **破坏性重置**——从 **v4.11 及更早**升级会清空周计划与旧运动日志（`plans` 键、`plan_defs`/`plan_items` 取消），各账户 `rev` +1，请先备份 `server/data/wefit.db`；② **就地补列**——从 **v4.12 中间态**（已合并、尚未逐项打勾）升级只给 `workout_items` 补 `done` 并把旧的整天完成下放给它的每一项，**不删数据、不动 `rev`**（`workouts.done` 仅废弃，不删除）。个人动作库、饮食、身体、睡眠、饮水、习惯、账户与食物库两步都不受影响；第二步完成后运动页不再分「计划 / 记录」两个 tab。**已打开的旧页面请强制刷新**（旧 `app.js` 不认识新结构）。
 
 > ⚠️ **v4.11 破坏性版本（历史）**：若你从 v4.10 或更早版本升级，运动项由 `sets` 数组拍平为列、`workout_sets` 表取消，旧运动数据与个人动作库同样会被清空（v4.12 才取消清动作库）。饮食、身体、睡眠、饮水、习惯、账户与食物库不受影响。
 
-> v4 升级说明：v3 及以前的旧成员数据不再展示（"从零开始"决策）；需要留底先备份 `server/data/jjhealth.db`。局域网内即开即用；公网部署见上文「公网部署（HTTPS 反代）」。
+> v4 升级说明：v3 及以前的旧成员数据不再展示（"从零开始"决策）；需要留底先备份 `server/data/wefit.db`。局域网内即开即用；公网部署见上文「公网部署（HTTPS 反代）」。

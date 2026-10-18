@@ -17,7 +17,7 @@ const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const TMP_DB = path.join(os.tmpdir(), 'jjhealth-synchttp-' + process.pid + '.db');
+const TMP_DB = path.join(os.tmpdir(), 'wefit-synchttp-' + process.pid + '.db');
 try { fs.rmSync(TMP_DB, { force: true }); } catch (e) {}
 process.env.DB_PATH = TMP_DB;
 
@@ -69,12 +69,14 @@ function makeLS() {
 let PORT = 0;
 
 /* ---------- 一台「设备」：独立 localStorage / Cookie / vm 上下文，跑真实 app.js ---------- */
-function makeDevice(sid, seed, who) {
+function makeDevice(sid, seed, who, opts) {
   const jar = { sid: sid || null };
   const ls = makeLS();
-  /* 真实登录会写这两把键；离线启动靠它认出「上次登录过」（键名与 app.js 的 AUTH_KEY 一致） */
-  ls.setItem('jjhealth_auth_user', who || 'e2e');
-  ls.setItem('jjhealth_auth_role', 'user');
+  /* 真实登录会写这两把键；离线启动靠它认出「上次登录过」（键名与 app.js 的 AUTH_KEY 一致）。
+   * opts.legacyAuth = 模拟旧版本留下的 jjhealth_* 键（验 v4.23 键名迁移） */
+  const authPrefix = (opts && opts.legacyAuth) ? 'jjhealth_' : 'wefit_';
+  ls.setItem(authPrefix + 'auth_user', who || 'e2e');
+  ls.setItem(authPrefix + 'auth_role', 'user');
   if (seed) Object.keys(seed).forEach(k => ls.setItem(k, seed[k]));
   const doc = makeNode('#document');
   doc.documentElement = makeNode('html');
@@ -122,7 +124,7 @@ function makeDevice(sid, seed, who) {
   /* 本机缓存的三个键（模拟「同一台机器重开」时原样搬过去） */
   device.snapshot = () => {
     const w = who || 'e2e', out = {};
-    ['jjhealth_auth_user', 'jjhealth_auth_role', 'jjhealth_v3:' + w, 'jjhealth_v3meta:' + w]
+    ['wefit_auth_user', 'wefit_auth_role', 'wefit_v3:' + w, 'wefit_v3meta:' + w]
       .forEach(k => { const v = ls.getItem(k); if (v !== null) out[k] = v; });
     return out;
   };
@@ -428,6 +430,60 @@ async function main() {
   ok('E15b 同一账户换设备/重载后打卡仍在（不被静默丢）',
     E.ev("!!(state.habits.find(h => h.id === '" + habitId + "') || {done:{}}).done['" + habitDay + "']") === true,
     'habits=' + E.ev('JSON.stringify(state.habits.map(h => [h.id, Object.keys(h.done)]))'));
+
+  /* ---------- v4.23：旧 localStorage 键（jjhealth_*）迁移到 wefit_* ---------- */
+  r = await raw('POST', '/api/register', { username: 'e2e9', password: 'secret123', name: '键名迁移' });
+  const sidH = r.sid;
+  const MIG = makeDevice(sidH, {
+    'jjhealth_view:e2e9': 'diet',
+    'jjhealth_v3meta:e2e9': JSON.stringify({ rev: 0, gen: 0 }),
+  }, 'e2e9', { legacyAuth: true });
+  await booted(MIG, 'MIG');
+  await sleep(200);
+  ok('E19a 旧登录键迁移：jjhealth_auth_* → wefit_auth_*（旧键已删除）',
+    MIG.ls.getItem('wefit_auth_user') === 'e2e9' && MIG.ls.getItem('jjhealth_auth_user') === null
+    && MIG.ls.getItem('wefit_auth_role') === 'user' && MIG.ls.getItem('jjhealth_auth_role') === null,
+    'user=' + MIG.ls.getItem('wefit_auth_user') + ' oldUser=' + MIG.ls.getItem('jjhealth_auth_user'));
+  ok('E19b 旧页面记忆迁移：jjhealth_view:* → wefit_view:*（刷新后仍回到原页面）',
+    MIG.ev('readView()') === 'diet' && MIG.ls.getItem('wefit_view:e2e9') === 'diet'
+    && MIG.ls.getItem('jjhealth_view:e2e9') === null,
+    'view=' + MIG.ls.getItem('wefit_view:e2e9') + ' oldView=' + MIG.ls.getItem('jjhealth_view:e2e9'));
+  ok('E19c 旧同步元数据迁移：jjhealth_v3meta:* → wefit_v3meta:*（旧键已删除）',
+    MIG.ls.getItem('jjhealth_v3meta:e2e9') === null && MIG.ls.getItem('wefit_v3meta:e2e9') !== null,
+    'oldMeta=' + MIG.ls.getItem('jjhealth_v3meta:e2e9'));
+
+  /* E19d：旧版留下的「带未推送改动的旧树」→ 新版重开迁移后仍能补推（不静默丢） */
+  r = await raw('POST', '/api/register', { username: 'e2e10', password: 'secret123', name: '旧树补推' });
+  const sidJ = r.sid;
+  const J1 = makeDevice(sidJ, null, 'e2e10');
+  await booted(J1, 'J1');
+  await sleep(150);
+  J1.ev("state.water['2099-06-06'] = 7; save(); if(srv.pushTimer){ clearTimeout(srv.pushTimer); srv.pushTimer = null; }");
+  ok('E19d0 造出旧版脏缓存：水片已脏、尚未推送',
+    J1.ev("(metaGet().dirtySlices||[]).indexOf('water:2099-06-06')") >= 0,
+    'dirty=' + J1.ev('JSON.stringify(metaGet().dirtySlices)'));
+  const legacyTree = J1.ls.getItem('wefit_v3:e2e10');
+  const legacyMeta = J1.ls.getItem('wefit_v3meta:e2e10');
+  r = await raw('GET', '/api/state', undefined, sidJ);
+  const uidJ = Object.keys(r.json.data.users)[0];
+  ok('E19d1 服务器上确实还没有这条记录', r.json.data.users[uidJ].water['2099-06-06'] === undefined,
+    JSON.stringify(r.json.data.users[uidJ].water));
+  const J2 = makeDevice(sidJ, {
+    'jjhealth_v3:e2e10': legacyTree,
+    'jjhealth_v3meta:e2e10': legacyMeta,
+  }, 'e2e10', { legacyAuth: true });
+  await booted(J2, 'J2');
+  await sleep(300);
+  await J2.ev('doPush()');
+  await sleep(700);
+  await J2.ev('doPush()');
+  r = await raw('GET', '/api/state', undefined, sidJ);
+  ok('E19d 旧树迁移后补推成功（离线编辑没被静默丢）',
+    r.json.data.users[uidJ].water['2099-06-06'] === 7
+    && J2.ev("state.water['2099-06-06']") === 7
+    && J2.ls.getItem('jjhealth_v3:e2e10') === null
+    && J2.ls.getItem('jjhealth_v3meta:e2e10') === null,
+    'server=' + JSON.stringify(r.json.data.users[uidJ].water) + ' dirty=' + J2.ev('JSON.stringify(metaGet().dirtySlices)'));
 
   console.log('---');
   console.log(failed === 0 ? '全部通过:' + passed + ' 项断言(真链路：app.js 同步层 × http 服务 × SQLite)'

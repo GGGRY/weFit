@@ -12,7 +12,7 @@
 - **前端** `public/`：`index.html` + `admin.html` + `css/style.css` + `js/app.js` + `js/seed-data.js` + `js/sleep-shape.js` + `js/slices.js`（+ `js/dev.js` 调试钩子，按需注入）。无构建、无外部依赖，样式/脚本/图标全内联
 - **后端** `server/`：Node 内置 `node:http` + `node:sqlite` + `node:crypto`，npm 依赖为零
 - **鉴权**：scrypt 密码哈希 + SQLite 持久会话（30 天）+ HttpOnly Cookie；除登录/注册/健康检查/静态页外全部 API 走鉴权中间件
-- **数据库** `server/data/jjhealth.db`：会增长的集合拆为 14 张关系表；profile/goal/nutrition 与个人食物/动作库等形状固定对象用 JSON 列整存保真
+- **数据库** `server/data/wefit.db`：会增长的集合拆为 14 张关系表；profile/goal/nutrition 与个人食物/动作库等形状固定对象用 JSON 列整存保真
 - **同步模型（v4.20 切片化）**：同一服务器 + 登录同一账户 = 同一份本人数据；不同账户彼此隔离；localStorage 只是按账户分键的离线缓存，服务器为准。同步粒度 = **片**（`(账户,date)` 或账户级固定块，契约见 `js/slices.js`）：写只写脏片、CAS 按片、冲突只冲突同片
 - **启动**：`./start.sh`（Linux/macOS）或双击 `start.bat`（Windows），端口 8123；手机同 Wi-Fi 访问 `http://<电脑IP>:8123`。legion 已配**开机自启**：systemd 用户单元 `~/.config/systemd/user/wefit.service`（样例 `deploy/wefit.user.service`）+ `loginctl enable-linger`，开机/无人登录也在后台跑；此时别再手动 `./start.sh`（会撞 8123 端口），改用 `systemctl --user stop/start/restart wefit`
 - **静态资源**：一律 `Cache-Control: no-cache` + `ETag`（大小+mtime），未改动回 `304`、改动即时生效（无构建/无版本号，靠 304 而非 `max-age`）；≥1KB 的文本响应走 gzip；`server.keepAliveTimeout` = 65s。ETag 含 mtime，**不要用「改内容不改 mtime」的方式写文件**
@@ -86,11 +86,11 @@
 - **管理后台** `public/admin.html`（`/admin`，页面公开但仅 admin 可用）：系统共享库编辑（食物/动作两子分页，草稿共用，保存 = 一次 PUT 整份，服务端 `sanitizeLibrary` 校验）+ 用户管理（**新建用户**（代建号，不受 `ALLOW_REGISTER` 影响、不下发会话 Cookie、可直建管理员）/列表/设为或撤销管理员（最后一个不可撤）/重置密码（强制下线）/删除账户（级联清数据，不可删自己或最后管理员））；role 每请求现查，被撤者后台立即 403 但用户端照常
 - **一账户一档案**，数据完全隔离；用户端零管理功能（admin 多一张「后台管理」卡）
 - **双层库**：系统共享库由管理员维护、普通用户只读；我的库**新账户注册时为空**（不拷贝系统库，客户端也不会拿种子填满），可增删改 + 从系统库挑入（按名去重）；系统库不追溯存量/新注册用户
-- 离线缓存按账户分键（`jjhealth_v3:<用户名>`）
+- 离线缓存按账户分键（`wefit_v3:<用户名>`；旧 `jjhealth_*` 键首次读取自动迁移并删除；新旧并存时旧树/meta 有未推送改动则旧键胜出，否则清旧键）
 
 ### 9. 数据与同步
 
-- 权威数据在 `server/data/jjhealth.db`；每次保存 = localStorage 即时落盘 + 600ms 防抖推送脏片（v4.20 起 `PUT /api/slices`，只发真正改过的那几片；值从本机树现取）
+- 权威数据在 `server/data/wefit.db`；每次保存 = localStorage 即时落盘 + 600ms 防抖推送脏片（v4.20 起 `PUT /api/slices`，只发真正改过的那几片；值从本机树现取）
 - 启动：探测登录态 → 读服务器本人数树（带全量切片 manifest 作基线）→ 不可达则降级读本账户缓存；注册即建档并自动登录
 - 离线：照常记录，每 30 秒自动重试，回线自动补推；离线期间关页后重开——服务器没动则静默补推，**只有「本机与服务器都改过的同一片」**才弹窗人工裁决，且只放弃/覆盖冲突片，其余本机改动照常上传
 - 冲突：片级 CAS（`user_slices.rev` = 该片最后一次改动时的全局 `users.rev`）；裁决逻辑收敛在 `converge()`（load / 30s 回线 / 409 三入口共用）。前端两份待推清单：`meta.dirtySlices`（与基线**有差异**的片，每次 save 重算，回退到原值即收回）与 `meta.pushSlices`（**必须推但与基线同形**的片：采纳时本机规范化补出的默认值、离线重开时转正的待推片、重挂回树的本机脏片），基线 rev 养在 `meta.dirtyRevs`
@@ -135,8 +135,8 @@ weFit/
 │  ├─ db.js                     #   node:sqlite 建表 + 幂等列迁移（14 张表，含 user_slices）
 │  ├─ mapper.js                 #   单人数树 ⇄ 关系表 + 逐片读写（不变量：PUT→GET 深度相等；整树与逐片两路写出的形状一致）
 │  ├─ seed.js                   #   系统库种子构建
-│  ├─ test/                     #   断言：roundtrip 121 · render 214 · admin 46 · migration 41 · slices 27 · sync-http 35 · sleep-shape 17，另有 fixture 与一次性维护脚本
-│  └─ data/jjhealth.db          #   SQLite（.gitignore 已排除）
+│  ├─ test/                     #   断言：roundtrip 121 · render 229 · admin 63 · migration 41 · slices 27 · sync-http 41 · sleep-shape 17 · auth-https 37，另有 fixture 与一次性维护脚本
+│  └─ data/wefit.db          #   SQLite（.gitignore 已排除）
 └─ MEMO.md
 ```
 
@@ -146,7 +146,7 @@ weFit/
 - **同步入口两套并存**：客户端日常走按片 `/api/slices`；`GET/PUT /api/state` 保留作兼容壳（旧客户端、备份导入、测试），整树 PUT 会把所有已知片的 rev 抬到新全局 rev
 - 数据同步仍以「单账户整棵子树」为原子边界（写路径只触碰自己那份）；按片只是在此之内把粒度收窄
 
-### 数据库（`server/data/jjhealth.db` · 建表与迁移见 `server/db.js`）
+### 数据库（`server/data/wefit.db` · 建表与迁移见 `server/db.js`）
 
 原则：会增长的集合拆为关系表；形状固定的小对象用 JSON 列整存；有数组语义处带 `seq` 保顺序；成员数据全部 `ON DELETE CASCADE`；迁移用 `PRAGMA table_info` 检查后 `ALTER TABLE ADD COLUMN`。`db.js` 内的破坏性重置（运动项由 `sets` 拍平为列、计划与记录合并为一天一条）判据跑过一次即永假；另有一次性就地补列（`workout_items.done`，不动 rev、只回填一次）。
 
@@ -185,10 +185,10 @@ weFit/
 - **电脑端**：`http://localhost:8123` → 注册（第一个账户 = 管理员）→ 登录即用；**手机端**：同 Wi-Fi 打开启动窗口显示的 `http://<电脑IP>:8123`，各人注册/登录自己的账户
 - **管理后台**：`http://<服务器>:8123/admin`，仅管理员可用（普通账户见「无管理权限」）
 - **公网部署**：见 README「公网部署（HTTPS 反代）」；上线后启动日志会打印 `HTTPS/Cookie Secure … · 注册开放/已关闭`，据此确认配置生效；默认口径（不设任何环境变量）下本地/局域网明文访问行为与以前完全一致
-- **换电脑**：整个文件夹拷走（OneDrive 同步即等价），`server/data/jjhealth.db` 就是全部数据
-- **跑测试**：`cd server && npm test`（sleep-shape 17 + slices 27 + migration 41 + roundtrip 121 + admin 46 + render 214 + sync-http 35 项断言）；浏览器 `?ftest` 15 项功能自测（会覆盖为演示数据）
+- **换电脑**：整个文件夹拷走（OneDrive 同步即等价），`server/data/wefit.db` 就是全部数据
+- **跑测试**：`cd server && npm test`（sleep-shape 17 + slices 27 + migration 41 + roundtrip 121 + admin 63 + auth-https 37 + render 229 + sync-http 41 项断言）；浏览器 `?ftest` 15 项功能自测（会覆盖为演示数据）
 - **同步回归**：`test/sync-http.test.js` = **真链路**端到端（真 `app.js` 同步层 × 真 http 服务 × 真 SQLite，两个 vm 「设备」各带自己的 localStorage 与 Cookie），守「改不同片不互相覆盖 / 只拉变过的片 / 同片冲突只冲突同片 / 旧缓存走整树 PUT 迁移」
 - **渲染回归**：`test/render.test.js`（零依赖 `node:vm` + DOM/fetch 桩）守「数据 → 页面 HTML」，布局/配色等视觉表现仍靠目测
-- **备份/回滚**：`server/data/jjhealth.db.bak-<日期>-<主题>` 是逐次留的库备份；**agent 在会让启动跑迁移的重启前必须先新备一份**（见 AGENTS.md）；回滚 = 停服务 → 用 `.bak` 覆盖 `jjhealth.db` → 启服务。目录不在同步盘里，**没有云端版本历史兜底**
-- **清零重来**：设置页 → 数据管理 → 清空数据（仅本账户，先导出留底）；全库重来 = 停服务后删 `server/data/jjhealth.db`
+- **备份/回滚**：`server/data/wefit.db.bak-<日期>-<主题>` 是逐次留的库备份；**agent 在会让启动跑迁移的重启前必须先新备一份**（见 AGENTS.md）；回滚 = 停服务 → 用 `.bak` 覆盖 `wefit.db` → 启服务。目录不在同步盘里，**没有云端版本历史兜底**
+- **清零重来**：设置页 → 数据管理 → 清空数据（仅本账户，先导出留底）；全库重来 = 停服务后删 `server/data/wefit.db`
 - **忘记密码**：找管理员在后台「重置密码」；管理员全失联则停服务删库重来（最后手段）

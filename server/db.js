@@ -9,7 +9,7 @@ const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 const { seedLibrary } = require('./seed');
 
-const DEFAULT_DB = path.join(__dirname, 'data', 'jjhealth.db');
+const DEFAULT_DB = path.join(__dirname, 'data', 'wefit.db');
 
 /* 关系表设计：
  * - app：单行全局配置（v4.3 起仅存 system_json；旧版 theme/onboarded/active_user_id/rev

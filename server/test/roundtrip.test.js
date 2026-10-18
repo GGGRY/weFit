@@ -12,7 +12,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 /* 临时数据库,必须在 require('../server') 之前设置 */
-const TMP_DB = path.join(os.tmpdir(), 'jjhealth-test-' + process.pid + '.db');
+const TMP_DB = path.join(os.tmpdir(), 'wefit-test-' + process.pid + '.db');
 try { fs.rmSync(TMP_DB, { force: true }); } catch (e) {}
 process.env.DB_PATH = TMP_DB;
 

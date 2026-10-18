@@ -283,9 +283,42 @@ async function main() {
    * 刷新保持页面的真实路径 = startMain 结尾 go(readView()),此处验纯函数与键名口径 */
   ok('T2b 导航落盘 + readView 还原(非法值回退概览)',
      ev('readView()') === 'settings' && ev('localStorage.getItem(viewKey())') === 'settings'
-     && ev("localStorage.setItem('jjhealth_view:tester','diet'); readView()") === 'diet'
-     && ev("localStorage.setItem('jjhealth_view:tester','bogus'); readView()") === 'home',
+     && ev("localStorage.setItem('wefit_view:tester','diet'); readView()") === 'diet'
+     && ev("localStorage.setItem('wefit_view:tester','bogus'); readView()") === 'home',
      'readView=' + ev('readView()'));
+
+  /* T2b2 v4.23 键名迁移:旧 jjhealth_view:<用户> 首次读取时搬到 wefit_view:<用户> 并删除旧键 */
+  ev("localStorage.removeItem('wefit_view:tester'); localStorage.setItem('jjhealth_view:tester','diet')");
+  ok('T2b2 旧键迁移(页面记忆)',
+     ev('readView()') === 'diet' && ev("localStorage.getItem('wefit_view:tester')") === 'diet'
+     && ev("localStorage.getItem('jjhealth_view:tester')") === null,
+     'new=' + ev("localStorage.getItem('wefit_view:tester')") + ' old=' + ev("localStorage.getItem('jjhealth_view:tester')"));
+
+  /* T2b3 旧键迁移(离线树 + 同步元数据):storeKey()/metaKey() 读取即迁移 */
+  ev("localStorage.removeItem(storeKey()); localStorage.removeItem(metaKey())");
+  ev("localStorage.setItem('jjhealth_v3:tester','{\"mark\":\"tree\"}'); localStorage.setItem('jjhealth_v3meta:tester','{\"rev\":1,\"gen\":0}')");
+  ok('T2b3 旧键迁移(离线树 + 同步元数据)',
+     ev("localStorage.getItem(storeKey())") === '{"mark":"tree"}'
+     && ev("JSON.parse(localStorage.getItem(metaKey())).rev") === 1
+     && ev("localStorage.getItem('jjhealth_v3:tester')") === null
+     && ev("localStorage.getItem('jjhealth_v3meta:tester')") === null,
+     'tree=' + ev("localStorage.getItem(storeKey())"));
+
+  /* T2b4 v4.23 新旧键并存:旧树/meta 带未推送改动 → 旧键胜出(旧页签或回退版本的离线编辑不丢) */
+  ev("localStorage.setItem('wefit_v3:tester','{\"mark\":\"new\"}'); localStorage.setItem('wefit_v3meta:tester','{\"rev\":2,\"gen\":0}')");
+  ev("localStorage.setItem('jjhealth_v3:tester','{\"mark\":\"old-dirty\"}'); localStorage.setItem('jjhealth_v3meta:tester','{\"rev\":2,\"gen\":0,\"dirtySlices\":[\"water:2099-01-01\"]}')");
+  ok('T2b4 新旧键并存 + 旧树有未推送改动 → 旧树/旧 meta 胜出并清旧键',
+     ev("localStorage.getItem(storeKey())") === '{"mark":"old-dirty"}'
+     && ev("(JSON.parse(localStorage.getItem(metaKey())).dirtySlices||[])[0]") === 'water:2099-01-01'
+     && ev("localStorage.getItem('jjhealth_v3:tester')") === null
+     && ev("localStorage.getItem('jjhealth_v3meta:tester')") === null,
+     'tree=' + ev("localStorage.getItem(storeKey())"));
+
+  /* T2b5 新旧键并存但旧键无待推改动 → 保留新键、清掉孤儿旧键 */
+  ev("localStorage.setItem('wefit_probe','new'); localStorage.setItem('jjhealth_probe','old'); lsMigrate('wefit_probe','jjhealth_probe')");
+  ok('T2b5 新旧键并存 + 旧键无待推改动 → 新键保留、旧键清理',
+     ev("localStorage.getItem('wefit_probe')") === 'new' && ev("localStorage.getItem('jjhealth_probe')") === null,
+     'new=' + ev("localStorage.getItem('wefit_probe')"));
 
   /* T2g v4.15 数据管理子页面（食物库/动作库）的导航语义：不占侧栏/底栏项，借父级 settings 高亮，
    * 落盘也记 settings —— 刷新后落回设置页，而不是停在一个「返回」无处可去的半截子页 */

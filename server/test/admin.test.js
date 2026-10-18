@@ -11,7 +11,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const TMP_DB = path.join(os.tmpdir(), 'jjhealth-admin-test-' + process.pid + '.db');
+const TMP_DB = path.join(os.tmpdir(), 'wefit-admin-test-' + process.pid + '.db');
 try { fs.rmSync(TMP_DB, { force: true }); } catch (e) {}
 process.env.DB_PATH = TMP_DB;
 

@@ -43,11 +43,20 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp
 const fmtDate = ms => new Date(ms).toLocaleDateString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit' });
 
 /* 主题:跟随上次选择在两个账户态间保持一致 */
-document.documentElement.setAttribute('data-theme', localStorage.getItem('jjhealth_admin_theme') || 'light');
+const THEME_KEY = 'wefit_admin_theme';
+/* v4.23:旧键 jjhealth_admin_theme → wefit_admin_theme(一次性迁移;新旧并存时保留新键并清掉旧键,与 app.js 同规则) */
+try {
+  const old = localStorage.getItem('jjhealth_admin_theme');
+  if(old !== null){
+    if(localStorage.getItem(THEME_KEY) === null) localStorage.setItem(THEME_KEY, old);
+    localStorage.removeItem('jjhealth_admin_theme');
+  }
+} catch(e){}
+document.documentElement.setAttribute('data-theme', localStorage.getItem(THEME_KEY) || 'light');
 function toggleTheme(){
   const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', next);
-  localStorage.setItem('jjhealth_admin_theme', next);
+  localStorage.setItem(THEME_KEY, next);
   const b = $('#thBtn'); if(b) b.textContent = next === 'dark' ? '☀️ 浅色' : '🌙 深色';
 }
 function toast(msg, isErr){

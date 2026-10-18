@@ -3,7 +3,7 @@
 ## 硬约束
 - 零依赖全栈:前端无构建、后端只用 Node 内置模块。未经用户明确要求,禁止新增任何 npm 依赖或引入构建工具。
 - 约束边界:上述规则只管**运行产物**(`public/` 与 `server/` 执行路径);`server/test/` 下的验证工具不受限,为自动化验证添加工具无需逐次确认(用户裁定 2026-09-06)。
-- `server/data/jjhealth.db` 是用户真实数据,禁止直接改动、清空或迁移。
+- `server/data/wefit.db` 是用户真实数据,禁止直接改动、清空或迁移。
 
 ## 常用命令
 - 启动:`./start.sh`(端口 8123);测试:`cd server && npm test`。
@@ -32,7 +32,7 @@
 
 ## 每次修改后必做
 - 改完服务端/前端代码,部署必须走「停服务 → 启服务 → 全端刷新」再验证;禁止新旧进程混跑测试(整树 PUT 会互相覆盖丢数据)。
-- **重启前先备份真实库**:任何会让服务端启动时跑建表/迁移的重启(改 `db.js`/SCHEMA/迁移,或自己不确定),先留一份带日期的备份——`cp --preserve server/data/jjhealth.db server/data/jjhealth.db.bak-YYYYMMDD-<topic>`(服务在跑时用 `VACUUM INTO '...'` 取一致快照更好,它只写目标文件、不碰源库)。理由:`server/data/jjhealth.db` 是唯一一份真实数据,这个目录**不在** OneDrive 等同步盘里,没有云端版本历史可回退;回滚 = 停服务 → 用 `.bak` 覆盖 `jjhealth.db` → 启服务。
+- **重启前先备份真实库**:任何会让服务端启动时跑建表/迁移的重启(改 `db.js`/SCHEMA/迁移,或自己不确定),先留一份带日期的备份——`cp --preserve server/data/wefit.db server/data/wefit.db.bak-YYYYMMDD-<topic>`(服务在跑时用 `VACUUM INTO '...'` 取一致快照更好,它只写目标文件、不碰源库)。理由:`server/data/wefit.db` 是唯一一份真实数据,这个目录**不在** OneDrive 等同步盘里,没有云端版本历史可回退;回滚 = 停服务 → 用 `.bak` 覆盖 `wefit.db` → 启服务。
 - 静态资源已带 `ETag`+`Cache-Control: no-cache`:刷新时自动 304 复用,**改完前端不需要手动清缓存/加版本号**;但服务端 `serveStatic` 的内存缓存 key = (size, mtime),别用「改内容不改 mtime」的方式写文件。
 - 浏览器侧**不加载**种子数据本体：`SEED_FOODS`/`SEED_EXERCISES`/`seed-data.json` 只归服务端（`server/seed.js`）；用户端要系统库走 `GET /api/system/library`；调试钩子（`?selftest`/`?ftest`/`?shot`/`?probe`）与演示数据住在 `public/js/dev.js`，按需注入（要改演示库就改 dev.js 里的 `DEMO_FOODS`/`DEMO_EXERCISES`），不要把这些加回 app.js。
 - **同步切片的规则只写一份**：哪一块状态算哪片、值长什么样、怎么读怎么写，全部住在 `public/js/slices.js`（浏览器先于 app.js 加载 + `mapper.js` require）。新增字段/新集合时：先决定它属于哪片（无特殊理由就放进 `profile` 那片）→ 两边共用 `sliceValue`/`writeSlice` → 再让 `mapper.js` 的逐片 SQL 读写跟上；**禁止**在服务端另抄一份切片边界或在客户端手写脏标记（写入口有几十处，漏一处就是静默不同步）。
