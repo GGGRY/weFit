@@ -61,6 +61,17 @@ HOST=127.0.0.1 TRUST_PROXY=1 ALLOW_REGISTER=0 node server.js   # 或改 deploy/w
 
 **上线后维护**：新增账户走管理后台「用户管理 → 新建用户」（不受关注册影响，公网部署下就是唯一建号入口）；数据库定时备份见 MEMO.md 使用备忘（`VACUUM INTO` 取一致快照）。
 
+**日常升级 / 回滚**（在服务器上执行，脚本随仓库更新）：
+
+```bash
+sudo /opt/wefit/deploy/update.sh                  # 备份库 → git pull --ff-only → 重启 → /api/health 检查
+sudo /opt/wefit/deploy/rollback.sh --list         # 查看可回滚的版本标签与最近的数据库备份
+sudo /opt/wefit/deploy/rollback.sh v4.23          # 只回滚代码
+sudo /opt/wefit/deploy/rollback.sh v4.23 --restore-db /var/backups/wefit/wefit-xxx.db   # 代码 + 数据库一起恢复
+```
+
+默认路径与 `deploy/wefit.service` 一致（`/opt/wefit`、`/var/lib/wefit/wefit.db`、服务名 `wefit`、备份目录 `/var/backups/wefit`），可用同名环境变量覆盖；数据库备份用内置 `node:sqlite` 的 `VACUUM INTO`，不依赖系统 `sqlite3` 命令。升级脚本会拒绝有未提交修改的代码目录，并在 `db.js`/`seed.js` 变更（启动时跑迁移）时提示；**发版前的 `npm test` 必须在开发机上跑**，脚本只负责上云后的拉取与重启。
+
 ## 账户与数据隔离
 
 - 打开页面需**注册/登录**，每个账户只看得见、改得动自己的数据；多人同时使用互不影响。

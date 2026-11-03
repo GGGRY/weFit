@@ -4,6 +4,10 @@
 > 未标版号的改动先放文件最前的「未标版号」块；下次升版号时整体并入新版号、去掉该块。
 > 每条只写摘要要点，理由与实测细节看 git 历史。
 
+## 未标版号（下次升版号时并入下方版本）
+
+- **云端升级/回滚脚本**：新增 `deploy/update.sh`（备份库 → `git pull --ff-only` → 重启 → `/api/health` 检查；拒绝脏工作区、`db.js`/`seed.js` 变更提示、备份保留 30 份）与 `deploy/rollback.sh`（按 tag/commit 回滚代码，`--restore-db` 可连库恢复到指定备份并清理 WAL，回滚前自动再备份当前库），共用 `deploy/_common.sh`（默认路径与 `wefit.service` 一致，可用环境变量覆盖；备份走内置 `node:sqlite` 的 `VACUUM INTO`）。README「公网部署」补升级维护说明。纯部署工具，运行产物不变。
+
 ## v4.23（2026-10-18）— 应用更名收尾（jjhealth → weFit）+ 部署与界面收尾
 
 - **应用更名收尾（jjhealth → weFit）**：localStorage 键 `jjhealth_*` → `wefit_*`（登录态/离线树/同步元数据/页面记忆，首次读取时一次性迁移并删旧键；新旧键并存时旧树/meta 若带未推送改动则旧键胜出、否则清孤儿旧键；后台主题键同理）；真实库 `jjhealth.db` → `wefit.db`（15 个历史 `.bak` 一并改名，改前备份 `wefit.db.bak-20261018-prefix-rename`）；`db.js` 默认库名、部署样例 `DB_PATH`（含旧库改名提示）、包名 `wefit-server`、Windows 窗口标题、测试临时库名与文档引用同步。旧键名只留在迁移代码、迁移测试与历史记录中。`npm test` 全套全绿（`render` 229、`sync-http` 41，含新增迁移断言 E19a–d / T2b2–5）。
