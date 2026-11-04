@@ -26,49 +26,13 @@ loginctl enable-linger $USER                 # 未启用此项时,无用户登�
 
 常用维护命令:`systemctl --user status wefit` 查看服务状态,`journalctl --user -u wefit -f` 查看日志,`systemctl --user stop wefit` 停止服务。需要临时手动启动服务前,请先停止该单元以避免端口冲突。
 
-此方案仅适用于局域网访问(监听 `0.0.0.0:8123`),未配置 HTTPS 且保持注册开放,只适合家庭或可信网络环境。公网部署请采用下文反代方案并关闭注册。
+此方案仅适用于局域网访问(监听 `0.0.0.0:8123`),未配置 HTTPS 且保持注册开放,只适合家庭或可信网络环境。公网部署请参见 `DEPLOY.md`(反向代理 + 关闭注册 + 回环监听)。
 
-## 公网部署(HTTPS 反向代理)
+## 公网部署
 
-weFit 服务本身不处理 TLS:建议将 443 端口交由反向代理(Caddy 或 nginx),weFit 仅监听回环地址。仓库提供两份可直接使用的配置样例:`deploy/Caddyfile`(Caddy 自动申请并续期证书)与 `deploy/wefit.service`(systemd 服务单元)。
+公网访问由反向代理(Caddy 或 nginx)终止 HTTPS,weFit 仅监听回环地址;仓库提供 `deploy/Caddyfile` 与 `deploy/wefit.service` 两份可直接使用的样例。
 
-```bash
-# 1) 配置反向代理(将 Caddyfile 中的域名替换为实际域名,并确保域名解析至本机、80/443 端口可达)
-sudo cp deploy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
-# 2) 服务仅监听回环,采信反向代理请求头,并关闭注册
-HOST=127.0.0.1 TRUST_PROXY=1 ALLOW_REGISTER=0 node server.js   # 或修改 deploy/wefit.service 后执行 systemctl enable --now wefit
-# 3) 防火墙仅放行 80 与 443 端口,8123 端口不得暴露于公网
-```
-
-启动日志会打印当前配置口径,例如 `HTTPS/Cookie Secure auto(信 X-Forwarded-Proto) · 注册已关闭`,便于核对配置是否生效。
-
-| 环境变量 | 默认 | 说明 |
-| --- | --- | --- |
-| `COOKIE_SECURE` | `auto` | `auto` 表示仅当 `TRUST_PROXY=1` 且反向代理上报 `X-Forwarded-Proto: https` 时,为会话 Cookie 添加 `Secure` 属性;`1` 强制添加,`0` 强制不添加 |
-| `TRUST_PROXY` | 关闭 | 置 `1` 后才会采信 `X-Forwarded-Proto` 与 `X-Forwarded-For`。反向代理对 `X-Forwarded-For` 通常是追加而非覆写,因此服务端只取最后一段(最近一跳受信反代所添加)。若取第一段,攻击者可携带随机前缀扰乱限速分桶、绕过登录限速。样例 Caddyfile 已显式覆写该头,两侧口径一致 |
-| `ALLOW_REGISTER` | 开启 | 置 `0` 关闭注册(返回 403 `register_closed`)。公网部署必须关闭:首个注册账户自动获得管理员权限,开放注册等于向任意访客暴露管理权限 |
-| `LOGIN_MAX_FAILS` / `LOGIN_MAX_FAILS_IP` | 5 / 20 | 同一来源对同一账户 / 同一来源对任意账户的失败次数上限,达到上限后封锁该来源 `LOGIN_BLOCK_MS`(默认 15 分钟),返回 429 与 `Retry-After` |
-| `LOGIN_WINDOW_MS` / `LOGIN_BLOCK_MS` | 15 分钟 / 15 分钟 | 失败次数统计窗口与封锁时长 |
-| `HOST` / `PORT` / `DB_PATH` | `0.0.0.0` / `8123` / `server/data/wefit.db` | 监听地址、端口与数据库路径;`DB_PATH` 应指向纳入备份范围的持久化位置 |
-
-> 本地与局域网的明文 HTTP 访问不受上述安全配置影响:默认口径下,明文 HTTP 的会话 Cookie 不添加 `Secure` 属性,`./start.sh` 与同网设备访问方式保持不变。仅显式设置 `COOKIE_SECURE=1` 会使明文 HTTP 无法登录,启动日志会输出相应警告。
-
-**首次公网上线步骤**:先在本地环境注册管理员账户(首个注册账户即为管理员),核对数据无误;随后停止服务并备份 `server/data/wefit.db`;按上文三步启动反向代理与服务(设置 `ALLOW_REGISTER=0`);最后分别在浏览器与移动设备登录,验证多端同步。
-
-**验收检查**:`curl -I https://<域名>/api/health` 应返回 200;`curl -I http://<域名>/` 应 301 重定向至 HTTPS;使用真实账户调用 `curl -sv -X POST https://<域名>/api/login -d '{"username":"<用户名>","password":"<密码>"}' -H 'Content-Type: application/json'`,响应头 `Set-Cookie` 应包含 `Secure` 属性(登录失败时不下发 Cookie,须以有效账户验证)。另可验证限速分桶仅依据最后一段地址:连续发送带有不同伪造前缀、相同末段的请求(如 `-H 'X-Forwarded-For: 1.1.1.$i, <真实IP>'`),失败计数应稳定累计并最终返回 429,而不会每次被判别为新来源。
-
-**上线后维护**:新增账户通过管理后台「用户管理 → 新建用户」创建,不受关闭注册的影响,公网部署下这是唯一的建号入口;数据库定时备份方式见 MEMO.md 使用备忘(以 `VACUUM INTO` 获取一致性快照)。
-
-**日常升级与回滚**(在服务器上执行,脚本随仓库一同更新):
-
-```bash
-sudo /opt/wefit/deploy/update.sh                  # 备份数据库 → git pull --ff-only → 重启服务 → /api/health 检查
-sudo /opt/wefit/deploy/rollback.sh --list         # 查看可回滚的版本标签与最近的数据库备份
-sudo /opt/wefit/deploy/rollback.sh v4.23          # 仅回滚代码
-sudo /opt/wefit/deploy/rollback.sh v4.23 --restore-db /var/backups/wefit/wefit-xxx.db   # 同时恢复代码与数据库
-```
-
-默认路径与 `deploy/wefit.service` 保持一致(`/opt/wefit`、`/var/lib/wefit/wefit.db`、服务名 `wefit`、备份目录 `/var/backups/wefit`),可通过同名环境变量覆盖。数据库备份使用 Node.js 内置 `node:sqlite` 的 `VACUUM INTO`,不依赖系统 `sqlite3` 命令。升级脚本会拒绝对存在未提交修改的代码目录执行,并在 `db.js` 或 `seed.js` 发生变更(涉及启动时迁移)时给出提示。发版前的 `npm test` 应在开发机上完成,本脚本仅负责服务器端的代码拉取与服务重启。
+**首次上线、日常升级、回滚、备份与故障排查的完整步骤,见 [`DEPLOY.md`](DEPLOY.md)。**
 
 ## 账户与数据隔离
 
@@ -90,6 +54,7 @@ sudo /opt/wefit/deploy/rollback.sh v4.23 --restore-db /var/backups/wefit/wefit-x
 - `public/` 前端,无构建步骤:`index.html`、`admin.html`、`css/style.css`、`js/seed-data.js`、`js/sleep-shape.js`、`js/app.js`;`js/dev.js` 为调试钩子,仅在 URL 携带对应参数时按需加载
 - `server/` 后端;`server/data/wefit.db` 为 SQLite 数据库,全部业务数据存放于此
 - `deploy/` 部署配置与运维脚本:`Caddyfile`(反向代理)、`wefit.service`(systemd 服务单元)、`wefit.user.service`(用户级自启单元)、`update.sh` 与 `rollback.sh`(升级 / 回滚)、`_common.sh`(脚本公共逻辑)
+- `DEPLOY.md` 云端部署与运维手册(首次上线、升级、回滚、备份、故障排查)
 - `MEMO.md` 项目备忘录(架构、功能、技术债、使用备忘)
 - `CHANGELOG.md` 版本变更日志
 - `PLANS.md` 后续开发计划建议
