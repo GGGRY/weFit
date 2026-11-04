@@ -146,9 +146,14 @@ async function main() {
     r.status === 403 && r.json.error === 'register_closed' && !r.setCookie, 'status=' + r.status);
   r = await req(base, 'POST', '/api/login', { username: 'bob', password: 'hunter456' });
   ok('D2 关注册不影响已有账户登录', r.status === 200);
+  r = await req(base, 'GET', '/api/health');
+  ok('D2b /api/health 带 register_open=false（登录页据此隐藏注册入口）',
+    r.status === 200 && r.json.register_open === false, JSON.stringify(r.json));
   process.env.ALLOW_REGISTER = '1';
   r = await req(base, 'POST', '/api/register', { username: 'carol', password: 'carol123', name: '卡' });
   ok('D3 恢复开放后注册正常', r.status === 201);
+  r = await req(base, 'GET', '/api/health');
+  ok('D3b /api/health 带 register_open=true', r.status === 200 && r.json.register_open === true, JSON.stringify(r.json));
   delete process.env.ALLOW_REGISTER;
 
   /* ---------- E. 登录失败限速（HTTP 接线） ---------- */

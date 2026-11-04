@@ -610,7 +610,8 @@ async function handle(db, req, res) {
     /* ---- 公开端点 ---- */
     if (req.method === 'GET' && pathname === '/api/health') {
       const accounts = db.prepare('SELECT COUNT(*) AS n FROM accounts').get().n;
-      sendJson(res, 200, { ok: true, accounts, auth: true });
+      /* register_open 供登录页探测：关闭注册时前端隐藏「注册新账户」入口（服务端 403 仍是最终闸门） */
+      sendJson(res, 200, { ok: true, accounts, auth: true, register_open: allowRegister() });
       return;
     }
     if (req.method === 'POST' && pathname === '/api/register') {

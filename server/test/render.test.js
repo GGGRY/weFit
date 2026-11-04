@@ -95,6 +95,7 @@ const SLICE_PUSHES = [];
 let CONFIRM_CALLS = 0;     /* 断言用：弹了几次人工裁决 */
 let CONCURRENT_WRITE = null;   /* 测试用：在 keys 请求返回前插一次「别的设备的写」 */
 let FAIL_NEXT_PUSH = null;     /* 测试用：让下一次 PUT /api/slices 返回指定状态码（验 5xx 不当 fatal） */
+let HEALTH_REGISTER_OPEN = true;  /* 测试用：/api/health 桩返回的 register_open（T21 登录页注册入口） */
 const LEGACY_PUTS = [];    /* 整树 PUT /api/state 的请求体（旧缓存迁移路径） */
 const MANIFEST = {};
 const SLICE_VALUES = {};
@@ -157,6 +158,7 @@ async function fakeFetch(url, opts) {
     exercises: [{ id:'se1', name:'杠铃卧推', cat:'力量', muscle:'胸', mode:'reps' }, { id:'se2', name:'系统专属动作', cat:'力量', muscle:'腿', mode:'reps' }],
   });
   if (m === 'PUT' && u.endsWith('/api/state')) return res(200, { ok: true, rev: 2 });
+  if (m === 'GET' && u.endsWith('/api/health')) return res(200, { ok: true, accounts: 1, auth: true, register_open: HEALTH_REGISTER_OPEN });
   return res(404, { error: 'not_found' });
 }
 
@@ -2029,6 +2031,29 @@ async function main() {
   await ev('retrySync()');
   ok('T20o2 下一轮就把它拉回来了', ev("state.water['2099-10-10']") === 10,
     'rev=' + ev('srv.rev') + ' serverRev=' + SERVER_REV + ' got10=' + ev("state.water['2099-10-10']"));
+
+  /* ---------- T21 登录页注册入口跟随 /api/health 的 register_open（v4.24 未标版号：
+   * 云端 ALLOW_REGISTER=0 部署时隐藏「注册新账户」，只剩登录表单；服务端 403 仍是最终闸门）。
+   * 桩 DOM 的 remove() 是 no-op，gate 节点会留在 body.children 里，取最后一个 auth-card 断言。 ---------- */
+  const latestGateHTML = () => {
+    const cs = doc.body.children.filter(c => c.__html && c.__html.includes('auth-card'));
+    return cs.length ? cs[cs.length - 1].__html : '';
+  };
+  ev('registerOpen = null');
+  await ev('showAuth()');
+  ok('T21 register_open=true → 登录页显示「注册新账户」入口',
+    latestGateHTML().includes('注册新账户'), latestGateHTML().slice(0, 120));
+  ev('hideAuth()');
+  HEALTH_REGISTER_OPEN = false;
+  ev('registerOpen = null');
+  await ev('showAuth()');
+  const closedGate = latestGateHTML();
+  ok('T21b register_open=false → 登录页隐藏注册入口，只剩登录表单',
+    !closedGate.includes('注册新账户') && closedGate.includes('auth-logo') && closedGate.includes('ag_go'),
+    closedGate.slice(0, 160));
+  ev('hideAuth()');
+  HEALTH_REGISTER_OPEN = true;
+  ev('registerOpen = null');
 
   finish();
 }

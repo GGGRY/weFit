@@ -4836,15 +4836,29 @@ async function apiMe(){
     return 'authed';
   } catch(e){ return 'offline'; }
 }
-function showAuth(offlineNote){
+/* 注册是否开放：登录页渲染前探测 /api/health 的 register_open（公网部署 ALLOW_REGISTER=0）。
+ * 探测失败（离线/旧服务端）按开放显示——提交时服务端 403「本站已关闭注册」仍是最终闸门。 */
+let registerOpen = null;
+async function probeRegisterOpen(){
+  if(registerOpen !== null) return registerOpen;
+  try {
+    const r = await fetch('/api/health');
+    if(!r.ok) return true;
+    const j = await r.json();
+    registerOpen = j.register_open !== false;
+  } catch(e){ return true; }
+  return registerOpen;
+}
+async function showAuth(offlineNote){
   hideAuth();
+  const regOpen = await probeRegisterOpen();
   const el = document.createElement('div');
   el.id = 'authgate'; el.className = 'authgate';
   el.innerHTML =
     '<div class="auth-card">' +
       '<div class="auth-logo"><div class="logo">💪</div>健康管理</div>' +
       '<div class="auth-sub">登录你的账户 · 数据只属于你，其他账户互不可见</div>' +
-      '<div class="auth-seg"><button data-m="login" class="active">登录</button><button data-m="reg">注册新账户</button></div>' +
+      (regOpen ? '<div class="auth-seg"><button data-m="login" class="active">登录</button><button data-m="reg">注册新账户</button></div>' : '') +
       '<div class="field"><label>用户名</label><input class="input" id="ag_u" autocomplete="username" placeholder="字母/数字/下划线，2-32 位"></div>' +
       '<div class="field hidden" id="ag_namewrap"><label>昵称</label><input class="input" id="ag_n" placeholder="显示用的名字，如：小爱"></div>' +
       '<div class="field"><label>密码</label><input class="input" id="ag_p" type="password" autocomplete="current-password" placeholder="至少 6 位"></div>' +
