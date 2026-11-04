@@ -1,4 +1,8 @@
 /* ============ 主题变量 ============ */
+/* 品牌标志 W 字形（内联 SVG，与两页 favicon 同一套 64×64 坐标）：
+   .logo 徽章 = 这层字形 + 下面各规则的品牌绿渐变底，改标志只改这里和 index.html / admin.html 的 link rel="icon"。
+   注意 data URI 里的 # 必须写成 %23，否则浏览器把它当 fragment 截断。 */
+:root{--logo-glyph:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><path d='M17 21L25 44L32 28L39 44L47 21' fill='none' stroke='%23fff' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/></svg>")}
 :root[data-theme="light"]{
   color-scheme: light;
   --bg:#f2f4f1;            /* 页面底色 */
@@ -70,8 +74,10 @@ a{color:var(--brand-ink)}
   border-right:1px solid var(--line);background:var(--bg);
 }
 .brand{display:flex;align-items:center;gap:10px;padding:6px 10px 18px;font-weight:800;font-size:18px}
-.brand .logo{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--brand),#0a5c43);
-  display:grid;place-items:center;font-size:18px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.25)}
+.brand .logo{width:34px;height:34px;border-radius:10px;flex:none;
+  background-image:var(--logo-glyph),linear-gradient(135deg,var(--brand),#0a5c43);
+  background-size:100% 100%;background-repeat:no-repeat;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.25)}
 .brand small{display:block;font-weight:500;font-size:11px;color:var(--ink-3)}
 .navgroup{font-size:11px;letter-spacing:.08em;color:var(--ink-3);padding:14px 10px 6px;text-transform:uppercase}
 .navbtn{
@@ -431,8 +437,10 @@ body.hcard-dragging input,body.hcard-dragging textarea{user-select:text;-webkit-
 .auth-card{width:100%;max-width:380px;background:var(--surface);border:1px solid var(--line);border-radius:20px;
   box-shadow:var(--shadow);padding:26px 24px 22px;animation:dlgIn .25s ease}
 .auth-logo{display:flex;align-items:center;gap:10px;justify-content:center;margin-bottom:4px;font-size:22px;font-weight:800}
-.auth-logo .logo{width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,var(--brand),#0a5c43);
-  display:grid;place-items:center;font-size:21px;color:#fff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.25)}
+.auth-logo .logo{width:40px;height:40px;border-radius:12px;flex:none;
+  background-image:var(--logo-glyph),linear-gradient(135deg,var(--brand),#0a5c43);
+  background-size:100% 100%;background-repeat:no-repeat;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.25)}
 .auth-sub{text-align:center;color:var(--ink-3);font-size:12.5px;margin:2px 0 16px}
 .auth-seg{display:flex;background:var(--surface-3);border-radius:11px;padding:3px;gap:2px;margin-bottom:16px}
 .auth-seg button{flex:1;border:0;background:transparent;color:var(--ink-2);padding:7px 0;border-radius:9px;font-size:14px;font-weight:600}

@@ -1602,7 +1602,7 @@ function rebuildNav(){
     return '<div class="navbtn ' + (active===id?'active':'') + '" data-go="' + id + '"><span class="ic">' + n.ic + '</span>' + esc(n.label) + '</div>';
   }).join('');
   $('#sidebar').innerHTML =
-    '<div class="brand"><div class="logo">💪</div><div>健康管理<small>我的健身日记</small></div></div>' +
+    '<div class="brand"><div class="logo" aria-hidden="true"></div><div>健康管理<small>我的健身日记</small></div></div>' +
     '<div class="navgroup">主页</div>' + render(group1) +
     '<div class="navgroup">记录</div>' + render(group2) +
     '<div class="navgroup">分析 · 设置</div>' + render(group3) +
@@ -4859,7 +4859,7 @@ async function showAuth(offlineNote){
   el.id = 'authgate'; el.className = 'authgate';
   el.innerHTML =
     '<div class="auth-card">' +
-      '<div class="auth-logo"><div class="logo">💪</div>健康管理</div>' +
+      '<div class="auth-logo"><div class="logo" aria-hidden="true"></div>健康管理</div>' +
       '<div class="auth-sub">登录你的账户 · 数据只属于你，其他账户互不可见</div>' +
       (regOpen ? '<div class="auth-seg"><button data-m="login" class="active">登录</button><button data-m="reg">注册新账户</button></div>' : '') +
       '<div class="field"><label>用户名</label><input class="input" id="ag_u" autocomplete="username" placeholder="字母/数字/下划线，2-32 位"></div>' +

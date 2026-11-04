@@ -6,6 +6,10 @@
 
 ## 未标版号（下次升版号时并入下方版本）
 
+- 品牌标志统一为内联 SVG 徽章（品牌绿渐变 + 白色 W）：两页 favicon 与侧边栏 / 登录页 / 后台页眉 logo 共用 `style.css` 的 `--logo-glyph`，不再依赖系统 emoji 字体（原 💪 / 🛠 / 🚫 logo 一并换掉，导航栏各按钮的 emoji 图标不变）。
+
+- iPhone 主屏幕图标：新增 `apple-touch-icon.png` 并接入两页 link 与 `STATIC_FILES` 映射，「添加到主屏幕」不再退成截图。
+
 - 新增 `DEPLOY.md` 云端部署与运维手册（首次上线、升级、回滚、备份、故障排查），README 原「公网部署」章节整体并入、仅留指向。纯文档，运行产物不变。
 
 - 登录页跟随注册开关（`/api/health` 的 `register_open`）隐藏「注册新账户」入口。

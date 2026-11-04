@@ -5,7 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#f4f6f3">
 <title>健康管理 · 我的健身日记</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💪</text></svg>">
+<!-- 站点图标:内联 SVG 品牌徽章(渐变 + 白色 W),不依赖系统 emoji 字体,各端渲染一致。
+     与站内 logo 共用一套坐标:字形几何住在 css/style.css 的 --logo-glyph,渐变端点同 .logo 规则;改标志时两处一起看。 -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%230e8a63'/><stop offset='1' stop-color='%230a5c43'/></linearGradient></defs><rect x='1' y='1' width='62' height='62' rx='18' fill='url(%23g)'/><path d='M17 21L25 44L32 28L39 44L47 21' fill='none' stroke='%23fff' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<!-- iPhone 主屏幕图标：iOS 只认 PNG（SVG favicon 到主屏幕会退成截图），180×180 全幅渐变 + 白色 W，
+     圆角遮罩由系统套；与上方 favicon 同一枚徽章坐标，改标志时两处一起换。 -->
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>

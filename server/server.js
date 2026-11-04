@@ -107,6 +107,9 @@ const STATIC_FILES = {
   '/js/app.js': { file: 'js/app.js', type: 'text/javascript; charset=utf-8' },
   /* v4.16 调试钩子（?probe/?selftest/?ftest/?shot）专用：由 loadDev() 按需注入，用户路径不加载 */
   '/js/dev.js': { file: 'js/dev.js', type: 'text/javascript; charset=utf-8' },
+  /* iPhone「添加到主屏幕」图标：必须是 PNG（iOS 不认 SVG favicon），180×180 全幅无圆角，
+   * 圆角遮罩由系统套；生成源稿与对比留档在 tmp/（不入版本库） */
+  '/apple-touch-icon.png': { file: 'apple-touch-icon.png', type: 'image/png' },
   /* 管理后台(v4.1)：页面本身公开，数据面全部走 /api/admin/* 的 admin 守卫 */
   '/admin': { file: 'admin.html', type: 'text/html; charset=utf-8' },
   '/admin.html': { file: 'admin.html', type: 'text/html; charset=utf-8' },

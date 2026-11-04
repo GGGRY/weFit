@@ -96,8 +96,11 @@ async function main() {
       }
       let json = null;
       try { json = await r.clone().json(); } catch (e) { /* 非 JSON 响应 */ }
-      const text = await r.text();
-      return { status: r.status, json, text, headers: r.headers };
+      /* body 只能消费一次：先取原始字节（二进制断言用，如 apple-touch-icon 的 PNG 魔数），
+       * text 由 buffer 按 UTF-8 解出，与原先 r.text() 等价 */
+      const buffer = Buffer.from(await r.arrayBuffer());
+      const text = buffer.toString('utf8');
+      return { status: r.status, json, text, buffer, headers: r.headers };
     };
     return { req, jar: c };
   }
@@ -359,6 +362,13 @@ async function main() {
   r = await anon.req('GET', '/');
   ok('T17g index.html 在 app.js 前加载 sleep-shape.js',
     r.text.includes('js/sleep-shape.js') && r.text.indexOf('js/sleep-shape.js') < r.text.indexOf('js/app.js'));
+  /* iPhone 主屏幕图标也靠 STATIC_FILES 显式映射：漏了不会报错，iOS 静默退成页面截图，
+   * 只有用户「添加到主屏幕」时才看得见，故在此钉住（PNG 魔数 + image/png） */
+  r = await anon.req('GET', '/apple-touch-icon.png');
+  ok('T17i apple-touch-icon.png→image/png 且是 PNG', r.status === 200 && r.headers.get('content-type').includes('image/png')
+    && r.buffer.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), r.headers.get('content-type'));
+  r = await anon.req('GET', '/');
+  ok('T17j index.html 声明了 apple-touch-icon', r.text.includes('rel="apple-touch-icon"'));
   r = await anon.req('GET', '/server.js');
   ok('T17d 目录外路径→404', r.status === 404);
   r = await B.req('GET', '/api/nope');

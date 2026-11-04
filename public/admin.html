@@ -4,12 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>健康管理 · 管理后台</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛠</text></svg>">
+<!-- 站点图标:与用户端 index.html 同一枚品牌徽章(渐变 + 白色 W),后台不再用 🛠 -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%230e8a63'/><stop offset='1' stop-color='%230a5c43'/></linearGradient></defs><rect x='1' y='1' width='62' height='62' rx='18' fill='url(%23g)'/><path d='M17 21L25 44L32 28L39 44L47 21' fill='none' stroke='%23fff' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="stylesheet" href="css/style.css">
 <style>
   .adm-wrap{max-width:860px;margin:0 auto;padding:22px clamp(12px,3vw,28px) 60px}
   .adm-head{display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap}
-  .adm-head .logo{width:36px;height:36px;border-radius:11px;background:linear-gradient(135deg,var(--brand),#0a5c43);display:grid;place-items:center;font-size:18px;color:#fff}
+  .adm-head .logo{width:36px;height:36px;border-radius:11px;flex:none;background-image:var(--logo-glyph),linear-gradient(135deg,var(--brand),#0a5c43);background-size:100% 100%;background-repeat:no-repeat;box-shadow:inset 0 0 0 1px rgba(255,255,255,.25)}
   .adm-head h1{font-size:19px;margin:0;font-weight:800}
   .adm-head .sub{color:var(--ink-3);font-size:12px}
   .adm-head .grow{flex:1}
@@ -100,7 +102,7 @@ function on401(){ me = null; renderLogin('会话已过期，请重新登录'); }
 function renderLogin(note){
   $('#app').innerHTML =
     '<div class="auth-card adm-loginbox">' +
-      '<div class="auth-logo"><div class="logo">🛠</div>管理后台</div>' +
+      '<div class="auth-logo"><div class="logo" aria-hidden="true"></div>管理后台</div>' +
       '<div class="auth-sub">仅管理员账户可登录 · <a href="/" style="color:var(--brand-ink)">← 返回用户端</a></div>' +
       '<div class="field"><label>用户名</label><input class="input" id="lg_u" autocomplete="username"></div>' +
       '<div class="field"><label>密码</label><input class="input" id="lg_p" type="password" autocomplete="current-password"></div>' +
@@ -126,7 +128,7 @@ function renderLogin(note){
 function renderForbidden(){
   $('#app').innerHTML =
     '<div class="auth-card adm-loginbox">' +
-      '<div class="auth-logo"><div class="logo">🚫</div>无管理权限</div>' +
+      '<div class="auth-logo"><div class="logo" aria-hidden="true"></div>无管理权限</div>' +
       '<div class="auth-sub">账户「' + esc(me.username) + '」不是管理员。<br>请联系管理员在后台把你设为管理员，或退出后换账户登录。</div>' +
       '<div class="d-f" style="justify-content:center">' +
         '<button class="btn" id="fb_back">← 返回用户端</button>' +
@@ -147,7 +149,7 @@ async function doLogout(){
 function renderShell(){
   $('#app').innerHTML =
     '<div class="adm-head">' +
-      '<div class="logo">🛠</div>' +
+      '<div class="logo" aria-hidden="true"></div>' +
       '<div><h1>健康管理 · 管理后台</h1><div class="sub">已登录：' + esc(me.username) + '（管理员）</div></div>' +
       '<span class="grow"></span>' +
       '<button class="btn sm" id="thBtn">主题</button>' +

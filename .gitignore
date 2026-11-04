@@ -21,3 +21,6 @@ server/data/
 # USDA 源数据（第三方下载，供 server/test/import-usda-food.js 使用，不入版本库）
 resources/
 FoodData_Central_*
+
+# Agent 验证草稿（图标对比页、headless 截图、文档设计稿等，本地留档不入版本库）
+tmp/
