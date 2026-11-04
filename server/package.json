@@ -1,6 +1,6 @@
 {
   "name": "wefit-server",
-  "version": "1.0.0",
+  "version": "4.24.0",
   "private": true,
   "description": "健康管理 · 本地同步服务器（零依赖：node:http + node:sqlite）",
   "main": "server.js",

@@ -41,6 +41,7 @@
 
 ## 每次提交前必做
 - 检查并按需更新文档:CHANGELOG.md、MEMO.md、README.md、PLANS.md。
+- 升版号时同步 bump `server/package.json` 的 `version`（运行时版本号单一来源，界面「weFit vX.Y」与 `/api/me` 都取它；补丁位 0 展示时自动去掉）。
 
 ## 文档分工 (请按需读取)
 - 架构与功能详情 → MEMO.md;版本历史 → CHANGELOG.md;后续计划 → PLANS.md。本文件只放 agent 必须遵守的规则。

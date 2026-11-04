@@ -6,7 +6,9 @@
 
 ## 未标版号（下次升版号时并入下方版本）
 
-- **登录页跟随注册开关隐藏「注册新账户」入口**：`/api/health` 增 `register_open` 字段（公开端点，取自 `ALLOW_REGISTER`）；前端登录页渲染前探测，关闭时不显示登录/注册切换条、只剩登录表单（探测失败按开放显示，服务端 403「本站已关闭注册」仍是最终闸门）。新增断言 D2b/D3b（auth-https）与 T21/T21b（render），`npm test` 全套全绿（render 231）。
+- 登录页跟随注册开关（`/api/health` 的 `register_open`）隐藏「注册新账户」入口。
+
+- 设置页与管理后台底部显示版本号「weFit vX.Y」（单一来源 `server/package.json`，经 `/api/me` / `/api/login` 下发）。
 
 ## v4.24（2026-11-03）— 云端升级/回滚脚本 + README 精简
 

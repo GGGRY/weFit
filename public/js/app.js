@@ -4081,7 +4081,10 @@ function renderSettings(){
     /* 退出登录：设置页最下方独立一颗（2026-09-11 由「修改档案」弹窗移出，与「修改」动作解耦） */
     '<div class="row" style="justify-content:center;margin:4px 0 8px">' +
       '<button class="btn danger ghost" id="pf_logout">⎋ 退出登录</button>' +
-    '</div>';
+    '</div>' +
+    /* 版本号：/api/me 下发（来源 = server/package.json），退出按钮下方一行小字；
+       离线启动或旧服务端没有该字段时整行不渲染（2026-11-04 裁定：仅设置页+后台显示，登录页不显示） */
+    (me && me.version ? '<div class="tiny muted" style="text-align:center;margin:0 0 10px">weFit v' + esc(String(me.version)) + '</div>' : '');
   $('#view').innerHTML = html;
   bindThemeToggle();
   /* 修改档案的入口 = 档案卡上「头像 + 昵称/账户」那一整块（卡头按钮已删） */

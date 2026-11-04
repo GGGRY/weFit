@@ -104,7 +104,7 @@ async function fakeFetch(url, opts) {
   const u = String(url), m = ((opts && opts.method) || 'GET').toUpperCase();
   if (u.endsWith('seed-data.json')) SEED_REQUESTS.push(u);
   if (m === 'GET' && u.endsWith('/api/me'))
-    return res(200, { username: 'tester', role: 'user', user: { id: 'u_alice', name: '测试者' } });
+    return res(200, { username: 'tester', role: 'user', user: { id: 'u_alice', name: '测试者' }, version: '4.24' });
   if (m === 'GET' && u.endsWith('/api/state')) return res(200, { rev: SERVER_REV, data: TREE, slices: MANIFEST });
   if (m === 'PUT' && u.endsWith('/api/state')) { LEGACY_PUTS.push(JSON.parse((opts && opts.body) || '{}')); return res(200, { ok: true, rev: ++SERVER_REV }); }
   if (m === 'GET' && u.includes('/api/slices')) {
@@ -2054,6 +2054,20 @@ async function main() {
   ev('hideAuth()');
   HEALTH_REGISTER_OPEN = true;
   ev('registerOpen = null');
+
+  /* ---------- T22 版本号显示（2026-11-04 裁定：/api/me 下发 version，仅设置页 + 管理后台显示，
+     登录页不显示；离线启动/旧服务端缺字段时整行不渲染。桩的 /api/me 带 version:'4.24'）。 ---------- */
+  ev("go('settings')");
+  const verPos = view.__html.indexOf('weFit v4.24');
+  ok('T22 设置页底显示「weFit v4.24」小字，且排在退出登录按钮之后（页面最后一行）',
+    verPos > -1 && verPos > view.__html.indexOf('id="pf_logout"'), view.__html.slice(-160));
+  await ev('showAuth()');
+  ok('T22b 登录页不显示版本号', !latestGateHTML().includes('weFit v'), '');
+  await ev('hideAuth()');
+  ev("me.version = ''; go('settings')");
+  ok('T22c version 字段缺失（离线/旧服务端）时设置页不渲染版本行',
+    !view.__html.includes('weFit v'), view.__html.slice(-160));
+  ev("me.version = '4.24'");
 
   finish();
 }

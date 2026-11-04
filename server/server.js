@@ -27,6 +27,16 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const MAX_BODY = 10 * 1024 * 1024;
 
+/* 版本号单一来源 = server/package.json 的 version（升版号时随 tag 一起 bump，见 AGENTS「提交前必做」）。
+ * 展示口径去掉补丁位的 0（4.24.0 → 4.24，与 git tag / CHANGELOG 的 v4.24 对齐；4.24.1 原样保留）。
+ * 只经 /api/me 与 /api/login 下发给设置页与管理后台显示，不进 /api/health（登录页按裁定不显示版本）。 */
+const APP_VERSION = (function () {
+  try {
+    const raw = String(JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version || '');
+    return raw.replace(/\.0$/, '');
+  } catch { return ''; }
+})();
+
 /* ---------- 反向代理 / HTTPS 判定（v4.21 公网部署）----------
  * 反代（Caddy/nginx）终止 TLS 后转发到本进程，本进程看到的永远是明文 HTTP，
  * 所以「本请求是否 HTTPS」只能靠 COOKIE_SECURE 配置或 X-Forwarded-Proto。
@@ -347,7 +357,7 @@ async function handleLogin(db, req, res) {
   }
   loginLimiter.reset(rules[0].key);   /* 成功只清本组合；IP 计数保留，防「猜中一个就整台洗白」 */
   const token = auth.createSession(db, username);
-  sendJson(res, 200, { ok: true, username, role: acc.role },
+  sendJson(res, 200, { ok: true, username, role: acc.role, version: APP_VERSION },
     { 'Set-Cookie': auth.cookieHeader(token, { secure: reqIsSecure(req) }) });
 }
 
@@ -475,7 +485,7 @@ async function handleState(db, req, res, sessionUser, pathname) {
   }
   if (req.method === 'GET' && pathname === '/api/me') {
     const u = db.prepare('SELECT id, name, avatar, color, onboarded FROM users WHERE id = ?').get(sessionUser.userId) || {};
-    sendJson(res, 200, { ok: true, username: sessionUser.username, role: sessionUser.role, user: u });
+    sendJson(res, 200, { ok: true, username: sessionUser.username, role: sessionUser.role, user: u, version: APP_VERSION });
     return;
   }
   return false;

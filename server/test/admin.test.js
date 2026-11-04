@@ -16,6 +16,8 @@ try { fs.rmSync(TMP_DB, { force: true }); } catch (e) {}
 process.env.DB_PATH = TMP_DB;
 
 const { start } = require('../server');
+/* 版本号期望 = server/package.json 的 version 去掉补丁位 0（与 server.js 展示口径一致） */
+const EXPECT_VERSION = require('../package.json').version.replace(/\.0$/, '');
 
 let passed = 0, failed = 0;
 function ok(name, cond, detail) {
@@ -154,6 +156,7 @@ async function main() {
   ok('T5k alice 自撤后立即 403', r.status === 403);
   r = await A.req('GET', '/api/me');
   ok('T5l /me 的 role 已更新为 user', r.status === 200 && r.json.role === 'user');
+  ok('T5l2 /me 带 version（设置页/后台显示用，来源 package.json）', r.json.version === EXPECT_VERSION, JSON.stringify(r.json));
   /* 恢复:bob 把 alice 升回来(自己现在是唯一 admin → alice 撤 bob 会被护栏挡住) */
   r = await B.req('PUT', '/api/admin/role', { username: 'alice', role: 'admin' });
   ok('T5m bob 恢复 alice 为 admin', r.status === 200);
@@ -208,6 +211,7 @@ async function main() {
   const C = makeJar(base);
   r = await C.req('POST', '/api/login', { username: 'carol', password: 'carol123' });
   ok('T8d 新账户可登录', r.status === 200 && r.json.role === 'user');
+  ok('T8d2 登录响应也带 version（后台登录后立即显示）', r.json.version === EXPECT_VERSION, JSON.stringify(r.json));
   r = await C.req('GET', '/api/state');
   ok('T8e 新账户是全新空库(rev 0、个人库空、不拷系统库)', r.status === 200 && r.json.rev === 0
     && (r.json.data.users[Object.keys(r.json.data.users)[0]].body || []).length === 0, JSON.stringify(r.json).slice(0, 160));

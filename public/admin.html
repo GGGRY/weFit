@@ -116,7 +116,7 @@ function renderLogin(note){
     if (status === 401) { $('#lg_err').textContent = '用户名或密码不正确'; return; }
     if (status !== 200) { $('#lg_err').textContent = (j && j.message) || '登录失败'; return; }
     $('#lg_err').textContent = '';
-    me = { username: (j && j.username) || username, role: (j && j.role) || 'user' };
+    me = { username: (j && j.username) || username, role: (j && j.role) || 'user', version: (j && j.version) || '' };
     boot();
   };
   $('#lg_go').addEventListener('click', go);
@@ -156,7 +156,9 @@ function renderShell(){
     '</div>' +
     '<div class="adm-tabs"><button data-t="users">👥 用户管理</button><button data-t="lib">📚 系统共享库</button></div>' +
     '<div id="tabBody"></div>' +
-    '<div class="adm-foot">第一个注册的账户自动成为管理员 · 系统至少保留一名管理员 · 撤权即时生效，被撤者仍正常使用用户端</div>';
+    /* 版本号 = /api/me 或 /api/login 下发（来源 = server/package.json）；旧服务端没带该字段时不显示 */
+    '<div class="adm-foot">' + (me.version ? 'weFit v' + esc(String(me.version)) + ' · ' : '') +
+      '第一个注册的账户自动成为管理员 · 系统至少保留一名管理员 · 撤权即时生效，被撤者仍正常使用用户端</div>';
   $('#thBtn').textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️ 浅色' : '🌙 深色';
   $('#thBtn').addEventListener('click', toggleTheme);
   $('#outBtn').addEventListener('click', doLogout);
@@ -458,7 +460,7 @@ function bindLib(){
 async function boot(){
   if (!me) {
     const { status, j } = await api('GET', '/me');
-    if (status === 200) me = { username: (j && j.username) || '', role: (j && j.role) || 'user' };
+    if (status === 200) me = { username: (j && j.username) || '', role: (j && j.role) || 'user', version: (j && j.version) || '' };
     else { renderLogin(status === 0 ? OFFLINE_MSG : undefined); return; }
   }
   /* v4.4:删除角色实测探测块——/me 的 role 与 requireAdmin 读同一张 accounts 表、同一时刻,
