@@ -1,31 +1,33 @@
 # weFit systemd **用户级**单元 —— 个人机/局域网开机自启（全程无需 sudo）
 #
 # 与 deploy/wefit.service（系统级、公网反代版）的分工：
-#   - 本文件：服务跑在 qtfan 的用户实例里，HOST 不设 = 0.0.0.0 监听所有网卡，
+#   - 本文件：服务跑在当前用户的 systemd 用户实例里，HOST 不设 = 0.0.0.0 监听所有网卡，
 #     同 Wi-Fi 手机可直连 8123；注册保持开放——**只用于可信局域网**。
-#   - 公网部署别用本文件，走系统级 wefit.service + Caddy 反代（回环监听 + 关注册）。
+#   - 公网部署勿用本文件，走系统级 wefit.service + Caddy 反代（回环监听 + 关闭注册）。
 #
-# 用法（在本机以 qtfan 身份）：
+# 用法（以目标用户身份在本机执行）：
 #   mkdir -p ~/.config/systemd/user
 #   cp deploy/wefit.user.service ~/.config/systemd/user/wefit.service
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now wefit
-#   loginctl enable-linger qtfan     # 开机不等登录就拉起（legion 已开）
+#   loginctl enable-linger $USER           # 开机不等登录就拉起；未启用此项时，无用户登录会话不会拉起服务
 # 查日志：journalctl --user -u wefit -f    停止：systemctl --user stop wefit
 #
-# ⚠ 路径按 legion.unix.release 实况钉死：
-#   - ExecStart 的 node 是 nvm 绝对路径，nvm 升级后要跟着改（或 ln -s 稳定链接）；
-#   - 数据盘 /media/qtfan/Data 在 fstab（nofail），用户单元不能对系统挂载单元排序，
-#     用 ExecStartPre 循环等待目录就绪，最多 60s。
+# ⚠ 以下路径为样例，安装前必须按本机实际情况替换（尖括号内容均为占位符）：
+#   - <项目目录> = weFit 仓库在本机的绝对路径；
+#   - ExecStart 的 node 需为绝对路径：系统安装用 /usr/bin/node；nvm 用户改为
+#     /home/<用户名>/.nvm/versions/node/<版本>/bin/node（nvm 升级后需同步修改，或建立稳定软链接）；
+#   - 数据盘为独立挂载（fstab nofail）时，用户单元不能对系统挂载单元排序，
+#     故用 ExecStartPre 循环等待项目目录就绪，最多 60s。
 
 [Unit]
 Description=weFit 健康管理同步服务器（用户单元 · 局域网）
-ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do [ -f /media/qtfan/Data/DEVELOPMENTS/weFit/server/server.js ] && exit 0; sleep 2; done; exit 1'
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do [ -f <项目目录>/server/server.js ] && exit 0; sleep 2; done; exit 1'
 
 [Service]
 Type=simple
-WorkingDirectory=/media/qtfan/Data/DEVELOPMENTS/weFit/server
-ExecStart=/home/qtfan/.nvm/versions/node/v26.7.0/bin/node server.js
+WorkingDirectory=<项目目录>/server
+ExecStart=/usr/bin/node server.js
 Environment=PORT=8123
 Restart=always
 RestartSec=3

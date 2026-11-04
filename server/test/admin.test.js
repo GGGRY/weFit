@@ -59,7 +59,7 @@ async function main() {
 
   /* 注册 alice(admin)与 bob(user) */
   const A = makeJar(base), B = makeJar(base);
-  r = await A.req('POST', '/api/register', { username: 'alice', password: 'secret123', name: '陈' });
+  r = await A.req('POST', '/api/register', { username: 'alice', password: 'secret123', name: '爱丽丝' });
   ok('T3a alice 注册=admin', r.status === 201 && r.json.role === 'admin');
   r = await B.req('POST', '/api/register', { username: 'bob', password: 'hunter456', name: '阿鲍' });
   ok('T3b bob 注册=user', r.status === 201 && r.json.role === 'user');
@@ -114,7 +114,7 @@ async function main() {
   r = await A.req('GET', '/api/admin/users');
   const list = r.json && r.json.users || [];
   ok('T4a 列表含两账户+角色+昵称', r.status === 200 && list.length === 2
-    && list[0].username === 'alice' && list[0].role === 'admin' && list[0].name === '陈'
+    && list[0].username === 'alice' && list[0].role === 'admin' && list[0].name === '爱丽丝'
     && list[1].username === 'bob' && list[1].role === 'user', JSON.stringify(list).slice(0, 220));
   /* bob 写一点数据,列表统计应跟进 */
   const bobState = await B.req('GET', '/api/state');

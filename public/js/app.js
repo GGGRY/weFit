@@ -4846,7 +4846,7 @@ function showAuth(offlineNote){
       '<div class="auth-sub">登录你的账户 · 数据只属于你，其他账户互不可见</div>' +
       '<div class="auth-seg"><button data-m="login" class="active">登录</button><button data-m="reg">注册新账户</button></div>' +
       '<div class="field"><label>用户名</label><input class="input" id="ag_u" autocomplete="username" placeholder="字母/数字/下划线，2-32 位"></div>' +
-      '<div class="field hidden" id="ag_namewrap"><label>昵称</label><input class="input" id="ag_n" placeholder="显示用的名字，如：小陈"></div>' +
+      '<div class="field hidden" id="ag_namewrap"><label>昵称</label><input class="input" id="ag_n" placeholder="显示用的名字，如：小爱"></div>' +
       '<div class="field"><label>密码</label><input class="input" id="ag_p" type="password" autocomplete="current-password" placeholder="至少 6 位"></div>' +
       '<button class="btn primary block" id="ag_go">登录</button>' +
       '<div class="auth-err" id="ag_err"></div>' +

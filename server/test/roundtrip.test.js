@@ -119,12 +119,12 @@ async function main() {
 
   r = await anon.req('POST', '/api/register', { username: 'a', password: '123456', name: '短名' });
   ok('T3a 用户名过短→400', r.status === 400 && r.json.error === 'invalid_credentials', JSON.stringify(r.json));
-  r = await anon.req('POST', '/api/register', { username: 'alice', password: '123', name: '陈' });
+  r = await anon.req('POST', '/api/register', { username: 'alice', password: '123', name: '爱丽丝' });
   ok('T3b 密码过短→400', r.status === 400);
   r = await anon.req('POST', '/api/register', { username: 'alice', password: 'secret123' });
   ok('T3c 昵称缺失→400', r.status === 400);
 
-  r = await A.req('POST', '/api/register', { username: 'alice', password: 'secret123', name: '陈' });
+  r = await A.req('POST', '/api/register', { username: 'alice', password: 'secret123', name: '爱丽丝' });
   ok('T4a 注册成功→201+Cookie+admin', r.status === 201 && r.json.role === 'admin' && !!A.jar.sid, 'sid=' + A.jar.sid);
   r = await anon.req('POST', '/api/register', { username: 'alice', password: 'secret123', name: '撞名' });
   ok('T4b 用户名重复→409', r.status === 409 && r.json.error === 'username_taken');
@@ -175,7 +175,7 @@ async function main() {
   ok('T10b 缺省rev→盲写成功 rev:2', r.status === 200 && r.json.rev === 2);
 
   /* 替换语义:第二次写入覆盖第一次 */
-  const small = { theme: 'light', onboarded: false, shared: { foods: [{ id: 'f0', name: '米饭', per100: { kcal: 116, p: 2.6, c: 25.9, f: 0.3 } }], exercises: [{ id: 'e0', name: '卧推', cat: '力量', muscle: '胸', mode: 'reps' }] }, users: { [uidA]: { id: uidA, name: '陈', body: [{ date: '2026-01-01', weight: 70 }] } }, active: uidA };
+  const small = { theme: 'light', onboarded: false, shared: { foods: [{ id: 'f0', name: '米饭', per100: { kcal: 116, p: 2.6, c: 25.9, f: 0.3 } }], exercises: [{ id: 'e0', name: '卧推', cat: '力量', muscle: '胸', mode: 'reps' }] }, users: { [uidA]: { id: uidA, name: '爱丽丝', body: [{ date: '2026-01-01', weight: 70 }] } }, active: uidA };
   r = await A.req('PUT', '/api/state', { rev: 2, data: small });
   ok('T11a 正确rev→rev:3', r.status === 200 && r.json.rev === 3);
   r = await A.req('GET', '/api/state');
@@ -200,7 +200,7 @@ async function main() {
     && r.json.data.shared.foods.length === 0 && Object.keys(r.json.data.users).length === 1, JSON.stringify(r.json).slice(0, 120));
   uidB = Object.keys(r.json.data.users)[0];
   const snapshotB = JSON.stringify(r.json);
-  ok('T13b B 看不到 A 的任何数据', snapshotB.indexOf('陈') < 0 && snapshotB.indexOf('u_alice') < 0
+  ok('T13b B 看不到 A 的任何数据', snapshotB.indexOf('爱丽丝') < 0 && snapshotB.indexOf('u_alice') < 0
     && snapshotB.indexOf(uidA) < 0, 'B树含A痕迹');
 
   /* 恶意:在 A 的合法树里塞 B 的 uid 键 */
@@ -372,7 +372,7 @@ async function main() {
    * 或“存一半写一半”让 PUT≠GET（旧版：[null] 直接 TypeError；{t:{}} 绑不进 SQLite；
    * ["x"] 存成 [{}]；空数组存不进去但 GET 丢键） */
   const junk = { theme: 'light', onboarded: true, shared: { foods: [], exercises: [] },
-    users: { [uidA]: { id: uidA, name: '陈', sleep: {
+    users: { [uidA]: { id: uidA, name: '爱丽丝', sleep: {
       '2026-01-01': [null, { t: 'nap', bed: '13:00', wake: '13:30', mins: 30, quality: 4 }],     // 脏元素丢，同其余段下标前移
       '2026-01-02': [{ t: { a: 1 }, bed: '23:00', wake: { h: 1 }, mins: '480', quality: 3 }],   // 类型不符的字段丢键
       '2026-01-03': 'x',                                                                          // 标量整天丢

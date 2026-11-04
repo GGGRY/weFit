@@ -95,7 +95,7 @@ async function main() {
   const base = 'http://127.0.0.1:' + port;
 
   /* ---------- B. Cookie Secure 判定 ---------- */
-  let r = await req(base, 'POST', '/api/register', { username: 'alice', password: 'secret123', name: '陈' });
+  let r = await req(base, 'POST', '/api/register', { username: 'alice', password: 'secret123', name: '爱丽丝' });
   ok('B1 明文 HTTP 注册成功且 Cookie 不含 Secure（保局域网可用）',
     r.status === 201 && /wefit_sid=/.test(r.setCookie) && !/;\s*Secure/i.test(r.setCookie), r.setCookie);
 

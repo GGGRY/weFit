@@ -14,7 +14,7 @@
 
 - **应用更名收尾（jjhealth → weFit）**：localStorage 键 `jjhealth_*` → `wefit_*`（登录态/离线树/同步元数据/页面记忆，首次读取时一次性迁移并删旧键；新旧键并存时旧树/meta 若带未推送改动则旧键胜出、否则清孤儿旧键；后台主题键同理）；真实库 `jjhealth.db` → `wefit.db`（15 个历史 `.bak` 一并改名，改前备份 `wefit.db.bak-20261018-prefix-rename`）；`db.js` 默认库名、部署样例 `DB_PATH`（含旧库改名提示）、包名 `wefit-server`、Windows 窗口标题、测试临时库名与文档引用同步。旧键名只留在迁移代码、迁移测试与历史记录中。`npm test` 全套全绿（`render` 229、`sync-http` 41，含新增迁移断言 E19a–d / T2b2–5）。
 
-- **开机自启（局域网 · 免 sudo）**：新增 `deploy/wefit.user.service`（systemd **用户级**单元样例：`ExecStartPre` 轮询等数据盘挂载、`Restart=always`；路径按本机钉死，node 用 nvm 绝对路径）。legion 已安装为 `wefit` 并 `enable --now` + `loginctl enable-linger`：开机无人登录也在后台监听 8123，`./start.sh` 手动起会撞端口，改走 `systemctl --user stop/start/restart wefit`。README 加「开机自启」章节、MEMO 启动/技术债口径同步。**公网部署口径不变**（系统级 `wefit.service` + 反代 + 关注册）。
+- **开机自启（局域网 · 免 sudo）**：新增 `deploy/wefit.user.service`（systemd **用户级**单元样例：`ExecStartPre` 轮询等数据盘挂载、`Restart=always`；路径按本机钉死，node 用 nvm 绝对路径）。本机 已安装为 `wefit` 并 `enable --now` + `loginctl enable-linger`：开机无人登录也在后台监听 8123，`./start.sh` 手动起会撞端口，改走 `systemctl --user stop/start/restart wefit`。README 加「开机自启」章节、MEMO 启动/技术债口径同步。**公网部署口径不变**（系统级 `wefit.service` + 反代 + 关注册）。
 
 - **设置页「每日打卡」↑↓ 调顺序**：习惯行新增上移/下移钮（首行↑、末行↓置灰禁点），`moveHabit()` 改 `state.habits` 数组序后 `save()` + 整卡重渲。数组序 = 概览页打卡行序 = 落库 `seq`（`writeHabits` 按下标、`readHabits` ORDER BY seq），habits 定义片整片序列化本来就含序——**零新契约、无迁移**。新增 T9x 系列 4 条断言，`render.test.js` 225 项、`npm test` 全套全绿。
 
