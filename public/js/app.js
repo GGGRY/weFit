@@ -1997,32 +1997,46 @@ function renderHome(){
   const q = $('#view [data-additem]');
   if(q) q.addEventListener('click', () => openItemDlg(q.dataset.additem));
   bindItemChecks($('#view'));
+  const am = $('#view [data-addmeal]');
+  if(am) am.addEventListener('click', () => addMealDialog(today()));
   const g = $('#view [data-go2="diet"]');
   if(g) g.addEventListener('click', () => go('diet'));
   const gh = $('#view [data-go2="settings"]');
   if(gh) gh.addEventListener('click', () => go('settings'));
 }
 
-/* 今日饮食卡（原 renderHome 内联；与磁贴的间距交给 .home-cards 的 margin/gap，故不再内联 margin-top） */
+/* 今日饮食卡（原 renderHome 内联；与磁贴的间距交给 .home-cards 的 margin/gap，故不再内联 margin-top）
+ * 2026-11-05：卡体列出当日饮食（一餐一行「🍳 早餐 · 名称」，不显克数、换行悬挂缩进），底部入口改「＋ 添加饮食」
+ * 直接打开 addMealDialog（对齐运动卡「＋ 添加运动」= openItemDlg 的交互），不再跳饮食页。 */
 function homeDietCardHTML(eat, calPct){
-  const T = target();
+  const T = target(), dm = dayMeals(today());
+  /* 一餐一行、不显克数（用户裁定 2026-11-05）；两列 flex：餐名固定列，明细列内换行
+   * 悬挂缩进对齐到明细自身，不回退到行首的餐名下方 */
+  const lines = SLOTS.map(s => {
+    const items = dm[s.id];
+    if(!items.length) return '';
+    return '<div class="tiny" style="margin-top:6px;display:flex;align-items:flex-start">' +
+      '<span style="flex:0 0 auto;margin-right:4px">' + s.ic + ' <b>' + esc(s.label) + '</b> ·</span>' +
+      '<span style="flex:1;min-width:0">' + items.map(it => esc(it.name)).join('、') + '</span>' +
+    '</div>';
+  }).join('');
   return '<div class="card"><h3>🍽️ 今日饮食</h3>' +
-    (eat.kcal === 0 ? '<div class="empty"><div class="e-ic">🍽️</div>还没有记录今天的饮食<div class="mt"><button class="btn primary sm" data-go2="diet">去记录</button></div></div>'
+    /* 空态按钮与有记录卡底、运动卡空态同口径：「＋ 添加饮食」直接开记录弹窗（不再跳饮食页） */
+    (eat.kcal === 0 ? '<div class="empty"><div class="e-ic">🍽️</div>还没有记录今天的饮食<div class="mt"><button class="btn primary sm" data-addmeal>＋ 添加饮食</button></div></div>'
       : '<div class="small">' +
         '<div style="display:flex;justify-content:space-between;margin-bottom:5px"><span class="muted">已摄入 vs 目标 <span class="tiny" style="font-weight:400;color:' + (calPct>100?'var(--ink-2)':'var(--cat3)') + '">' + (calPct>100 ? '已超 ' + (calPct-100) + '%' : '还差 ' + (100-calPct) + '%') + '</span></span><b>' + fmtNum(eat.kcal) + ' / ' + fmtNum(T.kcal) + ' kcal</b></div>' +
         '<div class="meter"><i style="width:' + clamp(calPct,0,100) + '%" class="' + (calPct>100?'over':'') + '"></i></div>' +
-        '</div>') +
-    /* chips 行下边带分隔线（`.lrow` 的 border-bottom 同款）：与运动/睡眠卡一样，
-     * 卡底入口行上方有一条横线，把入口与上面的内容隔开 */
-    (eat.kcal ? '<div class="row gap8" style="margin-top:10px;padding-bottom:12px;border-bottom:1px solid var(--line)">' +
-      '<span class="chip b1">蛋白 ' + eat.p + 'g / ' + T.p + 'g</span>' +
-      '<span class="chip b2">碳水 ' + eat.c + 'g / ' + T.c + 'g</span>' +
-      '<span class="chip b3">脂肪 ' + eat.f + 'g / ' + T.f + 'g</span>' +
-    '</div>' +
-    /* 有记录时的入口：与今日运动/今日睡眠卡同款同位（卡底一行、右对齐 ghost），
-     * 文案用「＋ 记录一下」而不是「去记录」——三张卡的右下按钮统一成「＋ 动宾」
-     * margin-left:auto 而非 space-between：窄卡换行时按钮仍靠右 */
-    '<div class="row mt" style="align-items:center"><button class="btn sm ghost" data-go2="diet" style="margin-left:auto">＋ 记录一下</button></div>' : '') +
+        '</div>' +
+        /* 三宏量素只显实际摄入，不显目标（用户裁定 2026-11-05）；热量行的「vs 目标」保留 */
+        '<div class="row gap8" style="margin-top:10px">' +
+          '<span class="chip b1">蛋白 ' + eat.p + 'g</span>' +
+          '<span class="chip b2">碳水 ' + eat.c + 'g</span>' +
+          '<span class="chip b3">脂肪 ' + eat.f + 'g</span>' +
+        '</div>' +
+        /* 分隔线（`.lrow` 的 border-bottom 同款）挂在最后一块内容下：与运动/睡眠卡一样，
+         * 卡底入口行上方有一条横线（有明细行时横线在明细下方） */
+        '<div style="padding-bottom:12px;border-bottom:1px solid var(--line)">' + lines + '</div>' +
+        '<div class="row mt" style="align-items:center"><button class="btn sm ghost" data-addmeal style="margin-left:auto">＋ 添加饮食</button></div>') +
     '</div>';
 }
 
@@ -2240,57 +2254,88 @@ function bindChartSort(container){
 }
 
 /* =====================================================
-   饮食模块
+   饮食模块(周视图,2026-11-05 对齐运动页版式)
 ===================================================== */
-let dietDate = today();
+/* 顶部一张「周导航 + 进度条 + 汇总 chips」卡,下面周一→周日每天一张全宽卡竖排。
+ * 只换呈现:数据仍是 state.meals[date][slot] 四餐形状,读写仍走 dayMeals/dayTotals/addMealItem,
+ * 切片契约与 database 零改动;「＋ 添加饮食」进弹窗后由 md_slot 选餐次。 */
+let dietMonday = null;                                   /* 当前展示周的周一；null = 跟随本周 */
+function dietWeek(){ return dietMonday || thisMonday(); }
+function setDietWeek(monday){ dietMonday = monday; renderDiet(); }   /* 周切换唯一入口（按钮与测试共用） */
+/* 弹窗未预选餐次时的粗分默认：按当前时刻给一个，用户可在 md_slot 分段里改 */
+function suggestSlot(){ const h = new Date().getHours();
+  return h >= 5 && h <= 10 ? 'breakfast' : h >= 11 && h <= 14 ? 'lunch' : h >= 15 && h <= 21 ? 'dinner' : 'snack'; }
 
 function renderDiet(){
-  const d = dietDate;
-  const T = target();
-  const tot = dayTotals(d);
-  const calPct = Math.round(tot.kcal / T.kcal * 100);
-  const rows = SLOTS.map(s => {
-    const items = dayMeals(d)[s.id];
-    const st = mealSlotTotals(d, s.id);
-    const list = items.length ? items.map((it,i) =>
-      '<div class="lrow" data-item="' + it.id + '">' +
-        '<div class="thumb" style="background:' + slotColor(s.id) + '22;font-size:15px">' + s.ic + '</div>' +
-        '<div class="grow"><div class="b">' + esc(it.name) + '</div>' +
-          '<div class="sub">' + it.g + 'g · ' + st2kcal(it) + ' kcal · <span class="tiny">P' + st2p(it) + ' C' + st2c(it) + ' F' + st2f(it) + '</span></div></div>' +
-        '<button class="iconbtn2" data-edit="' + it.id + '" title="修改">✏️</button>' +
-      '</div>').join('')
-      : '<div class="empty" style="padding:10px"><div class="e-ic" style="font-size:22px">🍴</div>未记录</div>';
-    return '<div class="card" style="margin-bottom:12px"><h3>' + s.ic + ' ' + esc(s.label) +
-      '<span class="hint">' + st.kcal + ' kcal</span><span class="grow"></span>' +
-      '<button class="btn sm" data-addslot="' + s.id + '">＋ 添加</button></h3>' + list + '</div>';
-  }).join('');
+  const mon = dietWeek(), sun = addDays(mon, 6), t = today();
+  /* 周汇总：当天任一餐有条目即算「已记录」；热量/蛋白/碳水累加整周 */
+  let days = 0, kcal = 0, p = 0, c = 0;
+  for(let i = 0; i < 7; i++){
+    const d = addDays(mon, i), dm = dayMeals(d);
+    if(dm.breakfast.length + dm.lunch.length + dm.dinner.length + dm.snack.length > 0) days++;
+    const dt = dayTotals(d); kcal += dt.kcal; p += dt.p; c += dt.c;
+  }
+  let cards = '';
+  for(let i = 0; i < 7; i++) cards += dietDayCardHTML(addDays(mon, i), t);
 
   const html =
     '<div class="card"><div class="row" style="justify-content:center;align-items:center">' +
-      '<div class="daynav"><button class="iconbtn2" data-day="-1">‹</button>' +
-        '<div class="lbl">' + dateCN(d) + '<small>' + (d===today() ? '今天' : '周' + DAY_CN[weekday(d)]) + '</small></div>' +
-        '<button class="iconbtn2" data-day="1">›</button>' +
-        (d !== today() ? '<button class="btn sm" data-day="today">回到今天</button>' : '') +
+      '<div class="daynav">' +
+        '<button class="iconbtn2" id="dt_prev" title="上一周">‹</button>' +
+        '<div class="lbl">' + dateCN(mon) + ' – ' + dateCN(sun) + '<small>' + weekLabel(mon) + '</small></div>' +
+        '<button class="iconbtn2" id="dt_next" title="下一周">›</button>' +
+        (weekOffset(mon) !== 0 ? '<button class="btn sm" id="dt_now">回到本周</button>' : '') +
       '</div>' +
     '</div>' +
-    '<div style="display:flex;justify-content:space-between;margin:12px 0 6px" class="small"><span class="muted">热量目标</span><b>' + fmtNum(tot.kcal) + ' / ' + fmtNum(T.kcal) + ' kcal</b></div>' +
-    '<div class="meter"><i style="width:' + clamp(calPct,0,100) + '%" class="' + (calPct>100?'over':'') + '"></i></div>' +
+    '<div style="display:flex;justify-content:space-between;margin:12px 0 6px" class="small"><span class="muted">本周饮食</span><b>已记录 ' + days + '/7 天</b></div>' +
+    '<div class="meter"><i style="width:' + clamp(Math.round(days / 7 * 100),0,100) + '%"></i></div>' +
     '<div class="row gap8" style="margin-top:10px">' +
-      '<span class="chip b1">蛋白 ' + tot.p + ' / ' + T.p + 'g</span>' +
-      '<span class="chip b2">碳水 ' + tot.c + ' / ' + T.c + 'g</span>' +
-      '<span class="chip b3">脂肪 ' + tot.f + ' / ' + T.f + 'g</span>' +
+      '<span class="chip b1">热量 ' + fmtNum(Math.round(kcal)) + ' kcal</span>' +
+      '<span class="chip b2">蛋白 ' + Math.round(p) + 'g</span>' +
+      '<span class="chip b3">碳水 ' + Math.round(c) + 'g</span>' +
     '</div></div>' +
-    rows;
+    cards;
 
   $('#view').innerHTML = html;
   const v = $('#view');
-  $$('[data-day]', v).forEach(b => b.addEventListener('click', () => {
-    if(b.dataset.day === 'today') dietDate = today();
-    else dietDate = addDays(dietDate, num(b.dataset.day));
-    renderDiet();
-  }));
-  $$('[data-addslot]', v).forEach(b => b.addEventListener('click', () => addMealDialog(dietDate, b.dataset.addslot)));
-  $$('[data-edit]', v).forEach(b => b.addEventListener('click', () => editMealDialog(dietDate, b.dataset.edit)));
+  $('#dt_prev', v).addEventListener('click', () => setDietWeek(addDays(mon, -7)));
+  $('#dt_next', v).addEventListener('click', () => setDietWeek(addDays(mon, 7)));
+  const nowBtn = $('#dt_now', v);
+  if(nowBtn) nowBtn.addEventListener('click', () => setDietWeek(null));
+  $$('[data-addday]', v).forEach(b => b.addEventListener('click', () => addMealDialog(b.dataset.addday)));
+  $$('[data-edit]', v).forEach(b => b.addEventListener('click', () => editMealDialog(b.dataset.editdate, b.dataset.edit)));
+}
+/* 日卡（版式镜像运动页 dayCardHTML）：卡头 = 周X+日期 / 今天 chip / 当日 kcal / ＋ 添加饮食；
+ * 卡体按四餐分组，只列有记录的餐；整天空白给「未记录」。条目行沿用原 .lrow 形状（✏️ 带所在日期）。 */
+function dietDayCardHTML(date, todayStr){
+  const isToday = date === todayStr;
+  const dm = dayMeals(date), tot = dayTotals(date);
+  const n = dm.breakfast.length + dm.lunch.length + dm.dinner.length + dm.snack.length;
+  const groups = SLOTS.map(s => {
+    const items = dm[s.id];
+    if(!items.length) return '';
+    const st = mealSlotTotals(date, s.id);
+    return '<div class="tiny" style="margin:8px 0 2px"><b>' + s.ic + ' ' + esc(s.label) + '</b>' +
+      '<span class="hint">' + st.kcal + ' kcal</span></div>' +
+      items.map(it => dietItemRowHTML(date, s, it)).join('');
+  }).join('');
+  return '<div class="card' + (isToday ? ' today' : '') + '" data-daycard="' + esc(date) + '" style="margin-bottom:12px">' +
+    '<h3><span>周' + DAY_CN[weekday(date)] + ' ' + dateCN(date) + '</span>' +
+      (isToday ? '<span class="chip ok">今天</span>' : '') +
+      (n ? '<span class="hint">' + fmtNum(Math.round(tot.kcal)) + ' kcal</span>' : '') +
+      '<span class="grow"></span>' +
+      '<button class="btn sm" data-addday="' + esc(date) + '">＋ 添加饮食</button>' +
+    '</h3>' +
+    (groups || '<div class="empty" style="padding:10px"><div class="e-ic" style="font-size:22px">🍴</div>未记录</div>') +
+    '</div>';
+}
+function dietItemRowHTML(date, s, it){
+  return '<div class="lrow" data-item="' + it.id + '">' +
+    '<div class="thumb" style="background:' + slotColor(s.id) + '22;font-size:15px">' + s.ic + '</div>' +
+    '<div class="grow"><div class="b">' + esc(it.name) + '</div>' +
+      '<div class="sub">' + it.g + 'g · ' + st2kcal(it) + ' kcal · <span class="tiny">P' + st2p(it) + ' C' + st2c(it) + ' F' + st2f(it) + '</span></div></div>' +
+    '<button class="iconbtn2" data-edit="' + it.id + '" data-editdate="' + esc(date) + '" title="修改">✏️</button>' +
+  '</div>';
 }
 function slotColor(id){ return {breakfast:'#eda100', lunch:'#eb6834', dinner:'#4a3aa7', snack:'#1baf7a'}[id] || 'var(--brand)'; }
 function st2kcal(it){ const x = itemMacro(it); return round(x.kcal,0); }
@@ -2301,15 +2346,16 @@ function findMealItem(date, id){ const dm = dayMeals(date); for(const s of SLOTS
 function slotOfItem(date, id){ const dm = dayMeals(date); for(const s of SLOTS){ if(dm[s.id].some(i => i.id === id)) return s.id; } return null; }
 function delMealItem(date, id){
   const dm = dayMeals(date);
-  for(const s of SLOTS){ const ix = dm[s.id].findIndex(i => i.id === id); if(ix >= 0){ dm[s.id].splice(ix,1); save(); renderDiet(); toast('已删除'); return; } }
+  for(const s of SLOTS){ const ix = dm[s.id].findIndex(i => i.id === id); if(ix >= 0){ dm[s.id].splice(ix,1); save(); renderView(); toast('已删除'); return; } }
 }
 
 /* ---------- 记录饮食弹窗：三 tab（我的库 / 系统库 / 新增）+ 共用底栏 ----------
  * 我的库/系统库 = 只读营养 + 只填「实际吃了多少克」；新增 = 全字段手填。
  * 后两者带「同时保存到我的食物库」勾选：系统库未拥有的默认勾选（已有的折叠），
  * 新增默认不勾。入库 src 沿用源条目（USDA/用户），与食物库页「＋我的库」挑入口径一致。
- * tab 不做跨次记忆：正式入口（饮食页「＋ 添加」）每次打开都停在「我的库」；
- * opts.tab 只是调用方显式指定的初始分页（供测试与以后复用），不是记忆。 */
+ * tab 不做跨次记忆：正式入口（饮食周视图日卡「＋ 添加饮食」）每次打开都停在「我的库」；
+ * opts.tab 只是调用方显式指定的初始分页（供测试与以后复用），不是记忆。
+ * 餐次在弹窗顶部 md_slot 四段里选（周视图入口不带预选、按当前时刻粗分；带 slot 参数的入口预选）。 */
 let mdTab = 'mine';        /* 弹窗内当前 tab */
 let mdQuery = '';          /* 当前 tab 的搜索词（切 tab 清空） */
 const PICK_LIMIT = 40;     /* 弹窗候选只渲染前 40 条（记录饮食 / 添加运动共用），配合关键字收敛；避免 300+ 行 DOM */
@@ -2326,10 +2372,12 @@ function addMealDialog(date, slot, opts){
   let sysFoods = null;     /* 本次弹窗拉到的系统库（走 SYS_LIB 缓存，切 tab 不重下） */
   let selMine = null;      /* 我的库选中条目 */
   let selSys = null;       /* 系统库选中条目 */
-  const S = SLOTS.find(s => s.id === slot) || { ic:'🍽️', label:'记录' };
+  /* 餐次：入口可预选；周视图「＋ 添加饮食」不带预选时按当前时刻粗分，弹窗内 md_slot 可随时改 */
+  let slotCur = SLOTS.some(s => s.id === slot) ? slot : suggestSlot();
   const html =
-    '<div class="row gap8" style="margin-bottom:10px">' +
-      '<span class="chip">' + dateCNW(date) + '</span><span class="chip slot" style="background:' + slotColor(slot) + '22;border-color:transparent">' + S.ic + ' ' + esc(S.label) + '</span>' +
+    '<div class="row gap8" style="margin-bottom:10px"><span class="chip">' + dateCNW(date) + '</span></div>' +
+    '<div class="seg" id="md_slot" style="display:flex;width:100%;margin-bottom:10px">' +
+      SLOTS.map(s => '<button type="button" data-mdslot="' + s.id + '" style="flex:1">' + s.ic + ' ' + s.label + '</button>').join('') +
     '</div>' +
     '<div class="seg" id="md_seg" style="display:flex;width:100%;margin-bottom:12px">' +
       '<button type="button" data-mtab="mine" style="flex:1">我的库</button>' +
@@ -2457,6 +2505,10 @@ function addMealDialog(date, slot, opts){
     refresh(); renderList();
   }
   $$('#md_seg [data-mtab]', b).forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.mtab)));
+  /* 餐次分段：决定保存写进哪个 slot 数组键（四餐即切片里的既有形状，不加新字段） */
+  function paintSlot(){ $$('#md_slot [data-mdslot]', b).forEach(btn => btn.classList.toggle('active', btn.dataset.mdslot === slotCur)); }
+  $$('#md_slot [data-mdslot]', b).forEach(btn => btn.addEventListener('click', () => { slotCur = btn.dataset.mdslot; paintSlot(); }));
+  paintSlot();
   $('#mi_q', b).addEventListener('input', e => { mdQuery = e.target.value; renderMine(); });
   $('#mi_qs', b).addEventListener('input', e => { mdQuery = e.target.value; renderSys(); });
   $$('input', b).forEach(i => i.addEventListener('input', refresh));
@@ -2467,7 +2519,7 @@ function addMealDialog(date, slot, opts){
     if(mdTab === 'mine'){
       if(!selMine){ toast('请从我的库选一个食物', true); return; }
       if(!g){ toast('请填写克数', true); return; }
-      addMealItem(date, slot, { id:uid(), name:selMine.name, per100:safePer100(selMine.per100), g });
+      addMealItem(date, slotCur, { id:uid(), name:selMine.name, per100:safePer100(selMine.per100), g });
     } else if(mdTab === 'sys'){
       if(!selSys){ toast('请从系统库选一个食物', true); return; }
       if(!g){ toast('请填写克数', true); return; }
@@ -2476,7 +2528,7 @@ function addMealDialog(date, slot, opts){
         if(selSys.per100) nf.per100 = Object.assign({}, selSys.per100);
         state.foods.push(nf); toast('已加入食物库：' + selSys.name);
       }
-      addMealItem(date, slot, { id:uid(), name:selSys.name, per100:safePer100(selSys.per100), g });
+      addMealItem(date, slotCur, { id:uid(), name:selSys.name, per100:safePer100(selSys.per100), g });
     } else {
       const f = readNew();
       if(!f.name){ toast('请填写食物名称', true); return; }
@@ -2485,9 +2537,9 @@ function addMealDialog(date, slot, opts){
       if($('#mi_savefood', b).checked && !owned(f.name)){
         state.foods.push({ id:uid(), name:f.name, src:FOOD_SRC_USER, per100 }); toast('已加入食物库：' + f.name);
       }
-      addMealItem(date, slot, { id:uid(), name:f.name, per100, g });
+      addMealItem(date, slotCur, { id:uid(), name:f.name, per100, g });
     }
-    save(); closeDialog(); renderDiet();
+    save(); closeDialog(); renderView();   /* 按当前页刷新：从概览「＋ 添加饮食」保存后留在概览（同运动弹窗口径） */
   });
   const cx = $('[data-cancel]', b); if(cx) cx.addEventListener('click', closeDialog);
 }
@@ -2520,7 +2572,7 @@ function editMealDialog(date, itemId){
   $('#me_save', box).addEventListener('click', () => {
     const g = num($('#me_g', box).value);
     if(!g){ toast('请填写克数', true); return; }
-    item.g = g; save(); closeDialog(); renderDiet();
+    item.g = g; save(); closeDialog(); renderView();
   });
   $('#me_del', box).addEventListener('click', () => { delMealItem(date, itemId); closeDialog(); });
   const cx = $('[data-cancel]', box); if(cx) cx.addEventListener('click', closeDialog);
@@ -2828,7 +2880,7 @@ function bindItemChecks(root){
 }
 
 /* 周视图：顶部一张周汇总卡（周导航 + 进度条 + 汇总 chips），下面每天一张全宽卡竖排——
- * 版式对齐饮食页的「顶部日导航卡 + 餐次卡」。可整周前后翻。
+ * 饮食页周视图（2026-11-05 起）与本形态互相对齐。可整周前后翻。
  * 数据仍是「一天一条 workouts」——这里只换呈现：有安排的天渲染项与打卡，
  * 空白的天给一个「＋ 安排运动」直接给那天加计划（页头不再另放全局按钮），看历史靠切周。 */
 let trainMonday = null;                                  /* 当前展示周的周一；null = 跟随本周 */
@@ -2852,7 +2904,7 @@ function renderTrain(){
     vol += wkVolume(w); mins += wkMinutes(w); km += wkDistance(w);
   }
   const pct = Math.round(days / 7 * 100);
-  /* 版式对齐饮食页：顶部一张「周导航 + 进度条 + 汇总 chips」的卡，下面每天一张全宽卡竖排 */
+  /* 与饮食页周视图同款版式：顶部一张「周导航 + 进度条 + 汇总 chips」的卡，下面每天一张全宽卡竖排 */
   $('#view').innerHTML =
     '<div class="card"><div class="row" style="justify-content:center;align-items:center">' +
       '<div class="daynav">' +
@@ -2889,7 +2941,7 @@ function renderWorkoutWeek(body, mon){
   $$('[data-additem]', body).forEach(b => b.addEventListener('click', () => openItemDlg(b.dataset.additem)));
 }
 
-/* ---------- 日卡（版式对齐饮食页的餐次卡：卡头一行搞定标题/进度/操作） ---------- */
+/* ---------- 日卡（卡头一行搞定标题/进度/操作；饮食页 dietDayCardHTML 与本形态互相对齐） ---------- */
 /* 还没开始的那天显示「计划量」，已开始的显示「实际完成量」（只算打勾项） */
 function dayVolumeText(w){
   const started = doneCount(w) > 0;

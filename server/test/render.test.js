@@ -511,7 +511,7 @@ async function main() {
   const x3 = JSON.parse(ev(`(() => {
     const f = state.foods[0];
     const it = { id:'t_x1', name:f.name, per100:{ kcal:f.per100.kcal, p:f.per100.p, c:f.per100.c, f:f.per100.f }, g:150 };
-    dietDate = today();
+    dietMonday = null;
     state.meals[today()] = { breakfast:[it], lunch:[], dinner:[], snack:[] };
     const tot = dayTotals(today());
     renderDiet();
@@ -531,9 +531,10 @@ async function main() {
      'n=' + (dietRow.match(/kcal/g) || []).length + ' row=' + dietRow.slice(-160));
 
   /* T3b5 行内删除钮已取消（用户裁定 2026-09-12）：条目行尾只留一颗 ✏️，删改走 `editMealDialog`
-   * 里的「删除」（`#me_del` → `delMealItem`），Diet 页全页不再有 `data-del=` */
+   * 里的「删除」（`#me_del` → `delMealItem`），Diet 页全页不再有 `data-del=`。
+   * 周视图（2026-11-05）起 ✏️ 多带 `data-editdate`（条目所在日），编辑弹窗按它定位。 */
   ok('T3b5 饮食条目行行尾只有 ✏️（删除钮已去掉，删除走编辑弹窗）',
-     /<div class="lrow" data-item="t_x1">[\s\S]*?<div class="grow">[\s\S]*?<\/div><button class="iconbtn2" data-edit="t_x1" title="修改">✏️<\/button><\/div>/.test(view.__html)
+     /<div class="lrow" data-item="t_x1">[\s\S]*?<div class="grow">[\s\S]*?<\/div><button class="iconbtn2" data-edit="t_x1" data-editdate="[\d-]{10}" title="修改">✏️<\/button><\/div>/.test(view.__html)
      && !view.__html.includes('data-del="')
      && !view.__html.includes('title="删除"'),
      'row=' + dietRow.slice(-200));
@@ -546,47 +547,69 @@ async function main() {
      meDlgH.includes('id="me_del"') && meDlgH.includes('>删除</button>') && meDlgH.includes('id="me_save"'),
      'box=' + meDlgH.slice(0, 160));
 
-  /* T3b2 用户 2026-09-12 先要把「＋ 添加」改成只带「＋」的圆钮，随后又裁定改回原来的文字版
-   * （「添加还是改为原来的样式吧，就是『+添加』」）：卡头恒为一颗 `<button class="btn sm" data-addslot>`＋ 添加</button>`，
-   * 四餐各一颗，不再有 `.btn.plus` 那个圆钮（样式类也已从 style.css 删掉）。 */
-  ok('T3b2 四餐卡头是原来的文字版「＋ 添加」钮（`.btn sm` ×4，无 `.btn.plus` 圆钮）',
-     (view.__html.match(/<button class="btn sm" data-addslot="[a-z]+">＋ 添加<\/button>/g) || []).length === 4
-     && view.__html.includes('<button class="btn sm" data-addslot="breakfast">＋ 添加</button>')
-     && view.__html.includes('<button class="btn sm" data-addslot="snack">＋ 添加</button>')
+  /* T3b2 周视图（2026-11-05 用户要求饮食页对齐运动页）：周一→周日 7 张日卡
+   * （`data-daycard` ×7），每颗卡头一颗「＋ 添加饮食」（`data-addday`，餐次改在弹窗 md_slot 里选）；
+   * 旧的「每餐一颗 data-addslot」四餐卡不存在。周汇总卡：已记录 1/7 天。 */
+  ok('T3b2 周视图 7 张日卡各一颗「＋ 添加饮食」（无旧 data-addslot）',
+     (view.__html.match(/data-daycard="\d{4}-\d{2}-\d{2}"/g) || []).length === 7
+     && (view.__html.match(/<button class="btn sm" data-addday="\d{4}-\d{2}-\d{2}">＋ 添加饮食<\/button>/g) || []).length === 7
+     && !view.__html.includes('data-addslot')
      && !view.__html.includes('class="btn plus"')
-     && !view.__html.includes('data-addslot="breakfast" title='),
-     'n=' + (view.__html.match(/class="btn sm" data-addslot/g) || []).length);
+     && view.__html.includes('已记录 1/7 天'),
+     'daycard=' + (view.__html.match(/data-daycard/g) || []).length + ' addday=' + (view.__html.match(/data-addday/g) || []).length);
 
-  /* T3b3 卡头顺序：图标+餐名 → 紧贴右侧的合计 kcal → grow → ＋（kcal 不再被 grow 推到最右） */
-  ok('T3b3 四餐卡头里合计 kcal 紧贴餐名右侧（label + hint + grow + ＋）',
-     ['breakfast', 'lunch', 'dinner', 'snack'].every(id => {
-       const s = ev('SLOTS').find(x => x.id === id);
-       const kcal = ev('mealSlotTotals(today(), "' + id + '")').kcal;
-       return view.__html.includes(s.ic + ' ' + s.label + '<span class="hint">' + kcal + ' kcal</span><span class="grow"></span>');
-     })
-     && !view.__html.includes('<span class="grow"></span><span class="hint">'));
+  /* T3b3 今天卡头 = 周X 日期 + 今天 chip + 当日合计 kcal hint；卡体按餐分组：
+   * 「🍳 早餐」小计紧贴分组行标题（数据只有 breakfast 一条，其余三餐分组行不渲染） */
+  const dayKcalStr = ev('fmtNum(Math.round(dayTotals(today()).kcal))');
+  ok('T3b3 今天日卡卡头含当日 kcal，卡体早餐分组行带小计、无记录餐不占行',
+     view.__html.includes('<span class="chip ok">今天</span><span class="hint">' + dayKcalStr + ' kcal</span><span class="grow"></span>')
+     && view.__html.includes('<b>🍳 早餐</b><span class="hint">' + x3.expKcal + ' kcal</span>')
+     && !view.__html.includes('<b>🍱 午餐</b>') && !view.__html.includes('<b>🥜 加餐</b>')
+     && (view.__html.match(/<div class="empty"[^>]*><div class="e-ic" style="font-size:22px">🍴<\/div>未记录<\/div>/g) || []).length === 6,
+     'dayHint=' + dayKcalStr);
 
-  /* T3c 概览「今日饮食」卡：有记录时卡底右对齐一个「＋ 记录一下」（与运动/睡眠卡同款同位；
-   * 空态仍是卡体内居中的 primary「去记录」；绑定用单元素 querySelector,同页恰好一个 data-go2="diet"） */
+  /* T3e 周导航：切到上周 → 周头「上周」+「回到本周」钮，日卡首日=上周一，本周条目不串显 */
+  const lastMon = ev('addDays(thisMonday(), -7)');
+  ev('setDietWeek("' + lastMon + '")');
+  ok('T3e 切上周：data-daycard 首日=上周一、周头「上周」、出「回到本周」、t_x1 不串显',
+     view.__html.includes('data-daycard="' + lastMon + '"')
+     && view.__html.includes('<small>上周</small>') && view.__html.includes('id="dt_now"')
+     && !view.__html.includes('t_x1'),
+     view.__html.slice(0, 180));
+  ev('setDietWeek(null)');
+  ok('T3e2 回到本周：周头「本周」且无「回到本周」钮，t_x1 回来',
+     view.__html.includes('<small>本周</small>') && !view.__html.includes('id="dt_now"')
+     && view.__html.includes('t_x1'));
+
+  /* T3c 概览「今日饮食」卡（2026-11-05 改版）：有记录时卡体按餐列当日明细行
+   * （「🍳 早餐 · 名称 克数」），卡底右对齐「＋ 添加饮食」（ghost，data-addmeal 直接开
+   * addMealDialog，对齐运动卡「＋ 添加运动」交互），入口行上方有分隔线；
+   * 空态是卡体内居中的 primary「＋ 添加饮食」（2026-11-05 起同开弹窗，不再跳饮食页） */
   ev('renderHome()');
   const dietI = view.__html.indexOf('🍽️ 今日饮食');
   const dietCard = dietI < 0 ? '' : view.__html.slice(dietI, dietI + 1600);
-  ok('T3c 有记录时卡底是「＋ 记录一下」（ghost + margin-left:auto，同运动/睡眠卡），上方有分隔线',
-     dietCard.includes('kcal')
-     && dietCard.includes('border-bottom:1px solid var(--line)"')   /* chips 行带分隔线 = 入口行上方的横线 */
-     && dietCard.includes('<div class="row mt" style="align-items:center"><button class="btn sm ghost" data-go2="diet" style="margin-left:auto">＋ 记录一下</button></div>')
+  ok('T3c 有记录时卡体显示当日饮食明细，卡底是「＋ 添加饮食」（data-addmeal），上方有分隔线',
+     dietCard.includes('<span style="flex:0 0 auto;margin-right:4px">🍳 <b>早餐</b> ·</span><span style="flex:1;min-width:0">' + x3.name + '</span>')
+     && !dietCard.includes('150g')   /* 概览明细不显克数（饮食页 .lrow 仍显，见 T3b/T3b4） */
+     && dietCard.includes('kcal')
+     && dietCard.includes('border-bottom:1px solid var(--line)"')   /* 内容块底部横线 = 入口行上方的分隔线 */
+     && dietCard.includes('<div class="row mt" style="align-items:center"><button class="btn sm ghost" data-addmeal style="margin-left:auto">＋ 添加饮食</button></div>')
+     && !dietCard.includes('＋ 记录一下')
      && !dietCard.includes('>去记录<')
-     && (view.__html.match(/data-go2="diet"/g) || []).length === 1,
-     'n=' + (view.__html.match(/data-go2="diet"/g) || []).length);
+     && (view.__html.match(/data-go2="diet"/g) || []).length === 0,
+     'go2=' + (view.__html.match(/data-go2="diet"/g) || []).length + ' | ' + dietCard.slice(0, 240));
 
-  /* T3d 空态不变：卡体内居中的 primary「去记录」，不走卡底行 */
+  /* T3d 空态：卡体内居中的 primary「＋ 添加饮食」（data-addmeal 直接开弹窗，同运动卡空态口径），
+   * 全页不再有 data-go2="diet" 跳转入口 */
   const dietBackup = ev('JSON.stringify(state.meals[today()])');
   ev('state.meals[today()] = { breakfast:[], lunch:[], dinner:[], snack:[] }; renderHome()');
-  ok('T3d 空态仍是居中 primary「去记录」',
-     view.__html.includes('<button class="btn primary sm" data-go2="diet">去记录</button>')
+  ok('T3d 空态是居中 primary「＋ 添加饮食」（data-addmeal），无「去记录」跳转',
+     view.__html.includes('<div class="empty"><div class="e-ic">🍽️</div>还没有记录今天的饮食<div class="mt"><button class="btn primary sm" data-addmeal>＋ 添加饮食</button></div></div>')
+     && !view.__html.includes('>去记录<')
      && !view.__html.includes('＋ 记录一下')
-     && (view.__html.match(/data-go2="diet"/g) || []).length === 1,
-     'n=' + (view.__html.match(/data-go2="diet"/g) || []).length);
+     && (view.__html.match(/data-go2="diet"/g) || []).length === 0
+     && (view.__html.match(/data-addmeal/g) || []).length === 1,
+     'addmeal=' + (view.__html.match(/data-addmeal/g) || []).length);
   ev('state.meals[today()] = ' + dietBackup + '; renderHome()');
 
   /* T4 饮水卡显隐(PLANS/MEMO 记载的「目标 0 隐藏」契约) */
@@ -1163,8 +1186,10 @@ async function main() {
     hMeal = ev('curDialog.box.__html');
     hMineList = ev("$('#mi_list', curDialog.box).__html");
   } catch (e) { hMeal = 'ERR:' + e.message; }
-  ok('T12s 记录饮食弹窗：三 tab 分段 + 我的库候选行 + 共用底栏（只填克数）',
+  ok('T12s 记录饮食弹窗：餐次四段 md_slot + 三 tab 分段 + 我的库候选行 + 共用底栏（只填克数）',
      !hMeal.startsWith('ERR:')
+     && hMeal.includes('id="md_slot"')
+     && ['breakfast', 'lunch', 'dinner', 'snack'].every(s => hMeal.includes('data-mdslot="' + s + '"'))
      && ['data-mtab="mine"', 'data-mtab="sys"', 'data-mtab="new"'].every(s => hMeal.includes(s))
      && hMeal.includes('id="md_p_mine"') && hMeal.includes('id="md_p_sys"') && hMeal.includes('id="md_p_new"')
      && hMeal.includes('id="mi_q"') && hMeal.includes('id="mi_list"') && hMeal.includes('class="picklist"')
@@ -1236,10 +1261,12 @@ async function main() {
   ok('T12s9 「已有」提示文案：只写口径（不入库/不改库里营养），不写「点「X」可…」操作指引',
      tipHTML.includes('class="chip b3">已有<') && tipHTML.includes('本次只记这一餐') && tipHTML.includes('不会入库')
      && !/点「.+」可/.test(tipHTML) && !readPub('js/app.js').includes('营养按库锁定'), tipHTML);
-  ok('T12s7 饮食页 ✏️ 已改走 editMealDialog（只改克数），旧的「按名匹配回库」全字段编辑路径不再存在',
+  ok('T12s7 饮食页 ✏️ 已改走 editMealDialog（只改克数），周视图绑定传条目所在日；旧的「按名匹配回库」全字段编辑路径不再存在',
      (function(){ const a = readPub('js/app.js');
-       return a.includes("editMealDialog(dietDate, b.dataset.edit)") && a.includes("addMealDialog(dietDate, b.dataset.addslot)")
-         && !a.includes('slotOfItem(dietDate') && !a.includes('function addMealDialog(date, slot, itemId)'); })());
+       return a.includes('editMealDialog(b.dataset.editdate, b.dataset.edit)') && a.includes('addMealDialog(b.dataset.addday)')
+         && !a.includes('dietDate') && !a.includes('function addMealDialog(date, slot, itemId)')
+         /* 保存/删除后按当前页刷新（renderView），不再硬跳饮食页（用户裁定 2026-11-05：概览添加保存后应留在概览） */
+         && !/save\(\);\s*(closeDialog\(\);\s*)?renderDiet\(\)/.test(a); })());
   /* 系统分页的「已有」标记（与个人库按名称比，与动作库同一口径）——
    * 桩不能点分页，但分页选择是页面级状态 foodLibTab/exLibTab，直接设好再进页即可。
    * 先重置系统库缓存，否则前面用例拉过的 mock 列表会盖掉本处的断言数据 */

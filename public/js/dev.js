@@ -238,7 +238,7 @@ function runFTest(){
   T('mealDialog', () => {
     /* v4.15（2026-09-12）记录饮食三 tab：「新增」全字段 + 勾选入库 → 「我的库」选中后只填克数。
      * 测试用刚入库的那条食物，账户个人库为空也能跑；结束就地复位，不污染真实数据。 */
-    dietDate = today(); renderDiet();
+    dietMonday = null; renderDiet();
     /* 先洗掉历史 residue（上一次跑到一半异常退出时留下的），再取快照 */
     USERS.shared.foods = USERS.shared.foods.filter(f => f.name !== '测试餐'); state.foods = USERS.shared.foods;
     const bakMeals = JSON.stringify(state.meals[today()] || null), bakFoods = JSON.stringify(USERS.shared.foods);
@@ -283,6 +283,15 @@ function runFTest(){
     if(curDialog.box.innerHTML.indexOf('id="mi_name"') >= 0) throw new Error('edit-should-not-expose-nutrition');
     $('#me_g', curDialog.box).value = 80; $('#me_save', curDialog.box).click();
     if(findMealItem(today(), it.id).g !== 80) throw new Error('edit-g-not-saved');
+    /* 周视图入口：日卡「＋ 添加饮食」不带预选餐次 → 弹窗顶部 md_slot 选到「午餐」，保存应写进 lunch 数组 */
+    addMealDialog(today());
+    b = curDialog.box;
+    $$('[data-mdslot="lunch"]', b)[0].click();
+    const q2 = $('#mi_q', b); q2.value = '测试餐'; q2.dispatchEvent(new Event('input', { bubbles: true }));
+    $$('[data-mypick="' + state.foods[nFoods].id + '"]', b)[0].click();
+    $('#mi_g', b).value = 30; $('#mi_save', b).click();
+    const lunch = dayMeals(today()).lunch || [];
+    if(!lunch.some(x => x.name === '测试餐' && x.g === 30)) throw new Error('mdslot-lunch-not-saved');
     USERS.shared.foods = JSON.parse(bakFoods); state.foods = USERS.shared.foods;
     if(bakMeals === 'null') delete state.meals[today()]; else state.meals[today()] = JSON.parse(bakMeals);
     save();
