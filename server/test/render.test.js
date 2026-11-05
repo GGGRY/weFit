@@ -875,11 +875,16 @@ async function main() {
   }
 
   /* T9w 体重趋势图「日历轴」（2026-10-13 用户要求）：停记的空窗不能照旧等距排、线拉过去。
-     钉四层：① 缺口处折线断成多个子路径（留空不连线，面积也逐段封底）；② 空窗的水平间距按真实天数放大；
+     钉四层：① 缺口处实线断成多个子路径（面积也逐段封底），断口之间用细虚线桥搭起来
+     （2026-11-05 用户要求：中间没记的天数不要空着，虚线连,表明这段没有实测）；② 空窗的水平间距按真实天数放大；
      ③ 自己的常态节奏内（隔2天记、每周记、天天记偶尔漏1天）不被误切断；④ 其它序号轴图（热量）不被牵连。 */
   {
     const lineD = svg => { const m = svg.match(/<path d="([^"]*)" fill="none"/); return m ? m[1] : ''; };
     const nSub = d => (d.match(/M/g) || []).length;
+    /* 虚线桥是第二条 fill="none" 路径（带 dasharray）；lineD 取第一条 = 实线,不受影响 */
+    const bridgeD = svg => { const m = svg.match(/<path d="([^"]*)" fill="none"[^>]*stroke-dasharray="4 4"/); return m ? m[1] : ''; };
+    const cxyOf = svg => Array.from(svg.matchAll(/<circle cx="([\d.]+)" cy="([\d.]+)"/g), m => [parseFloat(m[1]), parseFloat(m[2])]);
+    const bridgePts = d => Array.from(d.matchAll(/[ML]([\d.]+) ([\d.]+)/g), m => [parseFloat(m[1]), parseFloat(m[2])]);
     const mkSvg = (pts, scale) => ev("(function(){ return lineChartSVG({ points:" + JSON.stringify(pts) +
       ", color:'c', area:true" + (scale ? ", dateScale:true" : "") + " }); })()");
     const cxOf = svg => Array.from(svg.matchAll(/<circle cx="([\d.]+)"/g), m => parseFloat(m[1]));
@@ -887,10 +892,18 @@ async function main() {
                      {x:'2026-07-06',y:71},{x:'2026-07-08',y:71.1},{x:'2026-07-10',y:71.3} ];
     const gs = mkSvg(gapPts, true), gd = lineD(gs);
     const gcx = cxOf(gs);
-    ok('T9w1 日历轴缺口断线：6 点中间空 31 天 → 折线 2 个子路径、圆点仍是 6 个、面积也断成 2 段',
+    ok('T9w1 日历轴缺口断线：6 点中间空 31 天 → 实线 2 个子路径、圆点仍是 6 个、面积也断成 2 段',
        nSub(gd) === 2 && gcx.length === 6
        && nSub((gs.match(/<path d="([^"]*)" fill="c"/) || [,''])[1]) === 2,
        'M=' + nSub(gd) + ' circles=' + gcx.length);
+    {
+      const bd = bridgeD(gs), bp = bridgePts(bd), cxy = cxyOf(gs);
+      ok('T9w1b 缺口虚线桥：断口之间一条 4/4 虚线,端点正好落在断口两侧点（第 3、4 个圆点）上',
+         nSub(bd) === 1 && bp.length === 2
+         && Math.abs(bp[0][0] - cxy[2][0]) < 0.01 && Math.abs(bp[0][1] - cxy[2][1]) < 0.01
+         && Math.abs(bp[1][0] - cxy[3][0]) < 0.01 && Math.abs(bp[1][1] - cxy[3][1]) < 0.01,
+         'bridge=' + JSON.stringify(bp) + ' circles=' + JSON.stringify(cxy.slice(2, 4)));
+    }
     ok('T9w2 空窗按真实天数留白：缺口两侧点的像素距 ≥ 5× 正常点距（序号轴下两者恒等）',
        gcx[3] - gcx[2] > 5 * (gcx[2] - gcx[1]),
        'gap=' + Math.round(gcx[3]-gcx[2]) + ' step=' + Math.round(gcx[2]-gcx[1]));
@@ -898,12 +911,14 @@ async function main() {
       .map((d, i) => ({ x:d, y:70 + i*0.1 }));
     const miss = ['2026-07-01','2026-07-02','2026-07-03','2026-07-06','2026-07-07','2026-07-08','2026-07-09','2026-07-10']
       .map((d, i) => ({ x:d, y:70 + i*0.05 }));
-    ok('T9w3 不误切断常态节奏：每周固定记（间隔7天，cut=17.5）、天天记偶尔漏2天（中位1，cut=7）都仍是单段连线',
-       nSub(lineD(mkSvg(wk, true))) === 1 && nSub(lineD(mkSvg(miss, true))) === 1,
-       'weekly=' + nSub(lineD(mkSvg(wk, true))) + ' miss=' + nSub(lineD(mkSvg(miss, true))));
-    ok('T9w4 非 dateScale（热量图口径）不受牵连：30 天逐日序列照旧单段线',
-       nSub(lineD(ev("$('#st_cal').innerHTML"))) === 1,
-       'cal M=' + nSub(lineD(ev("$('#st_cal').innerHTML"))));
+    const wkS = mkSvg(wk, true), missS = mkSvg(miss, true);
+    ok('T9w3 不误切断常态节奏：每周固定记（间隔7天，cut=17.5）、天天记偶尔漏2天（中位1，cut=7）都仍是单段连线，且不画多余虚线桥',
+       nSub(lineD(wkS)) === 1 && nSub(lineD(missS)) === 1 && !bridgeD(wkS) && !bridgeD(missS),
+       'weekly=' + nSub(lineD(wkS)) + ' miss=' + nSub(lineD(missS)));
+    const calSvg = ev("$('#st_cal').innerHTML");
+    ok('T9w4 非 dateScale（热量图口径）不受牵连：30 天逐日序列照旧单段线、无虚线桥',
+       nSub(lineD(calSvg)) === 1 && !bridgeD(calSvg),
+       'cal M=' + nSub(lineD(calSvg)));
     /* 真图接线：历史页体重图与身体页趋势图都开了日历轴 */
     const wBak = ev('JSON.stringify(state.body)');
     ev("state.body = " + JSON.stringify([
@@ -911,8 +926,8 @@ async function main() {
       {date:'2026-09-20',weight:71.0},{date:'2026-09-22',weight:71.2},{date:'2026-09-24',weight:71.5}
     ]) + '; renderStats(); renderBodyChart(\'weight\')');
     const stW = ev("$('#st_weight').innerHTML"), bdW = ev("$('#chartBody').innerHTML");
-    ok('T9w5 历史页「体重趋势（kg）」与身体页趋势图同步走日历轴：同样空窗都断成 2 段',
-       nSub(lineD(stW)) === 2 && nSub(lineD(bdW)) === 2,
+    ok('T9w5 历史页「体重趋势（kg）」与身体页趋势图同步走日历轴：同样空窗都断成 2 段、都补了虚线桥',
+       nSub(lineD(stW)) === 2 && nSub(lineD(bdW)) === 2 && !!bridgeD(stW) && !!bridgeD(bdW),
        'st=' + nSub(lineD(stW)) + ' body=' + nSub(lineD(bdW)));
     ev('state.body = ' + wBak + '; renderStats()');
   }

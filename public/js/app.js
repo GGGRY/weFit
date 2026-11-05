@@ -3676,7 +3676,7 @@ function renderBodyChart(metric){
     points: out,
     color: 'var(--brand)',
     area: true,
-    dateScale: true,   /* 稀疏记录日历轴：停记空窗留白、缺口不连线（2026-10-13，与历史页体重图同口径） */
+    dateScale: true,   /* 稀疏记录日历轴：停记空窗留白、缺口虚线连接（2026-10-13/2026-11-05，与历史页体重图同口径） */
     fmtTick: v => fmtDec(v) + mdef.unit,
     fmtVal: v => fmtDec(v) + ' ' + mdef.unit,
     fmtX: dateSlash,
@@ -4508,6 +4508,7 @@ function lineChartSVG(o){
      停记的空窗被压成正常点距、线直接拉过去看不出中断。开启后横轴按真实日期等比定位，
      空窗留成真实空白；线在缺口处断开：断点阈值 cut = max(7 天, 2.5×记录间隔中位数)——
      比自己的常态节奏明显大很多才算中断，天天记的人偶尔漏两天、每周固定称一次的人都不被误切断。
+     断开的段之间用细虚线搭桥（2026-11-05 用户要求）：趋势能顺着看，虚线表明这段没有实测。
      日期不可排进（同一天/倒序）退回序号轴，与非 dateScale 图行为一致。 */
   let dx = null;
   if(o.dateScale){
@@ -4552,13 +4553,22 @@ function lineChartSVG(o){
     });
     if(d) s += '<path d="' + d + '" fill="' + o.color + '" opacity="0.12"/>';
   }
-  // 折线（一条 path 多个子路径：断点处天然留空，不连线）
+  // 折线（一条 path 多个子路径：实线只连段内点，缺口处断开）
   let d = '';
   segs.forEach(sg => {
     d += 'M' + X(sg[0]) + ' ' + yAt(pts[sg[0]].y, mn, mx);
     for(let k = 1; k < sg.length; k++) d += ' L' + X(sg[k]) + ' ' + yAt(pts[sg[k]].y, mn, mx);
   });
   s += '<path d="' + d + '" fill="none" stroke="' + o.color + '" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>';
+  // 缺口虚线桥（段间搭一条细虚线，趋势顺看；面积不搭桥,底色仍只铺实侧）
+  if(segs.length > 1){
+    let b = '';
+    for(let k = 1; k < segs.length; k++){
+      const a = segs[k - 1][segs[k - 1].length - 1], z = segs[k][0];
+      b += 'M' + X(a) + ' ' + yAt(pts[a].y, mn, mx) + ' L' + X(z) + ' ' + yAt(pts[z].y, mn, mx);
+    }
+    s += '<path d="' + b + '" fill="none" stroke="' + o.color + '" stroke-width="1.5" stroke-dasharray="4 4" opacity="0.5"/>';
+  }
   // 点（圆点只负责显示，取数值交给感应带；单点段也照常有点）
   const fmtV = o.fmtVal || (v => String(Math.round(v)));
   pts.forEach((p, i) => {
