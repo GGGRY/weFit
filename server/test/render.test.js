@@ -930,6 +930,27 @@ async function main() {
        nSub(lineD(stW)) === 2 && nSub(lineD(bdW)) === 2 && !!bridgeD(stW) && !!bridgeD(bdW),
        'st=' + nSub(lineD(stW)) + ' body=' + nSub(lineD(bdW)));
     ev('state.body = ' + wBak + '; renderStats()');
+    /* 日历轴横轴叠字（2026-11-05 用户报体重趋势图）：连续记录在日历轴上挤进几像素,
+       旧写法「每隔 step 个点取样」照样把日期排在一起。现在日历轴按真实像素贪心放标签,
+       钉相邻标签中心距 ≥ 两者半宽之和（与 textW 无 canvas 时的 0.62em/字符同一口径）。 */
+    {
+      const dense = ['2026-09-05','2026-09-06','2026-09-07','2026-09-08','2026-09-09',
+                     '2026-09-12','2026-09-13','2026-09-19','2026-09-20','2026-09-25',
+                     '2026-10-08','2026-10-12','2026-10-14','2026-10-27']
+        .map((d, i) => ({ x:d, y:62 + (i % 5) * 0.3 }));
+      const ds = ev("(function(){ return lineChartSVG({ points:" + JSON.stringify(dense) +
+        ", color:'c', dateScale:true, fmtX:dateSlash }); })()");
+      const labs = Array.from(ds.matchAll(/<text x="([\d.-]+)" y="[\d.]+" text-anchor="middle"[^>]*>([^<]+)<\/text>/g),
+        m => [parseFloat(m[1]), m[2]]);
+      let collide = [];
+      for(let k = 1; k < labs.length; k++){
+        const need = (labs[k-1][1].length + labs[k][1].length) / 2 * 11 * 0.62;
+        if(labs[k][0] - labs[k-1][0] < need) collide.push(labs[k-1][1] + '|' + labs[k][1]);
+      }
+      ok('T9w6 日历轴横轴不叠字：连续日期贪心留像素，相邻标签不再压在一起',
+         labs.length >= 4 && collide.length === 0 && labs.some(l => l[1] === '10/27'),
+         'labels=' + labs.map(l => l[1]).join(' ') + ' collide=' + collide.join(','));
+    }
   }
 
   /* T9h 设置页「恢复默认顺序」逃生口已按用户要求删除（2026-09-13）：卡片/图表顺序改过后也不该再出现 */

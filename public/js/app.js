@@ -4462,11 +4462,25 @@ function axisY(mn, mx, tickFmt){
 }
 function xLabels(points, fmt, xPos){
   const n = points.length;
-  const step = tickStep(n, 7);
   const PX = xPos || (i => xAt(i, n));
+  const y = round(CHART_H - FS_AX * 0.9, 2);
+  const tag = (i, t) => '<text x="' + PX(i) + '" y="' + y + '" text-anchor="middle" font-size="' + FS_AX + '" fill="' + CX.ax + '">' + esc(t) + '</text>';
   let s = '';
+  if(xPos){
+    /* 日历轴（传了 xPos）点距不等宽：连续记录挤在几像素内，照序号那样每隔 step 个点取样
+       会把日期叠在一起（2026-11-05 用户报体重趋势图横轴叠字）。改成逐点贪心：离上一个
+       标签留得下就印，留不下整条跳过，密集段自然只露首尾几个刻度。 */
+    let right = -Infinity;
+    for(let i = 0; i < n; i++){
+      const t = fmt(points[i].x);
+      const half = textW(t, FS_AX) / 2;
+      if(PX(i) - half >= right + 6){ s += tag(i, t); right = PX(i) + half; }
+    }
+    return s;
+  }
+  const step = tickStep(n, 7);
   for(let i = 0; i < n; i += step){
-    s += '<text x="' + PX(i) + '" y="' + round(CHART_H - FS_AX * 0.9, 2) + '" text-anchor="middle" font-size="' + FS_AX + '" fill="' + CX.ax + '">' + esc(fmt(points[i].x)) + '</text>';
+    s += tag(i, fmt(points[i].x));
   }
   return s;
 }

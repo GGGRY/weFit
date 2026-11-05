@@ -22,6 +22,8 @@
 
 - 体重趋势图缺口补一条细虚线连起趋势（实线照旧断开，身体页与历史页图同口径）。
 
+- 日历轴图的横轴日期标签改按真实像素贪心排布，连续记录挤在一起时不再叠字。
+
 ## v4.24（2026-11-03）— 云端升级/回滚脚本 + README 精简
 
 - **云端升级/回滚脚本**：新增 `deploy/update.sh`（备份库 → `git pull --ff-only` → 重启 → `/api/health` 检查；拒绝脏工作区、`db.js`/`seed.js` 变更提示、备份保留 30 份）与 `deploy/rollback.sh`（按 tag/commit 回滚代码，`--restore-db` 可连库恢复到指定备份并清理 WAL，回滚前自动再备份当前库），共用 `deploy/_common.sh`（默认路径与 `wefit.service` 一致，可用环境变量覆盖；备份走内置 `node:sqlite` 的 `VACUUM INTO`）。README「公网部署」补升级维护说明。纯部署工具，运行产物不变。
