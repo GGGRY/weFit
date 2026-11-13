@@ -27,7 +27,7 @@ function makeNode(tag) {
     __html: '', textContent: '', value: '', checked: false, disabled: false,
     dataset: {}, style: {}, children: [], tagName: String(tag || 'div').toUpperCase(),
     classList: { add(){}, remove(){}, toggle(){}, contains(){ return false; } },
-    appendChild(c){ this.children.push(c); return c; },
+    appendChild(c){ c.parentNode = this; this.children.push(c); return c; },
     removeChild(){}, remove(){},
     addEventListener(){}, removeEventListener(){},
     setAttribute(){}, getAttribute(){ return null; }, removeAttribute(){},
@@ -2155,6 +2155,17 @@ async function main() {
   HEALTH_BEIAN = { icp: 'x"<a>' };
   await ev('mountBeian()');
   ok('T23e 环境值经转义，不破页脚结构', latestBeian().includes('x&quot;&lt;a&gt;'), latestBeian());
+  /* ---------- T23f 移动端贴靠位（未标版号）：登录门解除后页脚挪进 #main 内容末尾(不再常驻低栏)，
+     登录门弹出时挪回 body 压在门之上。桩 remove() 为 no-op，body.children 里那份引用不删，
+     靠同一节点的 parentNode 判当前贴靠位。 ---------- */
+  const latestBeianNode = () => { const n = beianNodes(); return n.length ? n[n.length - 1] : null; };
+  const mainNode = doc.getElementById('main');
+  await ev('window.matchMedia = () => ({ matches: true }); hideAuth();');
+  ok('T23f 移动端 + 主界面 → 页脚 parentNode 是 #main(随内容滚到页底，不常驻)',
+    latestBeianNode() && latestBeianNode().parentNode === mainNode);
+  await ev('showAuth()');
+  ok('T23g 登录门弹出 → 页脚回 body 悬浮(门是不透明层，内容流里的页脚会被门盖住)',
+    latestBeianNode() && latestBeianNode().parentNode === doc.body);
   HEALTH_BEIAN = null;
 
   finish();

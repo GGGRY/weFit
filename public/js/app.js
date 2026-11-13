@@ -4932,6 +4932,7 @@ async function probeRegisterOpen(){
 }
 async function showAuth(offlineNote){
   hideAuth();
+  beianAuthOpen = true; beianPlace();   /* 登录门期间页脚回 body 悬浮(门是不透明层,内容流里的页脚会被门盖住) */
   const regOpen = await probeRegisterOpen();
   const el = document.createElement('div');
   el.id = 'authgate'; el.className = 'authgate';
@@ -4984,8 +4985,12 @@ async function showAuth(offlineNote){
   $('#ag_go', el).addEventListener('click', submit);
   ['ag_u', 'ag_n', 'ag_p'].forEach(id => { const i = $('#' + id, el); if(i) i.addEventListener('keydown', e => { if(e.key === 'Enter') submit(); }); });
   $('#ag_u', el).focus();
+  beianAuthOpen = true; beianPlace();   /* 门已就位后再贴一次,兜住 mountBeian 与 showAuth 的异步先后 */
 }
-function hideAuth(){ const el = document.getElementById('authgate'); if(el) el.remove(); }
+function hideAuth(){
+  const el = document.getElementById('authgate'); if(el) el.remove();
+  beianAuthOpen = false; beianPlace();
+}
 
 /* 按需注入 js/dev.js（classic script）。只加载一次，结果缓存在 window.__devHooks。 */
 let devLoading = null;
@@ -5026,10 +5031,15 @@ async function startMain(offlineBoot){
 /* 全站底部固定页脚:仅当服务端配置了备案号(公网部署口径)时,经公开的 /api/health.beian
  * 下发并挂载;本地未配置 → 探测返回 null,不渲染。合规要求备案号挂在首页显眼位置,
  * 而登录门 .authgate 是不透明覆盖层(z-index 95),故页脚取 96 压在登录页之上。
- * 页脚恒在视口最底(安全区由它吸收);移动端 tabbar 抬到页脚上方:--beian-h = 页脚实测高,
- * --beian-tab-bottom = tabbar 实测高(供 .quickbar 让位),两者由本段量出写进根元素。
+ * 桌面与登录门期间:页脚恒在视口最底(安全区由它吸收);移动端 tabbar 抬到页脚上方:
+ * --beian-h = 页脚实测高,--beian-tab-bottom = tabbar 实测高(供 .quickbar 让位),两者由本段量出写进根元素。
+ * 移动端进主界面后(body.beian-inflow):页脚挪进 .main 内容末尾、转普通流,随页面滚到最底才出现,
+ * 不再常驻低栏——常驻条要求是桌面口径,手机用户嫌它压占一栏(2026-11-13)。
+ * 登录门显隐用 beianAuthOpen 记账(桩 DOM 的 getElementById 会凭空物化节点,不能靠查门元素判断),
+ * showAuth/hideAuth 末尾都会 beianPlace() 重贴,与 mountBeian 的异步时序无关。
  * 桩 DOM 无渲染引擎(offsetHeight/style.setProperty 缺):守卫后自然跳过测量,只验结构。 */
 let beianEl = null;
+let beianAuthOpen = false;
 function beianSetVar(name, px){
   const s = document.documentElement.style;
   if(s && typeof s.setProperty === 'function') s.setProperty(name, px);
@@ -5040,6 +5050,15 @@ function beianSize(){
   /* display:none 时 offsetHeight 恒 0 → 桌面(无 tabbar)贴底,移动端贴 tabbar 上沿 */
   beianSetVar('--beian-tab-bottom', ((tb && tb.offsetHeight) || 0) + 'px');
   if(beianEl.offsetHeight) beianSetVar('--beian-h', beianEl.offsetHeight + 'px');
+}
+function beianPlace(){
+  if(!beianEl) return;
+  const inflow = typeof window.matchMedia === 'function'
+    && window.matchMedia('(max-width:899px)').matches && !beianAuthOpen;
+  const host = inflow ? document.getElementById('main') : document.body;
+  if(host && beianEl.parentNode !== host) host.appendChild(beianEl);
+  document.body.classList.toggle('beian-inflow', inflow);
+  beianSize();
 }
 async function mountBeian(){
   try {
@@ -5055,10 +5074,9 @@ async function mountBeian(){
       '<a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">' + esc(b.icp) + '</a>' +
       (b.ga ? '<span class="bi-sep">·</span><a href="' + esc(b.gaUrl || 'https://beian.mps.gov.cn/') +
         '" target="_blank" rel="noopener">' + esc(b.ga) + '</a>' : '');
-    document.body.appendChild(beianEl);
     document.body.classList.add('has-beian');
-    beianSize();
-    window.addEventListener('resize', beianSize);
+    beianPlace();   /* 贴靠位由 beianPlace 决定:桌面/登录门=body 悬浮,移动端主界面=.main 内容末尾 */
+    window.addEventListener('resize', beianPlace);
   } catch(e){ /* 离线/旧服务端缺字段：不显示 */ }
 }
 async function init(){

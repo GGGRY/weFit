@@ -8,6 +8,8 @@
 
 - 新增全站底部固定备案页脚（配 `BEIAN_ICP` 才显示，经 `/api/health` 下发）；备案号等站点变量放仓库外 `/etc/wefit/wefit.env`（`wefit.service` 已加 `EnvironmentFile`，不影响 update.sh）。
 
+- 备案页脚手机端不再常驻低栏：进主界面后挪进内容末尾、滚到页底才出现，tabbar 回原贴底位；登录页与桌面端仍悬浮视口最底。
+
 - 品牌标志统一为内联 SVG 徽章（品牌绿渐变 + 白色 W）：两页 favicon 与侧边栏 / 登录页 / 后台页眉 logo 共用 `style.css` 的 `--logo-glyph`，不再依赖系统 emoji 字体（原 💪 / 🛠 / 🚫 logo 一并换掉，导航栏各按钮的 emoji 图标不变）。
 
 - iPhone 主屏幕图标：新增 `apple-touch-icon.png` 并接入两页 link 与 `STATIC_FILES` 映射，「添加到主屏幕」不再退成截图。
