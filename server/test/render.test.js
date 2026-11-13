@@ -96,6 +96,7 @@ let CONFIRM_CALLS = 0;     /* 断言用：弹了几次人工裁决 */
 let CONCURRENT_WRITE = null;   /* 测试用：在 keys 请求返回前插一次「别的设备的写」 */
 let FAIL_NEXT_PUSH = null;     /* 测试用：让下一次 PUT /api/slices 返回指定状态码（验 5xx 不当 fatal） */
 let HEALTH_REGISTER_OPEN = true;  /* 测试用：/api/health 桩返回的 register_open（T21 登录页注册入口） */
+let HEALTH_BEIAN = null;          /* 测试用：/api/health 桩返回的 beian（T23 备案页脚开关，null=本地默认） */
 const LEGACY_PUTS = [];    /* 整树 PUT /api/state 的请求体（旧缓存迁移路径） */
 const MANIFEST = {};
 const SLICE_VALUES = {};
@@ -158,7 +159,7 @@ async function fakeFetch(url, opts) {
     exercises: [{ id:'se1', name:'杠铃卧推', cat:'力量', muscle:'胸', mode:'reps' }, { id:'se2', name:'系统专属动作', cat:'力量', muscle:'腿', mode:'reps' }],
   });
   if (m === 'PUT' && u.endsWith('/api/state')) return res(200, { ok: true, rev: 2 });
-  if (m === 'GET' && u.endsWith('/api/health')) return res(200, { ok: true, accounts: 1, auth: true, register_open: HEALTH_REGISTER_OPEN });
+  if (m === 'GET' && u.endsWith('/api/health')) return res(200, { ok: true, accounts: 1, auth: true, register_open: HEALTH_REGISTER_OPEN, beian: HEALTH_BEIAN });
   return res(404, { error: 'not_found' });
 }
 
@@ -2131,6 +2132,30 @@ async function main() {
   ok('T22c version 字段缺失（离线/旧服务端）时设置页不渲染版本行',
     !view.__html.includes('weFit v'), view.__html.slice(-160));
   ev("me.version = '4.24'");
+
+  /* ---------- T23 备案页脚（未标版号）：/api/health.beian 有 icp 才挂载全站固定页脚；
+     ICP 号链工信部，配了 ga 追加公安备案号（缺专用链接时回落平台首页）；未配置不渲染。
+     桩 remove() 为 no-op，重挂只断言最后一个 site-beian 节点；层级/贴靠是渲染表现，留给真浏览器。 ---------- */
+  const beianNodes = () => doc.body.children.filter(c => c.className === 'site-beian');
+  const latestBeian = () => { const n = beianNodes(); return n.length ? n[n.length - 1].__html : ''; };
+  ok('T23 本地默认（未配 BEIAN_ICP，启动时 beian=null）不渲染备案页脚',
+    beianNodes().length === 0, latestBeian());
+  HEALTH_BEIAN = { icp: '测ICP备2026000001号-1' };
+  await ev('mountBeian()');
+  ok('T23b 配置 icp → 挂出页脚，ICP 号链向工信部且未配公安号时不追加',
+    latestBeian().includes('测ICP备2026000001号-1') && latestBeian().includes('href="https://beian.miit.gov.cn/"')
+    && !latestBeian().includes('公安'), latestBeian());
+  HEALTH_BEIAN = { icp: '测ICP备2026000001号-1', ga: '测公网安备50000000000001号' };
+  await ev('mountBeian()');
+  ok('T23c 配 ga 缺链接 → 同排追加公安备案号，链接回落平台首页',
+    latestBeian().includes('测公网安备50000000000001号') && latestBeian().includes('href="https://beian.mps.gov.cn/"'), latestBeian());
+  HEALTH_BEIAN = { icp: '测ICP备2026000001号-1', ga: '测公网安备50000000000001号', gaUrl: 'https://beian.mps.gov.cn/#/record/xyz' };
+  await ev('mountBeian()');
+  ok('T23d 有平台专用链接时优先用它', latestBeian().includes('#/record/xyz'), latestBeian());
+  HEALTH_BEIAN = { icp: 'x"<a>' };
+  await ev('mountBeian()');
+  ok('T23e 环境值经转义，不破页脚结构', latestBeian().includes('x&quot;&lt;a&gt;'), latestBeian());
+  HEALTH_BEIAN = null;
 
   finish();
 }

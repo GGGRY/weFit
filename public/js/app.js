@@ -1612,6 +1612,8 @@ function rebuildNav(){
     '<button class="tabbtn ' + (active===n.id?'active':'') + '" data-go="' + n.id + '"><span class="ti">' + n.ic + '</span>' + esc(n.label) + '</button>').join('');
   $$('[data-go]').forEach(b => b.addEventListener('click', () => go(b.dataset.go)));
   const tc = $('#sidebar [data-themeclick]'); if(tc) tc.addEventListener('click', toggleTheme);
+  /* 备案页脚贴靠位：登录页 tabbar 是空条、进主界面后才有按钮高度，重排后重新量一次 */
+  if(beianEl) beianSize();
 }
 /* 记住当前页面（v4.14）：刷新后回到上次浏览的页面而不是总回概览。
  * 键名按账户隔离，与离线缓存同一口径；只存 UI 状态，不参与服务器同步。 */
@@ -5018,6 +5020,47 @@ async function startMain(offlineBoot){
   if(!USERS.onboarded){ showOnboard(); }
   go(readView());
 }
+/* =====================================================
+   备案页脚(未标版号,配置开关 BEIAN_ICP)
+===================================================== */
+/* 全站底部固定页脚:仅当服务端配置了备案号(公网部署口径)时,经公开的 /api/health.beian
+ * 下发并挂载;本地未配置 → 探测返回 null,不渲染。合规要求备案号挂在首页显眼位置,
+ * 而登录门 .authgate 是不透明覆盖层(z-index 95),故页脚取 96 压在登录页之上。
+ * 移动端页脚贴在 tabbar 上沿:--beian-tab-bottom = tabbar 实测高(已含安全区),
+ * --beian-h = 页脚实测高(供 .main 预留滚动留白、.quickbar 抬升),两者由本段量出写进根元素。
+ * 桩 DOM 无渲染引擎(offsetHeight/style.setProperty 缺):守卫后自然跳过测量,只验结构。 */
+let beianEl = null;
+function beianSetVar(name, px){
+  const s = document.documentElement.style;
+  if(s && typeof s.setProperty === 'function') s.setProperty(name, px);
+}
+function beianSize(){
+  if(!beianEl) return;
+  const tb = document.getElementById('tabbar');
+  /* display:none 时 offsetHeight 恒 0 → 桌面(无 tabbar)贴底,移动端贴 tabbar 上沿 */
+  beianSetVar('--beian-tab-bottom', ((tb && tb.offsetHeight) || 0) + 'px');
+  if(beianEl.offsetHeight) beianSetVar('--beian-h', beianEl.offsetHeight + 'px');
+}
+async function mountBeian(){
+  try {
+    const r = await fetch('/api/health');
+    if(!r.ok) return;
+    const j = await r.json();
+    const b = j && j.beian;
+    if(!b || !b.icp) return;
+    if(beianEl){ beianEl.remove(); beianEl = null; }
+    beianEl = document.createElement('div');
+    beianEl.id = 'site-beian'; beianEl.className = 'site-beian';
+    beianEl.innerHTML =
+      '<a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">' + esc(b.icp) + '</a>' +
+      (b.ga ? '<span class="bi-sep">·</span><a href="' + esc(b.gaUrl || 'https://beian.mps.gov.cn/') +
+        '" target="_blank" rel="noopener">' + esc(b.ga) + '</a>' : '');
+    document.body.appendChild(beianEl);
+    document.body.classList.add('has-beian');
+    beianSize();
+    window.addEventListener('resize', beianSize);
+  } catch(e){ /* 离线/旧服务端缺字段：不显示 */ }
+}
 async function init(){
   const st = await apiMe();
   if(st === 'authed'){ startMain(); return; }
@@ -5033,4 +5076,5 @@ async function init(){
 }
 bindPullToRefresh();   /* 脚本在 </body> 前、<main> 之后加载，元素已就位 */
 bindChartTip();        /* 图表取数值气泡（手机点按 / 桌面悬停），见 hitBands 注释 */
+mountBeian();          /* 备案页脚（配置开关）：与登录态无关，登录页也要挂，见「备案页脚」段 */
 init();

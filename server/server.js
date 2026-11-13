@@ -85,6 +85,18 @@ function allowRegister() {
   const v = String(process.env.ALLOW_REGISTER === undefined ? '1' : process.env.ALLOW_REGISTER).trim().toLowerCase();
   return !(v === '0' || v === 'false' || v === 'off');
 }
+/* 备案悬挂开关（未标版号）：设了 BEIAN_ICP（如「XICP备2026XXXXXX号-1」）才算配置就绪、前端才挂页脚，
+ * 未设（本地默认）返回 null——备案号只在公网部署的站点出现。可选 BEIAN_GA=公安备案号，
+ * BEIAN_GA_URL=安全管理平台生成的专用链接（有号缺链接时回落平台首页）。
+ * 经公开的 /api/health 下发，登录页（即首页）未登录也能挂，满足「首页显眼位置悬挂」。 */
+function beianConf() {
+  const icp = String(process.env.BEIAN_ICP || '').trim();
+  if (!icp) return null;
+  const ga = String(process.env.BEIAN_GA || '').trim();
+  if (!ga) return { icp };
+  const gaUrl = String(process.env.BEIAN_GA_URL || '').trim() || 'https://beian.mps.gov.cn/';
+  return { icp, ga, gaUrl };
+}
 function cookieModeDesc() {
   const mode = String(process.env.COOKIE_SECURE || 'auto').trim().toLowerCase();
   if (mode === '1' || mode === 'true' || mode === 'on') return 'Secure 强制开启';
@@ -623,8 +635,9 @@ async function handle(db, req, res) {
     /* ---- 公开端点 ---- */
     if (req.method === 'GET' && pathname === '/api/health') {
       const accounts = db.prepare('SELECT COUNT(*) AS n FROM accounts').get().n;
-      /* register_open 供登录页探测：关闭注册时前端隐藏「注册新账户」入口（服务端 403 仍是最终闸门） */
-      sendJson(res, 200, { ok: true, accounts, auth: true, register_open: allowRegister() });
+      /* register_open 供登录页探测：关闭注册时前端隐藏「注册新账户」入口（服务端 403 仍是最终闸门）；
+       * beian 供全站备案页脚探测：只在配置了 BEIAN_ICP 时非 null（未标版号） */
+      sendJson(res, 200, { ok: true, accounts, auth: true, register_open: allowRegister(), beian: beianConf() });
       return;
     }
     if (req.method === 'POST' && pathname === '/api/register') {
@@ -687,7 +700,8 @@ function start(opts) {
         console.log('   本机访问   http://localhost:' + actual);
         for (const { ip } of lanIPs()) console.log('   手机/同网   http://' + ip + ':' + actual);
         console.log('   数据库     ' + (opts.dbPath || process.env.DB_PATH || dbm.DEFAULT_DB));
-        console.log('   HTTPS/Cookie ' + cookieModeDesc() + ' · ' + (allowRegister() ? '注册开放' : '注册已关闭'));
+        console.log('   HTTPS/Cookie ' + cookieModeDesc() + ' · ' + (allowRegister() ? '注册开放' : '注册已关闭')
+          + ' · ' + (beianConf() ? '备案已悬挂' : '备案未配置'));
         if (/^(1|true|on)$/i.test(String(process.env.COOKIE_SECURE || '').trim())) {
           console.log('   ⚠ 已强制 Secure Cookie：明文 HTTP 访问将无法登录（局域网调试请设 COOKIE_SECURE=0）');
         }

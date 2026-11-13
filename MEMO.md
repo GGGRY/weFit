@@ -142,7 +142,7 @@ weFit/
 
 - **前端约定**：业务代码只读写 `state`（当前账户工作副本），`save()` = 写回 + localStorage + `queuePush()`；视图导航收敛在 `go(v)`，视图名与**每页滚动位置**记在 localStorage / 内存，刷新回上次页面；设置页的「食物库/动作库」是不进 `NAV` 的子页面，靠 `SUBVIEW` 声明父级（高亮与刷新落回「设置」）
 - **弹窗**：`showDialog` 维护 `dialogStack`，只有栈顶响应 Esc（睡眠编辑器是叠在历史弹窗上再开一层）
-- **数据接口**：公开 = `POST /api/register`、`POST /api/login`、`GET /api/health`、静态页；登录后 = `GET/PUT /api/state`（本人数树，`{rev?, data}`，GET 另带 `slices` manifest；rev 过期 409，缺本人键 400）、`GET /api/slices[?since=&keys=]` 与 `PUT /api/slices`（v4.20 按片同步：写只写脏片、CAS 按片、冲突只冲突同片）、`GET /api/me`、`POST /api/logout`、`GET /api/system/library`（PUT 仅 admin）；后台 = `GET /api/admin/users`、`POST /api/admin/users`（新建用户：不受 `ALLOW_REGISTER` 影响、不下发会话 Cookie）、`PUT /api/admin/role`、`PUT /api/admin/password`、`DELETE /api/admin/users`（均仅 admin）
+- **数据接口**：公开 = `POST /api/register`、`POST /api/login`、`GET /api/health`（除 `register_open` 外还带 `beian`：服务端配了 `BEIAN_ICP` 才非 null，前端据此挂全站备案页脚）、静态页；登录后 = `GET/PUT /api/state`（本人数树，`{rev?, data}`，GET 另带 `slices` manifest；rev 过期 409，缺本人键 400）、`GET /api/slices[?since=&keys=]` 与 `PUT /api/slices`（v4.20 按片同步：写只写脏片、CAS 按片、冲突只冲突同片）、`GET /api/me`、`POST /api/logout`、`GET /api/system/library`（PUT 仅 admin）；后台 = `GET /api/admin/users`、`POST /api/admin/users`（新建用户：不受 `ALLOW_REGISTER` 影响、不下发会话 Cookie）、`PUT /api/admin/role`、`PUT /api/admin/password`、`DELETE /api/admin/users`（均仅 admin）
 - **同步入口两套并存**：客户端日常走按片 `/api/slices`；`GET/PUT /api/state` 保留作兼容壳（旧客户端、备份导入、测试），整树 PUT 会把所有已知片的 rev 抬到新全局 rev
 - 数据同步仍以「单账户整棵子树」为原子边界（写路径只触碰自己那份）；按片只是在此之内把粒度收窄
 
@@ -178,7 +178,7 @@ weFit/
 3. 切片剩余粒度问题：`body`（身体记录，seq 是位置语义）与 `lib`（个人库）仍是整片，改一条体重就重写全部体重行；manifest 随历史线性增长（5 年账 ~2000 片 ≈ 60KB，靠 `?since=` 短路把常见轮询压到几十字节）。真要再细/行级合并（updated_at + LWW）或上 Postgres，见 PLANS.md §1
 4. 服务器需保持运行，手机记录依赖电脑在线；本机重启不再需要手动拉起（本机 已配 systemd 用户单元开机自启，见「启动」条），换机/其他系统仍手动 `start.sh`/`start.bat`；彻底脱机见 PLANS.md 云端部署
 5. 饮水「杯」无 ml 换算；主题不跟随系统
-6. **公网部署**（v4.21）：反代 + HTTPS 样例在 `deploy/`（`Caddyfile` / `wefit.service`）；服务端不自做 TLS，公网口径 = `HOST=127.0.0.1` + `TRUST_PROXY=1` + `ALLOW_REGISTER=0`，防火墙只放 80/443。HSTS 先短窗口试跑（Caddyfile 里给了 300 秒起步值）；`X-Forwarded-*` 只在 `TRUST_PROXY=1` 时可信（错配成非回环监听时启动会打印 ⚠）——`X-Forwarded-For` 反代通常是**追加**而非覆写，所以服务端只采信**最后一段**（最近一跳受信反代添的），样例 Caddyfile 也显式覆写它，二者一致才能让限速分桶不被伪造前缀洗牌；已知未做：多实例共享限速状态、审计日志、自助改密
+6. **公网部署**（v4.21）：反代 + HTTPS 样例在 `deploy/`（`Caddyfile` / `wefit.service`）；服务端不自做 TLS，公网口径 = `HOST=127.0.0.1` + `TRUST_PROXY=1` + `ALLOW_REGISTER=0` + 设 `BEIAN_ICP` 真实备案号（全站底部固定页脚悬挂备案，未配置不显示；见 DEPLOY.md §2.4），防火墙只放 80/443。HSTS 先短窗口试跑（Caddyfile 里给了 300 秒起步值）；`X-Forwarded-*` 只在 `TRUST_PROXY=1` 时可信（错配成非回环监听时启动会打印 ⚠）——`X-Forwarded-For` 反代通常是**追加**而非覆写，所以服务端只采信**最后一段**（最近一跳受信反代添的），样例 Caddyfile 也显式覆写它，二者一致才能让限速分桶不被伪造前缀洗牌；已知未做：多实例共享限速状态、审计日志、自助改密
 
 ## 五、使用备忘
 

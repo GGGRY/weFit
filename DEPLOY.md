@@ -79,9 +79,25 @@
 | `ALLOW_REGISTER` | 开启 | 置 `0` 关闭注册(返回 403 `register_closed`)。公网部署必须关闭:首个注册账户自动获得管理员权限,开放注册等于向任意访客暴露管理权限 |
 | `LOGIN_MAX_FAILS` / `LOGIN_MAX_FAILS_IP` | 5 / 20 | 同一来源对同一账户 / 同一来源对任意账户的失败次数上限,达到上限后封锁该来源 `LOGIN_BLOCK_MS`(默认 15 分钟),返回 429 与 `Retry-After` |
 | `LOGIN_WINDOW_MS` / `LOGIN_BLOCK_MS` | 15 分钟 / 15 分钟 | 失败次数统计窗口与封锁时长 |
+| `BEIAN_ICP` | 未配置 | ICP 备案号(如 `XICP备2026XXXXXX号-1`)。设了才挂全站底部固定页脚(经公开 `/api/health` 下发,登录页也显示,编号链向工信部备案系统);未配置(本地默认)不显示。**公网部署必须配置**——备案合规要求编号在首页显眼位置悬挂且可点击 |
+| `BEIAN_GA` / `BEIAN_GA_URL` | 未配置 | 公安备案号与「全国互联网安全管理服务平台」生成的专用链接;仅在使用 `BEIAN_ICP` 时生效,缺专用链接时回落平台首页。平台要求的警徽图标需从该平台下载后另行接入 |
 | `HOST` / `PORT` / `DB_PATH` | `0.0.0.0` / `8123` / `server/data/wefit.db` | 监听地址、端口与数据库路径;`DB_PATH` 应指向纳入备份范围的持久化位置(公网部署用 `/var/lib/wefit/wefit.db`) |
 
-启动日志会打印当前配置口径,例如 `HTTPS/Cookie Secure auto(信 X-Forwarded-Proto) · 注册已关闭`,便于核对配置是否生效。
+启动日志会打印当前配置口径,例如 `HTTPS/Cookie Secure auto(信 X-Forwarded-Proto) · 注册已关闭 · 备案已悬挂`,便于核对配置是否生效。
+
+`deploy/wefit.service` 通过 `EnvironmentFile=-/etc/wefit/wefit.env` 读取站点专属变量(备案号这类只在云端生效、不该进仓库的配置都放这里;`-` 前缀表示文件不存在也能启动)。首次配置:
+
+```bash
+sudo mkdir -p /etc/wefit
+sudo tee /etc/wefit/wefit.env >/dev/null <<'EOF'
+BEIAN_ICP=京ICP备2026XXXXXX号-1
+# BEIAN_GA=京公网安备110XXXXXXXXXXXXX号
+# BEIAN_GA_URL=https://beian.mps.gov.cn/#/record/XXXXXXXX
+EOF
+sudo systemctl restart wefit
+```
+
+改完在启动日志核对出现「备案已悬挂」即生效。此文件在 git 仓库外,升级与回滚都不会覆盖;等价的另一种做法是 `systemctl edit wefit` 写 drop-in,二选一即可。
 
 > 本地与局域网的明文 HTTP 访问不受上述安全配置影响:默认口径下,明文 HTTP 的会话 Cookie 不添加 `Secure` 属性,`./start.sh` 与同网设备访问方式保持不变。仅显式设置 `COOKIE_SECURE=1` 会使明文 HTTP 无法登录,启动日志会输出相应警告。
 
@@ -143,7 +159,7 @@ sudo chmod 700 /var/lib/wefit
 
 ### 3.4 systemd 起服务
 
-`deploy/wefit.service` 已内置公网安全口径:`HOST=127.0.0.1`、`PORT=8123`、`TRUST_PROXY=1`、`COOKIE_SECURE=auto`、`ALLOW_REGISTER=0`、`DB_PATH=/var/lib/wefit/wefit.db`,并用 `ProtectSystem=strict` + `ReadWritePaths=/var/lib/wefit` 做最小权限。
+`deploy/wefit.service` 已内置公网安全口径:`HOST=127.0.0.1`、`PORT=8123`、`TRUST_PROXY=1`、`COOKIE_SECURE=auto`、`ALLOW_REGISTER=0`、`DB_PATH=/var/lib/wefit/wefit.db`,并用 `ProtectSystem=strict` + `ReadWritePaths=/var/lib/wefit` 做最小权限。站点专属变量(备案号的 `BEIAN_*` 等)写在单元引用的 `EnvironmentFile=/etc/wefit/wefit.env` 里——**仓库外的文件,update.sh / rollback.sh 不会碰它;反过来,在服务器上改仓库里的单元或 Caddyfile 会让工作区变脏,update.sh 会直接拒绝拉取**。
 
 ```bash
 # 安装前核对 WorkingDirectory 与 ExecStart 的 node 路径(which node)
@@ -335,8 +351,9 @@ sudo systemctl start wefit
 4. **不要新旧进程并存**:统一由 systemd 管理;手动起的 `node server.js` 会和它抢端口、写同一库。
 5. **不要把 `server/data/` 传上云**:云端库在 `/var/lib/wefit/`,代码目录里的库只是历史副本。
 6. **安全三件套**:`HOST=127.0.0.1`、`ALLOW_REGISTER=0`、防火墙不放行 8123。关闭注册后,新增账户只能由管理员在后台「用户管理 → 新建用户」创建(首个注册账户即管理员)。
-7. **系统配置不会自动更新**:`deploy/wefit.service` / `deploy/Caddyfile` 有变更时,`update.sh` 只提示,需手动 `cp` + `daemon-reload` / `reload caddy`。
-8. **不自动部署**:`git push` 后必须在服务器上显式执行 `update.sh`,保留人工闸门。
+7. **备案号上线前必挂**:在 `/etc/wefit/wefit.env`(仓库外)填 `BEIAN_ICP` 真实备案号,全站底部固定页脚才会悬挂(登录页也可见、链接可点);不配置则页脚不显示,不满足备案合规要求。
+8. **系统配置不会自动更新**:`deploy/wefit.service` / `deploy/Caddyfile` 有变更时,`update.sh` 只提示,需手动 `cp` + `daemon-reload` / `reload caddy`。
+9. **不自动部署**:`git push` 后必须在服务器上显式执行 `update.sh`,保留人工闸门。
 9. **版本号单一来源**:升版号只改 `server/package.json`,`/api/me`、设置页与管理后台自动跟随;补丁位为 0 时界面自动省略。
 10. **前端不需要清缓存**:静态资源带 `ETag` + `Cache-Control: no-cache`,刷新自动拿新版。
 11. **升级窗口**:重启只有一两秒;正在同步的请求会失败重试,离线改动留在本地缓存,服务恢复后自动补推。

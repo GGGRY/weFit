@@ -156,6 +156,24 @@ async function main() {
   ok('D3b /api/health 带 register_open=true', r.status === 200 && r.json.register_open === true, JSON.stringify(r.json));
   delete process.env.ALLOW_REGISTER;
 
+  /* ---------- D4-D7 备案悬挂开关（未标版号：BEIAN_ICP 未设=本地默认不显示；设了经 health 下发） ---------- */
+  r = await req(base, 'GET', '/api/health');
+  ok('D4 未配 BEIAN_ICP → health.beian=null（前端不挂页脚）',
+    r.status === 200 && r.json.beian === null, JSON.stringify(r.json.beian));
+  process.env.BEIAN_ICP = '测ICP备2026000001号-1';
+  r = await req(base, 'GET', '/api/health');
+  ok('D5 设 BEIAN_ICP → beian.icp 下发；未设 BEIAN_GA 不带 ga 字段',
+    r.json.beian && r.json.beian.icp === '测ICP备2026000001号-1' && !('ga' in r.json.beian), JSON.stringify(r.json.beian));
+  process.env.BEIAN_GA = ' 测公网安备50000000000001号 ';
+  r = await req(base, 'GET', '/api/health');
+  ok('D6 设 BEIAN_GA → 去首尾空格下发，缺专用链接时 gaUrl 回落平台首页',
+    r.json.beian.ga === '测公网安备50000000000001号' && r.json.beian.gaUrl === 'https://beian.mps.gov.cn/', JSON.stringify(r.json.beian));
+  process.env.BEIAN_GA_URL = 'https://beian.mps.gov.cn/#/record/xyz';
+  r = await req(base, 'GET', '/api/health');
+  ok('D7 设 BEIAN_GA_URL → 优先平台生成的专用链接',
+    r.json.beian.gaUrl === 'https://beian.mps.gov.cn/#/record/xyz', JSON.stringify(r.json.beian));
+  delete process.env.BEIAN_ICP; delete process.env.BEIAN_GA; delete process.env.BEIAN_GA_URL;
+
   /* ---------- E. 登录失败限速（HTTP 接线） ---------- */
   r = await req(base, 'POST', '/api/register', { username: 'dave', password: 'dave1234', name: '戴' });
   ok('E1 准备账户 dave', r.status === 201);

@@ -69,6 +69,7 @@ function toast(msg, isErr){
 }
 
 let me = null;          /* {username, role} */
+let beian = null;       /* 备案悬挂（服务端 BEIAN_ICP 开关，经公开 /api/health 下发；null=不显示） */
 let tab = 'users';      /* users | lib */
 let libDraft = null;    /* 系统库编辑草稿(食物+动作整份,跨子分页共用) */
 let libSub = 'foods';   /* 系统库子分页:foods=食物库 | exercises=动作库 */
@@ -97,6 +98,23 @@ async function api(method, path, body){
   return { status: r.status, j };
 }
 function on401(){ me = null; renderLogin('会话已过期，请重新登录'); }
+
+/* ---------- 备案悬挂(全站配置开关 BEIAN_ICP) ----------
+ * 未标版号：公网部署设了备案号才显示；本工具页页脚沿用 .adm-foot 一行内悬挂，
+ * 链接必须可点(合规口径)。用户端(index.html)是全站固定页脚,见 app.js「备案页脚」段。 */
+async function probeBeian(){
+  try {
+    const r = await fetch('/api/health');
+    if (!r.ok) return;
+    const j = await r.json();
+    beian = (j && j.beian) || null;
+  } catch(e){ /* 离线/旧服务端：不显示 */ }
+}
+function beianFootHTML(){
+  const link = (href, txt) => '<a href="' + esc(href) + '" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">' + esc(txt) + '</a>';
+  return link('https://beian.miit.gov.cn/', beian.icp)
+    + (beian.ga ? ' · ' + link(beian.gaUrl || 'https://beian.mps.gov.cn/', beian.ga) : '');
+}
 
 /* ---------- 登录 ---------- */
 function renderLogin(note){
@@ -160,6 +178,7 @@ function renderShell(){
     '<div id="tabBody"></div>' +
     /* 版本号 = /api/me 或 /api/login 下发（来源 = server/package.json）；旧服务端没带该字段时不显示 */
     '<div class="adm-foot">' + (me.version ? 'weFit v' + esc(String(me.version)) + ' · ' : '') +
+      (beian ? beianFootHTML() + ' · ' : '') +
       '第一个注册的账户自动成为管理员 · 系统至少保留一名管理员 · 撤权即时生效，被撤者仍正常使用用户端</div>';
   $('#thBtn').textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️ 浅色' : '🌙 深色';
   $('#thBtn').addEventListener('click', toggleTheme);
@@ -469,6 +488,7 @@ async function boot(){
    * 重检不可能翻案,却会:丢弃 200 载荷后 renderTab 又整表拉一次(双倍请求);且 500 等
    * 状态穿透时把普通用户误设成 admin UI。五个管理面自带 401/403/0 守卫,非管理员在
    * 首个管理请求后自然落到「无管理权限」页。 */
+  await probeBeian();   /* 备案悬挂探测（公开端点；未配 BEIAN_ICP / 失败都静默跳过） */
   renderShell(); renderTab();
 }
 boot();

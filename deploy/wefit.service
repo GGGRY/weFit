@@ -7,6 +7,8 @@
 #   4) 查日志：journalctl -u wefit -f
 #
 # 环境变量说明（都在 server/server.js 里读取）：
+#   EnvironmentFile=/etc/wefit/wefit.env    站点专属变量（BEIAN_* 备案号等）放这个仓库外文件，
+#                         别在服务器上编辑本单元——update.sh 见脏工作区会拒绝拉取（DEPLOY.md §2.4）
 #   HOST=127.0.0.1        只监听回环，公网入口交给 Caddy；改前请确认防火墙已封 8123
 #                         （TRUST_PROXY=1 只有配合回环监听才安全，否则启动时会告警）
 #   TRUST_PROXY=1         采信反代送来的 X-Forwarded-Proto / X-Forwarded-For（后者只取最后一段）
@@ -35,6 +37,10 @@ Environment=TRUST_PROXY=1
 Environment=COOKIE_SECURE=auto
 Environment=ALLOW_REGISTER=0
 Environment=DB_PATH=/var/lib/wefit/wefit.db
+# 站点专属变量（BEIAN_* 备案悬挂等）写 /etc/wefit/wefit.env —— 仓库外的文件，update.sh /
+# rollback.sh 都不会碰它；请勿在服务器上改本单元文件（工作区变脏会被 update.sh 拒绝拉取）。
+# 建文件与示例见 DEPLOY.md §2.4；「-」前缀 = 文件不存在也能正常启动（本地/未配置口径）。
+EnvironmentFile=-/etc/wefit/wefit.env
 Restart=always
 RestartSec=3
 # 最小权限：ProtectSystem=strict 把整个文件系统置为只读，再用 ReadWritePaths 放行数据目录。
