@@ -6,9 +6,7 @@
 
 ## 未标版号（下次升版号时并入下方版本）
 
-- 全站底部固定备案页脚（配置开关 `BEIAN_ICP`，可选 `BEIAN_GA`/`BEIAN_GA_URL`）：公网部署设了备案号才经 `/api/health` 下发并挂载，登录页也显示、编号链向备案系统；页脚恒在视口最底（移动端安全区由页脚吸收，tabbar 整体抬到其上方），本地默认不显示。后台页脚同步悬挂。
-
-- `deploy/wefit.service` 加 `EnvironmentFile=-/etc/wefit/wefit.env`：备案号这类站点专属变量放仓库外文件，服务器上不碰 git 工作区，`update.sh` 脏工作区闸门不受影响（升级/回滚也不覆盖）；DEPLOY.md §2.4 补建文件示例。
+- 新增全站底部固定备案页脚（配 `BEIAN_ICP` 才显示，经 `/api/health` 下发）；备案号等站点变量放仓库外 `/etc/wefit/wefit.env`（`wefit.service` 已加 `EnvironmentFile`，不影响 update.sh）。
 
 - 品牌标志统一为内联 SVG 徽章（品牌绿渐变 + 白色 W）：两页 favicon 与侧边栏 / 登录页 / 后台页眉 logo 共用 `style.css` 的 `--logo-glyph`，不再依赖系统 emoji 字体（原 💪 / 🛠 / 🚫 logo 一并换掉，导航栏各按钮的 emoji 图标不变）。
 
