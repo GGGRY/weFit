@@ -103,10 +103,11 @@ a{color:var(--brand-ink)}
 .tabbtn.active{color:var(--brand-ink);font-weight:700}
 /* 备案页脚(全站底部固定,未标版号)：服务端配了 BEIAN_ICP 才由 app.js mountBeian() 挂出，本地默认不显示。
    层级 96 压在登录门(95)之上——合规看的是首页,登录页就是首页。
-   --beian-tab-bottom/--beian-h 由 JS 量出(移动端贴 tabbar 上沿,tabbar 实测高已含安全区,故页脚自身不再叠 env)；
+   页脚恒在视口最底(安全区由它自己吸收),移动端把 tabbar 整体抬到页脚上方
+   (--beian-h = 页脚实测高,含 env；--beian-tab-bottom = tabbar 实测高,供 .quickbar 让位,均由 JS 量出)；
    条本体 pointer-events:none,只让链接可点,不挡内容触摸。 */
 .site-beian{
-  position:fixed;left:0;right:0;bottom:var(--beian-tab-bottom,0px);z-index:96;
+  position:fixed;left:0;right:0;bottom:0;z-index:96;
   display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:6px;
   font-size:11px;line-height:1.5;color:var(--ink-3);
   background:var(--surface);border-top:1px solid var(--line);
@@ -119,7 +120,8 @@ a{color:var(--brand-ink)}
 body.has-beian .main{padding-bottom:calc(40px + var(--beian-h,24px))}
 body.has-beian .quickbar{bottom:var(--beian-h,24px)}
 @media(max-width:899px){
-  .site-beian{padding-bottom:4px}
+  /* tabbar 抬到页脚条上方后不再自留安全区(安全区归页脚)；未挂页脚时维持原样 */
+  body.has-beian .tabbar{bottom:var(--beian-h,24px);padding-bottom:10px}
   body.has-beian .main{padding-bottom:calc(106px + var(--beian-h,24px))}
   body.has-beian .quickbar{bottom:calc(var(--beian-tab-bottom,0px) + var(--beian-h,24px))}
 }

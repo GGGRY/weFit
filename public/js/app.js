@@ -5026,8 +5026,8 @@ async function startMain(offlineBoot){
 /* 全站底部固定页脚:仅当服务端配置了备案号(公网部署口径)时,经公开的 /api/health.beian
  * 下发并挂载;本地未配置 → 探测返回 null,不渲染。合规要求备案号挂在首页显眼位置,
  * 而登录门 .authgate 是不透明覆盖层(z-index 95),故页脚取 96 压在登录页之上。
- * 移动端页脚贴在 tabbar 上沿:--beian-tab-bottom = tabbar 实测高(已含安全区),
- * --beian-h = 页脚实测高(供 .main 预留滚动留白、.quickbar 抬升),两者由本段量出写进根元素。
+ * 页脚恒在视口最底(安全区由它吸收);移动端 tabbar 抬到页脚上方:--beian-h = 页脚实测高,
+ * --beian-tab-bottom = tabbar 实测高(供 .quickbar 让位),两者由本段量出写进根元素。
  * 桩 DOM 无渲染引擎(offsetHeight/style.setProperty 缺):守卫后自然跳过测量,只验结构。 */
 let beianEl = null;
 function beianSetVar(name, px){
