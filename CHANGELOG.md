@@ -6,6 +6,8 @@
 
 ## 未标版号（下次升版号时并入下方版本）
 
+- 修 `deploy/wefit.user.service` 段位错误：`ExecStartPre`（等数据盘目录就绪、最多 60s）误写在 `[Unit]` 段被 systemd 忽略，等于开机等挂载的保护从未生效；已移入 `[Service]`。两单元逐个核对，`wefit.service` 无此问题。
+
 - 新增全站底部固定备案页脚（配 `BEIAN_ICP` 才显示，经 `/api/health` 下发）；备案号等站点变量放仓库外 `/etc/wefit/wefit.env`（`wefit.service` 已加 `EnvironmentFile`，不影响 update.sh）。
 
 - 备案页脚手机端不再常驻低栏：进主界面后挪进内容末尾、滚到页底才出现，tabbar 回原贴底位；登录页与桌面端仍悬浮视口最底。

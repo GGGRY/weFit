@@ -14,7 +14,7 @@
 - **鉴权**：scrypt 密码哈希 + SQLite 持久会话（30 天）+ HttpOnly Cookie；除登录/注册/健康检查/静态页外全部 API 走鉴权中间件
 - **数据库** `server/data/wefit.db`：会增长的集合拆为 14 张关系表；profile/goal/nutrition 与个人食物/动作库等形状固定对象用 JSON 列整存保真
 - **同步模型（v4.20 切片化）**：同一服务器 + 登录同一账户 = 同一份本人数据；不同账户彼此隔离；localStorage 只是按账户分键的离线缓存，服务器为准。同步粒度 = **片**（`(账户,date)` 或账户级固定块，契约见 `js/slices.js`）：写只写脏片、CAS 按片、冲突只冲突同片
-- **启动**：`./start.sh`（Linux/macOS）或双击 `start.bat`（Windows），端口 8123；手机同 Wi-Fi 访问 `http://<电脑IP>:8123`。本机 已配**开机自启**：systemd 用户单元 `~/.config/systemd/user/wefit.service`（样例 `deploy/wefit.user.service`）+ `loginctl enable-linger`，开机/无人登录也在后台跑；此时别再手动 `./start.sh`（会撞 8123 端口），改用 `systemctl --user stop/start/restart wefit`
+- **启动**：`./start.sh`（Linux/macOS）或双击 `start.bat`（Windows），端口 8123；手机同 Wi-Fi 访问 `http://<电脑IP>:8123`。本机 已配**开机自启**：systemd 用户单元 `~/.config/systemd/user/wefit.service`（样例 `deploy/wefit.user.service`）+ `loginctl enable-linger`，开机/无人登录也在后台跑（单元内 `ExecStartPre` 写在 `[Service]` 段，循环等数据盘目录就绪再启动，最多 60s）；此时别再手动 `./start.sh`（会撞 8123 端口），改用 `systemctl --user stop/start/restart wefit`
 - **静态资源**：一律 `Cache-Control: no-cache` + `ETag`（大小+mtime），未改动回 `304`、改动即时生效（无构建/无版本号，靠 304 而非 `max-age`）；≥1KB 的文本响应走 gzip；`server.keepAliveTimeout` = 65s。ETag 含 mtime，**不要用「改内容不改 mtime」的方式写文件**
 - **种子数据只在服务端**：`js/seed-data.json`（食物 321（USDA）+ 动作 27）由 `server/seed.js` 在 Node 侧 require 建系统库，**浏览器不加载**（用户端走 `GET /api/system/library`）；`js/seed-data.js` 在浏览器只提供枚举/默认值/来源常量
 

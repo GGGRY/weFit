@@ -19,13 +19,14 @@
 #     /home/<用户名>/.nvm/versions/node/<版本>/bin/node（nvm 升级后需同步修改，或建立稳定软链接）；
 #   - 数据盘为独立挂载（fstab nofail）时，用户单元不能对系统挂载单元排序，
 #     故用 ExecStartPre 循环等待项目目录就绪，最多 60s。
+#     注意它属于 [Service] 段（写在 [Unit] 段会被 systemd 忽略，等于没加）。
 
 [Unit]
 Description=weFit 健康管理同步服务器（用户单元 · 局域网）
-ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do [ -f <项目目录>/server/server.js ] && exit 0; sleep 2; done; exit 1'
 
 [Service]
 Type=simple
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do [ -f <项目目录>/server/server.js ] && exit 0; sleep 2; done; exit 1'
 WorkingDirectory=<项目目录>/server
 ExecStart=/usr/bin/node server.js
 Environment=PORT=8123
