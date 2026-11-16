@@ -1565,7 +1565,8 @@ async function main() {
     return {
       tiles: (h.match(/class="tile"/g) || []).length,
       cols: (h.slice(h.indexOf('<table class="tbl">'), h.indexOf('</thead>')).match(/<th>/g) || []).length,
-      opts: (h.match(/<option value="/g) || []).length,
+      /* 只数指标下拉：卡头还有时间范围下拉（bm_range，T14v），整页 option 计数会把它一并算进来 */
+      opts: ((h.match(/<select[^>]*id="bm_select"[^>]*>[\s\S]*?<\/select>/) || [''])[0].match(/<option value="/g) || []).length,
     };
   };
   ev("state.bodyHidden = []; go('body')");
@@ -1643,6 +1644,41 @@ async function main() {
        && !bHtml.includes('悬停') && bHtml.includes('<span id="bm_sub">')
        && ev("$('#bm_sub').textContent") === '近2条 · 点按看数值',
        'cc-h=' + (bHtml.match(/class="cc-h"/g) || []).length + ' sub=' + ev("$('#bm_sub').textContent"));
+  }
+
+  /* T14v 趋势图时间范围下拉（2026-11-16 未标版号）：卡头新增 bm_range（全部/一个月/三个月），
+     renderBodyChart 按日期窗口过滤（近30/90天），「全部」不截断——原固定取最近 60 条的口径已下线。
+     注入记录一律用 today() 相对日期，断言不随真实日历漂移；测完必须还原 state.body 与 bodyRange，
+     后面的 T14u 系列还按夹具 2 条体重记录数感应带。 */
+  ok('T14v 卡头带时间范围下拉（全部/一个月/三个月），默认选中「全部」',
+     bHtml.includes('id="bm_range"') && bHtml.includes('<option value="all" selected>全部</option>')
+     && bHtml.includes('<option value="month">一个月</option>') && bHtml.includes('<option value="quarter">三个月</option>'),
+     (bHtml.match(/<option value="(all|month|quarter)"[^>]*>[^<]*<\/option>/g) || []).join(' | '));
+  {
+    const bodyBackup = ev('JSON.stringify(state.body)');
+    const d100 = ev("addDays(today(),-100)"), d50 = ev("addDays(today(),-50)"), d20 = ev("addDays(today(),-20)"), d5 = ev("addDays(today(),-5)");
+    ev("state.body=[{date:'" + d100 + "',weight:70.0},{date:'" + d50 + "',weight:70.2},{date:'" + d20 + "',weight:70.6},{date:'" + d5 + "',weight:70.9}]");
+    ev("bodyRange='month'; renderBody()");
+    const mSvg = ev("$('#chartBody').innerHTML");
+    ok('T14v2 一个月：只画窗口内 2 条（-20/-5），-50 与更早被滤掉，副标题改「近30天 2条」',
+       ev("$('#bm_sub').textContent") === '近30天 2条 · 点按看数值'
+       && mSvg.includes('data-tip="' + d5 + ' · 70.9 kg"') && !mSvg.includes(d50) && !mSvg.includes(d100),
+       'sub=' + ev("$('#bm_sub').textContent") + ' svg=' + mSvg.slice(0, 120));
+    ev("bodyRange='quarter'; renderBody()");
+    ok('T14v3 三个月：窗口含 -50（近90天 3条），-100 仍在窗外',
+       ev("$('#bm_sub').textContent") === '近90天 3条 · 点按看数值' && ev("$('#chartBody').innerHTML").includes(d50),
+       'sub=' + ev("$('#bm_sub').textContent"));
+    ev("bodyRange='all'; renderBody()");
+    ok('T14v4 全部：4 条全画（不截断），副标题回到「近4条」旧写法',
+       ev("$('#bm_sub').textContent") === '近4条 · 点按看数值' && ev("$('#chartBody').innerHTML").includes(d100),
+       'sub=' + ev("$('#bm_sub').textContent"));
+    /* 总记录 ≥2（走得到窗口过滤）但窗口内只剩 1 条 → 才轮到「范围内不足」这条空态 */
+    ev("state.body=[{date:'" + d100 + "',weight:70.0},{date:'" + d5 + "',weight:70.9}]; bodyRange='month'; renderBody()");
+    ok('T14v5 窗口内不足 2 条：显「该时间范围内数据不足」空态，不是「先去记录几次吧」',
+       ev("$('#chartBody').innerHTML").includes('该时间范围内数据不足') && !ev("$('#chartBody').innerHTML").includes('先去记录几次')
+       && ev("$('#bm_sub').textContent") === '',
+       ev("$('#chartBody').innerHTML").slice(0, 160));
+    ev("state.body=" + bodyBackup + "; bodyRange='all'; renderBody()");
   }
 
   /* T14u 图表几何改成跟着容器宽度走（2026-09-13 用户反馈「手机上历史页图表、身体页体重图的坐标轴字太小」）：

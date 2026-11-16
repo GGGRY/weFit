@@ -3526,6 +3526,7 @@ function openExEditor(e, after){
    身体数据
 ===================================================== */
 let bodyMetric = 'weight';        /* 趋势图当前选中的指标（MEASURES 里的 id） */
+let bodyRange = 'all';            /* 趋势图时间范围：all=全部 / month=近30天 / quarter=近90天（会话内选择，不落库） */
 
 function renderBody(){
   if(!bodyOn(bodyMetric)) bodyMetric = 'weight';   /* 选中的趋势指标被隐藏后回到体重（体重恒启用） */
@@ -3547,8 +3548,16 @@ function renderBody(){
 
   const metricOpts = bodyMeasures().map(m => '<option value="' + m.id + '"' + (m.id===bodyMetric?' selected':'') + '>' + esc(m.label) + '</option>').join('');
   /* 卡头（含指标下拉）留在这里，renderBodyChart 只画图——两边各写过一份标题，卡上会出现两个「体重 趋势」 */
+  /* 卡头两个下拉：指标（左）+ 时间范围（右）。2026-11-16 用户裁定：**始终并排**，不换行上下堆叠
+     （曾试过 flex-wrap:wrap，窄屏被标题挤成两行）——控件行 flex-shrink:0 锁一行，
+     宽度收紧（指标 110 / 范围 76），标题列由 chartCard 的 min-width:0 兜底自行换行。 */
+  const rangeOpts = [['all', '全部'], ['month', '一个月'], ['quarter', '三个月']]
+    .map(([v, t]) => '<option value="' + v + '"' + (v === bodyRange ? ' selected' : '') + '>' + t + '</option>').join('');
   const chart = chartCard('chartBody', (MEASURES.find(m=>m.id===bodyMetric)||{}).label + ' 趋势', '<span id="bm_sub"></span>',
-    '<select class="select" id="bm_select" style="max-width:120px;padding:5px 8px">' + metricOpts + '</select>');
+    '<div style="display:flex;gap:6px;flex-wrap:nowrap;flex-shrink:0;justify-content:flex-end">' +
+      '<select class="select" id="bm_select" style="max-width:110px;min-width:0;padding:5px 6px">' + metricOpts + '</select>' +
+      '<select class="select" id="bm_range" style="max-width:76px;min-width:0;padding:5px 6px">' + rangeOpts + '</select>' +
+    '</div>');
 
   // 最近记录表：同组指标并成一格（血压 → 120/80，缺一边显 —），近 14 条
   const tcols = mGroups(bodyMeasures());
@@ -3596,6 +3605,7 @@ function renderBody(){
   $('#bm_add').addEventListener('click', () => openBodyDialog());
   const cfg = $('#bm_cfg'); if(cfg) cfg.addEventListener('click', () => openBodyMetricsDialog());
   const sel = $('#bm_select'); if(sel) sel.addEventListener('change', () => { bodyMetric = sel.value; renderBody(); });
+  const rng = $('#bm_range'); if(rng) rng.addEventListener('change', () => { bodyRange = rng.value; renderBody(); });
   renderBodyChart(bodyMetric);
 }
 
@@ -3666,11 +3676,14 @@ function openBodyMetricsDialog(){
 function renderBodyChart(metric){
   const mdef = MEASURES.find(m => m.id === metric);
   const sub = $('#bm_sub');
-  // 汇总按日期取最近一条，取最近 60 条
+  // 汇总按日期取最近一条，时间范围由卡头下拉决定（全部 / 近30天 / 近90天）
   const recs = state.body.filter(r => r[metric] !== undefined && r[metric] !== null);
   if(recs.length < 2){ if(sub) sub.textContent = ''; $('#chartBody').innerHTML = '<div class="empty"><div class="e-ic">📏</div>数据不足，先去记录几次吧</div>'; return; }
   const pts = recs.map(r => ({ x:r.date, y:r[metric] }));
-  const out = pts.slice(Math.max(0, pts.length - 60));
+  /* 时间范围（卡头「bm_range」下拉）：近 30/90 天按日期窗口过滤，全部不截断（原固定取最近 60 条的口径已由下拉取代） */
+  const winDays = bodyRange === 'month' ? 30 : bodyRange === 'quarter' ? 90 : 0;
+  const out = winDays ? pts.filter(p => p.x >= addDays(today(), -(winDays - 1))) : pts;
+  if(out.length < 2){ if(sub) sub.textContent = ''; $('#chartBody').innerHTML = '<div class="empty"><div class="e-ic">📏</div>该时间范围内数据不足</div>'; return; }
   /* 刻度按指标的 dec 定小数位，并带上单位（体重 "71.2kg"，血压 "128mmHg"）——
      单位宽度不一，左留白由 padForTicks 按最长刻度自动加宽（2026-09-13 用户要求纵坐标显示单位） */
   const fmtDec = v => v.toFixed(mdef.dec);
@@ -3683,13 +3696,15 @@ function renderBodyChart(metric){
     fmtVal: v => fmtDec(v) + ' ' + mdef.unit,
     fmtX: dateSlash,
   });
-  if(sub) sub.textContent = '近' + out.length + '条 · 点按看数值';
+  if(sub) sub.textContent = (winDays ? '近' + winDays + '天 ' : '近') + out.length + '条 · 点按看数值';
   $('#chartBody').innerHTML = svg;
 }
 
-/* 卡片容器 html：给历史页（统计看板）与身体页复用 */
+/* 卡片容器 html：给历史页（统计看板）与身体页复用。
+ * 标题列 min-width:0（2026-11-16）：空间不够时让标题/副标题自己折行，
+ * 而不是把右侧 controls（如身体页并排的两个下拉）顶到下一行。 */
 function chartCard(containerId, title, sub, controls){
-  return '<div class="chart-card" style="margin-bottom:16px"><div class="cc-h"><div><div class="cc-t">' + esc(title) + '</div>' + (sub ? '<div class="cc-s">' + sub + '</div>' : '') + '</div>' + (controls || '') + '</div><div id="' + containerId + '"></div></div>';
+  return '<div class="chart-card" style="margin-bottom:16px"><div class="cc-h"><div style="min-width:0"><div class="cc-t">' + esc(title) + '</div>' + (sub ? '<div class="cc-s">' + sub + '</div>' : '') + '</div>' + (controls || '') + '</div><div id="' + containerId + '"></div></div>';
 }
 
 /* =====================================================
