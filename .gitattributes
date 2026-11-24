@@ -1,0 +1,18 @@
+# 换行符策略 · Win11 开发 + 云端 Ubuntu 部署双端共用
+#
+# 问题：在 Windows 侧编辑/提交这些文件时，若被改成 CRLF，推上云端会坏——
+#   *.sh / 部署脚本  → bash 报 `$'\r': command not found`
+#   *.service        → systemd 单元解析失败
+#   Caddyfile        → Caddy 配置解析失败
+#
+# 这里只声明「跨平台执行」的文件，其余文件不声明（仓库 core.autocrlf=false，按原字节存取即可，
+# 不做全量 text=auto，避免一次性改写工作区里所有文件的字节）。
+#
+# 仓库内一律以 LF 存储：
+*.sh        text eol=lf
+*.service   text eol=lf
+Caddyfile   text eol=lf
+*.caddyfile text eol=lf
+
+# Windows 批处理按规范必须是 CRLF（cmd.exe 解析 goto/标签块时依赖它）：
+*.bat       text eol=crlf
